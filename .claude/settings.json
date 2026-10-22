@@ -1,0 +1,42 @@
+{
+    "model": "claude-sonnet-5.5",
+    "modelSettings": {
+        "claude-sonnet-5.5": {
+            "effortLevel": "medium"
+        },
+        "claude-opus-5.5": {
+            "effortLevel": "medium"
+        }
+    },
+    "editorMode": "vim",
+    "theme": "light-daltonized",
+    "statusLine": {
+        "type": "command",
+        "command": "jq -r '\"[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context\"'",
+        "padding": 2
+    },
+    "spinnerTipsEnabled": false,
+    "preferredNotifChannel": "terminal_bell",
+    "permissions": {
+        "allow": [
+            "Bash(npm run *)"
+        ],
+        "ask": [
+            "Bash(git push *)"
+        ],
+        "deny": [
+            "Read(./.env)",
+            "Read(./.env.*)",
+            "Read(./secrets/**)"
+        ]
+    },
+    "extraKnownMarketplaces": {
+        "midnight-expert": {
+            "source": "https://github.com/midnightntwrk/midnight-expert/blob/main/.claude-plugin/marketplace.json"
+        },
+        "openZepplin-compact-contracts": {
+            "source": "https://github.com/OpenZeppelin/compact-contracts"
+        }
+    },
+    "plansDirectory": "./plans"
+}

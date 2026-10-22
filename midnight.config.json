@@ -1,0 +1,9 @@
+{
+  "networkId": "preprod",
+  "indexer": "https://indexer.preprod.midnight.network/api/v4/graphql",
+  "indexerWS": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
+  "nodeRpc": "https://rpc.preprod.midnight.network",
+  "proofServer": "http://127.0.0.1:6300",
+  "faucet": "https://faucet.preprod.midnight.network",
+  "explorer": "https://explorer.1am.xyz",
+}

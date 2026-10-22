@@ -1,0 +1,19 @@
+# Local Midnight proof server for Wallet Mode. Bound to loopback only: proof requests carry the circuit's private
+# inputs (including your token secret key), so the prover must never be reachable from the network.
+#   npm run proof-server:start      npm run proof-server:stop
+# The image tag must match the ledger version the app was built against (ledger 8.1.x → proof-server 8.1.0).
+services:
+  proof-server:
+    image: 'midnightntwrk/proof-server:8.1.0'
+    command: ['midnight-proof-server', '-v']
+    ports:
+      - '127.0.0.1:6300:6300'
+    environment:
+      RUST_BACKTRACE: 'full'
+    healthcheck:
+      test: ['CMD-SHELL', 'echo > /dev/tcp/127.0.0.1/6300']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+

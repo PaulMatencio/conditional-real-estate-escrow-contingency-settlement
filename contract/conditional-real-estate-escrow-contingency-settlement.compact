@@ -1,0 +1,444 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// ============================================================
+// Conditional real-estate escrow with contingency settlement
+//
+// Custody model: UNSHIELDED ledger tokens. The contract itself
+// holds the funds (receiveUnshielded / sendUnshielded), so the
+// escrow state machine and the token movement are atomic.
+//
+// Strict phases (see contract/compact.md for the full graph):
+//
+//   Created ──fund──▶ Funded ──open review──▶ ContingenciesPending
+//      │                 │                      │        │
+//   cancel            expire               all cleared  fail/withdraw/expire
+//      ▼                 ▼                      ▼        ▼
+//   Cancelled         Expired ◀── Disputed ──▶ ReadyToClose / Refunded
+//                                                │
+//   Settled / Refunded / Expired ──payout──▶ Closed
+//
+// Every state-changing circuit asserts the exact source phase(s)
+// it may run from, so no transition can be skipped or replayed.
+// ============================================================
+
+export enum EscrowStatus {
+    Created,               // deployed, waiting for the buyer's deposit
+    Funded,                // deposit held, review not yet opened
+    ContingenciesPending,  // attestors submitting outcomes
+    ReadyToClose,          // every contingency cleared (or waived)
+    Disputed,              // frozen, only the resolver can move it
+    Settled,               // approved for release to seller, not yet paid
+    Refunded,              // approved for refund to buyer, not yet paid
+    Expired,               // refundable to buyer, not yet paid
+    Closed,                // funds disbursed (terminal)
+    Cancelled              // abandoned before funding, no funds ever held (terminal)
+}
+
+export enum Contingency {
+    Inspection,
+    Financing,
+    Title
+}
+
+export ledger status: EscrowStatus;
+export ledger lifecycleRound: Counter;
+export ledger correctionCount: Counter;   // how many results the resolver voided
+export ledger disbursed: Boolean;
+
+// Role identities: persistentHash of each role holder's secret key.
+// Attestor roles may share an identity with each other (or with the
+// buyer, e.g. a cash buyer acting as "lender"), but must be distinct
+// from the dispute resolver AND from the seller (separation of duties).
+export ledger buyerId: Bytes<32>;
+export ledger sellerId: Bytes<32>;
+export ledger inspectorId: Bytes<32>;
+export ledger lenderId: Bytes<32>;
+export ledger titleAgentId: Bytes<32>;
+export ledger resolverId: Bytes<32>;
+
+// Payout destinations and escrowed asset
+export ledger buyerAddress: UserAddress;
+export ledger sellerAddress: UserAddress;
+export ledger escrowColor: Bytes<32>;
+export ledger escrowAmount: Uint<128>;
+export ledger closingDeadline: Uint<64>;   // unix seconds
+export ledger disputeDeadline: Uint<64>;   // unix seconds, > closingDeadline
+
+// Contingency results. `submitted` = an outcome is on record,
+// `passed` = that outcome is favourable, `waived` = buyer waived it.
+export ledger inspectionSubmitted: Boolean;
+export ledger inspectionPassed: Boolean;
+export ledger inspectionWaived: Boolean;
+export ledger financingSubmitted: Boolean;
+export ledger financingApproved: Boolean;
+export ledger financingWaived: Boolean;
+export ledger titleSubmitted: Boolean;
+export ledger titleCleared: Boolean;
+export ledger titleWaived: Boolean;
+
+witness localSecretKey(): Bytes<32>;
+
+constructor(
+    buyer: Bytes<32>,
+    seller: Bytes<32>,
+    inspector: Bytes<32>,
+    lender: Bytes<32>,
+    titleAgent: Bytes<32>,
+    resolver: Bytes<32>,
+    buyerPayout: UserAddress,
+    sellerPayout: UserAddress,
+    color: Bytes<32>,
+    amount: Uint<128>,
+    deadline: Uint<64>,
+    disputeEnd: Uint<64>
+) {
+    buyerId = disclose(buyer);
+    sellerId = disclose(seller);
+    inspectorId = disclose(inspector);
+    lenderId = disclose(lender);
+    titleAgentId = disclose(titleAgent);
+    resolverId = disclose(resolver);
+
+    assert(buyerId != sellerId, "Buyer and seller must be distinct");
+    assert(buyerId != resolverId, "Buyer must be distinct from dispute resolver");
+    assert(sellerId != resolverId, "Seller must be distinct from dispute resolver");
+    assert(inspectorId != resolverId, "Inspector must be distinct from dispute resolver");
+    assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
+    assert(titleAgentId != resolverId, "Title agent must be distinct from dispute resolver");
+    assert(inspectorId != sellerId, "Inspector must be independent from seller");
+    assert(lenderId != sellerId, "Lender must be independent from seller");
+    assert(titleAgentId != sellerId, "Title agent must be independent from seller");
+
+    buyerAddress = disclose(buyerPayout);
+    sellerAddress = disclose(sellerPayout);
+    escrowColor = disclose(color);
+    escrowAmount = disclose(amount);
+    assert(escrowAmount > 0, "Escrow amount must be positive");
+    closingDeadline = disclose(deadline);
+    disputeDeadline = disclose(disputeEnd);
+    assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
+
+    status = EscrowStatus.Created;
+    disbursed = false;
+    inspectionSubmitted = false;
+    inspectionPassed = false;
+    inspectionWaived = false;
+    financingSubmitted = false;
+    financingApproved = false;
+    financingWaived = false;
+    titleSubmitted = false;
+    titleCleared = false;
+    titleWaived = false;
+}
+
+// ============================================================
+// ACCESS CONTROL (hash of witness secret, never ownPublicKey)
+// ============================================================
+// Exported so clients can derive the role ids passed to the constructor.
+export pure circuit roleIdOf(sk: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<2, Bytes<32>>>([pad(32, "re-escrow:role:"), sk]);
+}
+circuit roleId(): Bytes<32> {
+    return roleIdOf(localSecretKey());
+}
+circuit onlyBuyer(): [] {
+    assert(disclose(roleId() == buyerId), "Caller is not the buyer");
+}
+circuit onlySeller(): [] {
+    assert(disclose(roleId() == sellerId), "Caller is not the seller");
+}
+circuit onlyBuyerOrSeller(): [] {
+    const id = roleId();
+    assert(disclose(id == buyerId) || disclose(id == sellerId), "Caller is not buyer or seller");
+}
+circuit onlyParty(): [] {
+    const id = roleId();
+    assert(
+        disclose(id == buyerId) || disclose(id == sellerId) || disclose(id == resolverId),
+        "Caller is not buyer, seller or resolver"
+    );
+}
+circuit onlyDisputeResolver(): [] {
+    assert(disclose(roleId() == resolverId), "Caller is not the dispute resolver");
+}
+circuit onlyInspector(): [] {
+    assert(disclose(roleId() == inspectorId), "Caller is not the inspector");
+}
+circuit onlyLender(): [] {
+    assert(disclose(roleId() == lenderId), "Caller is not the lender");
+}
+circuit onlyTitleAgent(): [] {
+    assert(disclose(roleId() == titleAgentId), "Caller is not the title agent");
+}
+
+// ============================================================
+// PHASE HELPERS
+// ============================================================
+circuit allCleared(): Boolean {
+    return inspectionSubmitted && inspectionPassed &&
+           financingSubmitted && financingApproved &&
+           titleSubmitted && titleCleared;
+}
+circuit anyFailed(): Boolean {
+    return (inspectionSubmitted && !inspectionPassed) ||
+           (financingSubmitted && !financingApproved) ||
+           (titleSubmitted && !titleCleared);
+}
+circuit advanceIfAllCleared(): [] {
+    if (allCleared()) {
+        status = EscrowStatus.ReadyToClose;
+        lifecycleRound.increment(1);
+    }
+}
+
+// ============================================================
+// SETUP: CANCEL BEFORE FUNDING / DEPOSIT
+// ============================================================
+// Either side may walk away before any money is locked.
+export circuit cancelBeforeFunding(): [] {
+    assert(status == EscrowStatus.Created, "Escrow already funded");
+    onlyBuyerOrSeller();
+    status = EscrowStatus.Cancelled;
+    lifecycleRound.increment(1);
+}
+
+export circuit depositToEscrow(): [] {
+    assert(status == EscrowStatus.Created, "Escrow already funded");
+    onlyBuyer();
+    assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    receiveUnshielded(escrowColor, escrowAmount);
+    status = EscrowStatus.Funded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// CONTINGENCIES
+// ============================================================
+export circuit openContingencyReview(): [] {
+    assert(status == EscrowStatus.Funded, "Escrow is not funded");
+    onlyBuyerOrSeller();
+    status = EscrowStatus.ContingenciesPending;
+    lifecycleRound.increment(1);
+}
+
+// Each contingency outcome is attested ONCE by its designated role.
+// A result can only be re-attested after the resolver voided it
+// (see voidContingencyResult); nobody can overwrite it in place.
+export circuit submitInspection(passed: Boolean): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(!inspectionSubmitted, "Inspection outcome already submitted");
+    onlyInspector();
+    inspectionSubmitted = true;
+    inspectionPassed = disclose(passed);
+    advanceIfAllCleared();
+}
+export circuit submitFinancing(approved: Boolean): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(!financingSubmitted, "Financing outcome already submitted");
+    onlyLender();
+    financingSubmitted = true;
+    financingApproved = disclose(approved);
+    advanceIfAllCleared();
+}
+export circuit submitTitle(cleared: Boolean): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(!titleSubmitted, "Title outcome already submitted");
+    onlyTitleAgent();
+    titleSubmitted = true;
+    titleCleared = disclose(cleared);
+    advanceIfAllCleared();
+}
+
+// Correction path #1 (buyer only): contingencies protect the buyer,
+// so only the buyer may relax one: mark it satisfied whether it is
+// still pending or has failed. Irreversible, and recorded as waived.
+export circuit waiveContingency(which: Contingency): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    onlyBuyer();
+    const c = disclose(which);
+    if (c == Contingency.Inspection) {
+        assert(!(inspectionSubmitted && inspectionPassed), "Inspection already passed");
+        inspectionSubmitted = true;
+        inspectionPassed = true;
+        inspectionWaived = true;
+    } else if (c == Contingency.Financing) {
+        assert(!(financingSubmitted && financingApproved), "Financing already approved");
+        financingSubmitted = true;
+        financingApproved = true;
+        financingWaived = true;
+    } else {
+        assert(!(titleSubmitted && titleCleared), "Title already cleared");
+        titleSubmitted = true;
+        titleCleared = true;
+        titleWaived = true;
+    }
+    advanceIfAllCleared();
+}
+
+// A submitted contingency failed: the buyer may exit with a refund.
+export circuit cancelAndRefund(): [] {
+    assert(
+        status == EscrowStatus.ContingenciesPending,
+        "Escrow is not in contingency review"
+    );
+    onlyBuyer();
+    assert(anyFailed(), "No submitted contingency has failed");
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// The seller backs out voluntarily: releases the buyer, who is refunded.
+export circuit sellerWithdraw(): [] {
+    assert(
+        status == EscrowStatus.Funded ||
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose,
+        "Seller cannot withdraw in current state"
+    );
+    onlySeller();
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// EXPIRATION (permissionless keeper call, time-gated)
+// ============================================================
+// Before closing: past closingDeadline the deal is dead -> refundable.
+// While disputed: past disputeDeadline the resolver lost its chance;
+// default to refunding the buyer so funds can never be stuck forever.
+export circuit expireEscrow(): [] {
+    if (status == EscrowStatus.Disputed) {
+        assert(blockTimeGte(disputeDeadline), "Dispute deadline has not expired");
+    } else {
+        assert(
+            status == EscrowStatus.Funded ||
+            status == EscrowStatus.ContingenciesPending,
+            "Escrow cannot expire in current state"
+        );
+        assert(blockTimeGte(closingDeadline), "Closing deadline has not expired");
+    }
+    status = EscrowStatus.Expired;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// DISPUTE
+// ============================================================
+export circuit openDispute(): [] {
+    assert(
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose,
+        "Escrow cannot be disputed in current state"
+    );
+    onlyBuyerOrSeller();
+    assert(blockTimeLt(disputeDeadline), "Dispute window is closed");
+    status = EscrowStatus.Disputed;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// DISPUTE RESOLUTION (resolver never writes a contingency value)
+// ============================================================
+export circuit resolveDisputeRefund(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// The resolver may only award the seller when every contingency is
+// on record as cleared/waived. It cannot turn a failed or pending
+// contingency into a payout to the seller.
+export circuit resolveDisputeSettlement(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    assert(allCleared(), "Contingencies are not all cleared");
+    status = EscrowStatus.Settled;
+    lifecycleRound.increment(1);
+}
+
+// Correction path #2 (resolver, only inside a dispute): erase a
+// contested attestation so the ORIGINAL attestor re-attests it.
+// The resolver chooses no value; a buyer waiver cannot be voided.
+export circuit voidContingencyResult(which: Contingency): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    const c = disclose(which);
+    if (c == Contingency.Inspection) {
+        assert(inspectionSubmitted && !inspectionWaived, "No attested inspection to void");
+        inspectionSubmitted = false;
+        inspectionPassed = false;
+    } else if (c == Contingency.Financing) {
+        assert(financingSubmitted && !financingWaived, "No attested financing to void");
+        financingSubmitted = false;
+        financingApproved = false;
+    } else {
+        assert(titleSubmitted && !titleWaived, "No attested title to void");
+        titleSubmitted = false;
+        titleCleared = false;
+    }
+    correctionCount.increment(1);
+    status = EscrowStatus.ContingenciesPending;
+    lifecycleRound.increment(1);
+}
+
+// The dispute was unfounded: return to the phase implied by the record.
+export circuit dismissDispute(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    if (allCleared()) {
+        status = EscrowStatus.ReadyToClose;
+    } else {
+        status = EscrowStatus.ContingenciesPending;
+    }
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// CUSTODY: RELEASE / REFUND (the only exits to Closed)
+// ============================================================
+export circuit releaseToSeller(): [] {
+    assert(
+        status == EscrowStatus.ReadyToClose || status == EscrowStatus.Settled,
+        "Escrow is not releasable to seller"
+    );
+    assert(!disbursed, "Funds already disbursed");
+    if (status == EscrowStatus.ReadyToClose) {
+        onlyBuyerOrSeller();
+    } else {
+        onlyDisputeResolver();
+    }
+    assert(
+        unshieldedBalanceGte(escrowColor, escrowAmount),
+        "Escrow balance is insufficient"
+    );
+    disbursed = true;
+    status = EscrowStatus.Closed;
+    sendUnshielded(
+        escrowColor, escrowAmount,
+        right<ContractAddress, UserAddress>(sellerAddress)
+    );
+    lifecycleRound.increment(1);
+}
+
+export circuit refundBuyer(): [] {
+    assert(
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        "Escrow is not refundable"
+    );
+    assert(!disbursed, "Funds already disbursed");
+    onlyParty();
+    assert(
+        unshieldedBalanceGte(escrowColor, escrowAmount),
+        "Escrow balance is insufficient"
+    );
+    disbursed = true;
+    status = EscrowStatus.Closed;
+    sendUnshielded(
+        escrowColor, escrowAmount,
+        right<ContractAddress, UserAddress>(buyerAddress)
+    );
+    lifecycleRound.increment(1);
+}

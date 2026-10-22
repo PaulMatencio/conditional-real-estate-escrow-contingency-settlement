@@ -1,0 +1,8 @@
+node_modules/
+contract/managed/
+contract/.compat/
+.env
+.env.*
+secrets/
+*.log
+.DS_Store
