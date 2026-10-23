@@ -16,6 +16,8 @@
 
 # Analysis and implementation
 
+> **Update 2026-10-23 (`kyc.md`):** the escrowed token's `escrowColor` and its `escrowTicker` are now **mandatory at deployment** and immutable. They are no longer delayed attributes. Two delayed attributes were added for KYC: `KycIssuers` (trusted CASP keys, managed with `addKycIssuer`/`removeKycIssuer`) and `KycPolicy`. The total is 11 attributes, and `configure` takes 10 `Maybe` parameters. See `kyc.md`.
+
 *2026-10-22. Implemented in `conditional-real-estate-escrow-contingency-settlement.compact`. It compiles with `compactc` 0.31.1 and 0.35.0. A simulator run passed 78 of 78 checks (the 55 previous ones plus 23 for initialization).*
 
 ## Can points 1–7 be implemented?
@@ -67,4 +69,4 @@ stateDiagram-v2
 - Read `ledger(state).configured.member(InitAttribute.X)` for each member to show what is populated and what is missing.
 - Show the current `configVersion` and all values to buyer and seller, and pass that version to `acceptConfiguration`.
 - TypeScript `Maybe` shape: `{ is_some: true, value: v }` / `{ is_some: false, value: <zero of the type> }`.
-- `isFullyConfigured()` compares `configured.size()` with `10`. If you add a new `InitAttribute`, update that constant.
+- `isFullyConfigured()` compares `configured.size()` with `11`. If you add a new `InitAttribute`, update that constant.

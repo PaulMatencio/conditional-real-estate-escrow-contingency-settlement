@@ -100,7 +100,9 @@ Buyer, seller, inspector, lender, title agent and dispute resolver
 | `roleIdOf(sk)` _(exported, pure)_                                                                                                          | `persistentHash("re-escrow:role:", sk)`. Clients use it to derive the role ids passed to the constructor. |
 | `roleId()`                                                                                                                                 | The caller's role id from the `localSecretKey` witness (the secret never leaves the prover).              |
 | `onlyAdmin` / `onlyBuyer` / `onlySeller` / `onlyBuyerOrSeller` / `onlyParty` / `onlyDisputeResolver` / `onlyInspector` / `onlyLender` / `onlyTitleAgent` | Role guards. Only the boolean match is disclosed, never the key.                                          |
-| `isFullyConfigured()` / `applyConfig(...)` | All 10 `InitAttribute`s are in `configured` / writes each `some(v)` term and records it in `configured`. |
+| `isFullyConfigured()` / `applyConfig(...)` / `configChanged()` | All 11 `InitAttribute`s are in `configured` / writes each `some(v)` term and records it in `configured` / resets acceptances and bumps `configVersion`. |
+| `verifySchnorr(pk, msg, sig)` / `verifyBuyerKyc()` | Jubjub Schnorr verification of the CASP signature / the KYC gate used by `depositToEscrow`. |
+| `kycMessage(att)` / `kycReference(att)` _(exported, pure)_ | The message the CASP signs / the salted on-chain reference stored in `buyerKycRef`. |
 | `allCleared()`                                                                                                                             | All three contingencies are submitted and favourable (or waived).                                         |
 | `anyFailed()`                                                                                                                              | At least one submitted contingency is unfavourable.                                                       |
 | `advanceIfAllCleared()`                                                                                                                    | Automatic `ContingenciesPending → ReadyToClose`.                                                          |
@@ -109,12 +111,16 @@ Buyer, seller, inspector, lender, title agent and dispute resolver
 
 | Circuit                        | Caller                                                        | From → To                                                                                                             | Use case                                                                                                                          |
 | ------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `constructor(admin, buyer, seller, ...Maybe terms)` | Deployer | — → `Initializing` | Sets admin, buyer and seller (mandatory). The 10 other terms are `Maybe`, so each can be set now or left for later. See `delay-init.md`. |
+| `constructor(admin, buyer, seller, color, ticker, ...Maybe terms)` | Deployer | — → `Initializing` | Sets admin, buyer, seller, the unshielded token's color and its ticker symbol (mandatory, immutable). The 10 other terms are `Maybe`, so each can be set now or left for later. See `delay-init.md`. |
+| `addKycIssuer(id, key)` / `removeKycIssuer(id)` | Admin | `Initializing` → same | Maintains the trusted CASP whitelist (Jubjub public keys). Resets acceptances. See `kyc.md`. |
 | `configure(...Maybe terms)` | Admin | `Initializing` → same | Populates or corrects any subset of the terms. Resets buyer/seller acceptance and bumps `configVersion`. |
 | `acceptConfiguration(expectedVersion)` | Buyer, seller | `Initializing` → same | Each party signs off on the complete configuration at the version it read. |
 | `finalizeInitialization()` | Admin | `Initializing` → `Created` | Requires all terms present and valid, plus both acceptances. Freezes the configuration and ends the admin's powers. |
 | `cancelBeforeFunding()`        | Buyer or seller (admin too while `Initializing`)              | `Initializing` / `Created` → `Cancelled`                                                                                               | The deal falls through before any money is locked.                                                                                |
-| `depositToEscrow()`            | Buyer                                                         | `Created` → `Funded`                                                                                                  | Buyer locks exactly `escrowAmount` in the contract (before the deadline).                                                         |
+| `depositToEscrow()` | Buyer | `Created` → `Funded` | Buyer proves a valid KYC/AML attestation from a whitelisted CASP in zero knowledge (`ERROR_NOT_WHITELISTED`, `ERROR_KYC_*` on failure), then locks exactly `escrowAmount` (before the deadline). |
+| `submitSellerKyc()` | Seller | `Created` … `Settled` → same | Seller proves a KYC/AML attestation bound to `sellerId` and `sellerAddress`. Required before any payout to the seller. See `kyc.md` 5.3. |
+| `revokeKycAttestation(issuerId, ref, sig)` | Anyone (CASP-signed) | any → same | Revokes one attestation; it fails all later KYC checks with `ERROR_KYC_REVOKED`. |
+| `revokeKycIssuer(issuerId, sig)` | Anyone (CASP-signed) | any → same | The CASP withdraws its own key from the whitelist. |
 | `openContingencyReview()`      | Buyer or seller                                               | `Funded` → `ContingenciesPending`                                                                                     | Starts the inspection, financing and title period.                                                                                |
 | `submitInspection(passed)`     | Inspector                                                     | `ContingenciesPending` → same / `ReadyToClose`                                                                        | Inspector records the outcome once.                                                                                               |
 | `submitFinancing(approved)`    | Lender                                                        | `ContingenciesPending` → same / `ReadyToClose`                                                                        | Lender records the loan decision once.                                                                                            |
@@ -127,8 +133,8 @@ Buyer, seller, inspector, lender, title agent and dispute resolver
 | `resolveDisputeSettlement()`   | Resolver                                                      | `Disputed` → `Settled`                                                                                                | Resolver rules for the seller; **only when all contingencies are cleared**.                                                       |
 | `voidContingencyResult(which)` | Resolver                                                      | `Disputed` → `ContingenciesPending`                                                                                   | Erases one contested attestation so its original attestor re-attests.                                                             |
 | `dismissDispute()`             | Resolver                                                      | `Disputed` → `ReadyToClose` / `ContingenciesPending`                                                                  | Dispute rejected; resume where the record says.                                                                                   |
-| `expireEscrow()`               | Anyone (keeper)                                               | `Funded` / `ContingenciesPending` → `Expired` after `closingDeadline`; `Disputed` → `Expired` after `disputeDeadline` | Guarantees the funds are never stuck.                                                                                             |
-| `releaseToSeller()`            | Buyer/seller (from `ReadyToClose`), resolver (from `Settled`) | → `Closed`                                                                                                            | Pays the seller the full amount; closing.                                                                                         |
+| `expireEscrow()` | Anyone (keeper) | `Funded` / `ContingenciesPending` → `Expired` after `closingDeadline`; `Disputed` → `Expired` after `disputeDeadline`; `ReadyToClose` / `Settled` → `Expired` after `disputeDeadline` if the seller has no usable KYC | Guarantees the funds are never stuck. |
+| `releaseToSeller()` | Buyer/seller (from `ReadyToClose`), resolver (from `Settled`) | → `Closed` | Pays the seller the full amount; requires valid, unrevoked seller KYC (`ERROR_SELLER_KYC_REQUIRED`, `ERROR_KYC_REVOKED`, `ERROR_KYC_EXPIRED`). |
 | `refundBuyer()`                | Buyer, seller or resolver                                     | `Refunded` / `Expired` → `Closed`                                                                                     | Pays the buyer back the full amount.                                                                                              |
 
 ## 6–7. State machine
@@ -136,13 +142,13 @@ Buyer, seller, inspector, lender, title agent and dispute resolver
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> Initializing : constructor<br/>(admin, buyer, seller + Maybe terms)
-    Initializing --> Initializing : configure (admin)<br/>acceptConfiguration (buyer, seller)
+    [*] --> Initializing : constructor<br/>(admin, buyer, seller, color, ticker + Maybe terms)
+    Initializing --> Initializing : configure / addKycIssuer / removeKycIssuer (admin)<br/>acceptConfiguration (buyer, seller)
     Initializing --> Created : finalizeInitialization<br/>(admin, complete + valid + accepted)
     Initializing --> Cancelled : cancelBeforeFunding<br/>(admin | buyer | seller)
 
     Created --> Cancelled : cancelBeforeFunding<br/>(buyer | seller)
-    Created --> Funded : depositToEscrow<br/>(buyer, before closingDeadline)
+    Created --> Funded : depositToEscrow<br/>(buyer + valid KYC, before closingDeadline)
 
     Funded --> ContingenciesPending : openContingencyReview<br/>(buyer | seller)
     Funded --> Refunded : sellerWithdraw (seller)
@@ -156,7 +162,7 @@ stateDiagram-v2
 
     ReadyToClose --> Disputed : openDispute (buyer | seller)
     ReadyToClose --> Refunded : sellerWithdraw (seller)
-    ReadyToClose --> Closed : releaseToSeller<br/>(buyer | seller) - pays seller
+    ReadyToClose --> Closed : releaseToSeller<br/>(buyer | seller, seller KYC valid) - pays seller
 
     Disputed --> Refunded : resolveDisputeRefund (resolver)
     Disputed --> Settled : resolveDisputeSettlement<br/>(resolver, only if allCleared)
@@ -164,7 +170,9 @@ stateDiagram-v2
     Disputed --> ReadyToClose : dismissDispute (resolver, all cleared)
     Disputed --> Expired : expireEscrow<br/>(anyone, after disputeDeadline)
 
-    Settled --> Closed : releaseToSeller (resolver) - pays seller
+    ReadyToClose --> Expired : expireEscrow (anyone, after disputeDeadline,<br/>seller has no usable KYC)
+    Settled --> Expired : expireEscrow (same rule)
+    Settled --> Closed : releaseToSeller (resolver, seller KYC valid) - pays seller
     Refunded --> Closed : refundBuyer (party) - pays buyer
     Expired --> Closed : refundBuyer (party) - pays buyer
 

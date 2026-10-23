@@ -4,10 +4,11 @@ A [Midnight](https://midnight.network) Compact smart contract that holds a buyer
 
 - Contract: [`contract/conditional-real-estate-escrow-contingency-settlement.compact`](contract/conditional-real-estate-escrow-contingency-settlement.compact)
 - Review, circuit reference and state-machine diagram: [`contract/compact.md`](contract/compact.md)
+- Delayed initialization: [`contract/delay-init.md`](contract/delay-init.md) · KYC/AML: [`contract/kyc.md`](contract/kyc.md)
 
 ## Roles
 
-Buyer, seller, inspector, lender, title agent and dispute resolver. Each role is identified by `roleIdOf(secretKey)`. The attestors must be independent of the seller and the resolver.
+Admin (setup only), buyer, seller, inspector, lender, title agent and dispute resolver, plus trusted KYC providers (CASPs) whose attestation the buyer must prove at deposit. Each party role is identified by `roleIdOf(secretKey)`. The attestors must be independent of the seller and the resolver.
 
 ## Compile
 
@@ -17,4 +18,17 @@ compact compile +0.31.1 --skip-zk \
   contract/managed/escrow
 ```
 
-Language version 0.23 (compiler 0.31.1); also compiles with 0.35.0.
+Language version 0.23 (compiler 0.31.1). Compiler 0.34 and later would need the stdlib `jubjubSchnorrVerify` (see `contract/kyc.md`).
+
+## Test
+
+The simulator tests run every circuit off-chain with `@midnight-ntwrk/compact-runtime` 0.16.0, without a node or proofs:
+
+```sh
+cd contract
+npm install
+npm run compile   # -> contract/managed/escrow
+npm test
+```
+
+`contract/test/casp-signer.mjs` is the KYC provider's signing helper. It issues the KYC attestation that the buyer proves at deposit, and it also gives the dApp a `schnorrReduction` witness and an off-chain signature check.

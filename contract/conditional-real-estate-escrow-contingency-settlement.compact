@@ -12,10 +12,11 @@ import CompactStandardLibrary;
 // Strict phases (see contract/compact.md for the full graph):
 //
 //   Initializing ──configure* / accept (buyer+seller) / finalize (admin)──▶ Created
-//      │ (deployed with admin, buyer, seller; other terms may be missing)
+//      │ (deployed with admin, buyer, seller, token color + ticker;
+//      │  other terms may be missing)
 //   cancel ──▶ Cancelled
 //
-//   Created ──fund──▶ Funded ──open review──▶ ContingenciesPending
+//   Created ──fund (buyer + valid KYC attestation)──▶ Funded ──open review──▶ ContingenciesPending
 //      │                 │                      │        │
 //   cancel            expire               all cleared  fail/withdraw/expire
 //      ▼                 ▼                      ▼        ▼
@@ -50,10 +51,38 @@ export enum InitAttribute {
     Resolver,
     BuyerPayout,
     SellerPayout,
-    EscrowColor,
     EscrowAmount,
     ClosingDeadline,
-    DisputeDeadline
+    DisputeDeadline,
+    KycIssuers,      // at least one trusted CASP issuer key registered
+    KycPolicy        // minimum KYC level / maximum AML risk score
+}
+
+// ------------------------------------------------------------
+// KYC / AML (zero-knowledge attestation from a trusted CASP)
+// ------------------------------------------------------------
+// The CASP (KYC provider) checks the buyer's documents OFF-chain and
+// signs these claims with its Jubjub key. The buyer keeps the signed
+// attestation privately and proves in-circuit that it is genuine and
+// satisfies the policy. Only pass/fail and the issuer id become public;
+// level, risk score and salt stay private.
+export struct KycAttestation {
+    subject: Bytes<32>,       // buyer role id (roleIdOf(buyer secret))
+    wallet: UserAddress,      // wallet the CASP verified as the customer's
+    kycLevel: Uint<8>,        // e.g. 1 = basic, 2 = full CDD, 3 = enhanced DD
+    amlRiskScore: Uint<8>,    // 0 = lowest risk
+    validUntil: Uint<64>,     // unix seconds
+    salt: Bytes<32>           // random, keeps the on-chain reference hiding
+}
+
+export struct KycPolicy {
+    minKycLevel: Uint<8>,
+    maxAmlRiskScore: Uint<8>
+}
+
+export struct SchnorrSignature {
+    announcement: JubjubPoint,  // R = k*G
+    response: Field             // s = k + c*sk  (mod Jubjub order)
 }
 
 export enum Contingency {
@@ -90,10 +119,18 @@ export ledger resolverId: Bytes<32>;
 // Payout destinations and escrowed asset
 export ledger buyerAddress: UserAddress;
 export ledger sellerAddress: UserAddress;
-export ledger escrowColor: Bytes<32>;
+export ledger escrowColor: Bytes<32>;            // unshielded token type, fixed at deployment
+export ledger escrowTicker: Opaque<"string">;     // display symbol, fixed at deployment
 export ledger escrowAmount: Uint<128>;
 export ledger closingDeadline: Uint<64>;   // unix seconds
 export ledger disputeDeadline: Uint<64>;   // unix seconds, > closingDeadline
+
+// KYC: trusted CASP whitelist, policy and the buyer's verification record.
+export ledger kycIssuers: Map<Bytes<32>, JubjubPoint>;
+export ledger kycPolicy: KycPolicy;
+export ledger buyerKycVerified: Boolean;
+export ledger buyerKycIssuer: Bytes<32>;
+export ledger buyerKycRef: Bytes<32>;    // hiding commitment to the attestation (audit / notary)
 
 // Contingency results. `submitted` = an outcome is on record,
 // `passed` = that outcome is favourable, `waived` = buyer waived it.
@@ -108,8 +145,14 @@ export ledger titleCleared: Boolean;
 export ledger titleWaived: Boolean;
 
 witness localSecretKey(): Bytes<32>;
+// Buyer's private KYC attestation, the CASP signature and the issuer id.
+witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
+// Splits a 255-bit challenge c into q * 2^248 + r (r < 2^248), so r is a
+// valid Jubjub scalar. The circuit checks the split; see verifySchnorr.
+witness schnorrReduction(c: Field): [Uint<7>, Uint<248>];
 
-// Only admin, buyer and seller are mandatory at deployment. Every
+// Admin, buyer, seller, the escrowed token's color and its ticker are
+// mandatory at deployment and can never change. Every
 // other term is a Maybe: pass none() to leave it for later, some(v)
 // to set it now. The contract starts in Initializing and is unusable
 // until finalizeInitialization() succeeds.
@@ -117,22 +160,27 @@ constructor(
     admin: Bytes<32>,
     buyer: Bytes<32>,
     seller: Bytes<32>,
+    color: Bytes<32>,
+    ticker: Opaque<"string">,
     inspector: Maybe<Bytes<32>>,
     lender: Maybe<Bytes<32>>,
     titleAgent: Maybe<Bytes<32>>,
     resolver: Maybe<Bytes<32>>,
     buyerPayout: Maybe<UserAddress>,
     sellerPayout: Maybe<UserAddress>,
-    color: Maybe<Bytes<32>>,
     amount: Maybe<Uint<128>>,
     deadline: Maybe<Uint<64>>,
-    disputeEnd: Maybe<Uint<64>>
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
 ) {
     adminId = disclose(admin);
     buyerId = disclose(buyer);
     sellerId = disclose(seller);
     assert(buyerId != sellerId, "Buyer and seller must be distinct");
     assert(adminId != buyerId, "Admin must be the seller or a third party, not the buyer");
+    escrowColor = disclose(color);
+    escrowTicker = disclose(ticker);
+    buyerKycVerified = false;
 
     status = EscrowStatus.Initializing;
     disbursed = false;
@@ -149,7 +197,7 @@ constructor(
     titleWaived = false;
 
     applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
-                sellerPayout, color, amount, deadline, disputeEnd);
+                sellerPayout, amount, deadline, disputeEnd, policy);
 }
 
 // ============================================================
@@ -200,7 +248,7 @@ circuit onlyTitleAgent(): [] {
 // ============================================================
 // Number of InitAttribute members; keep in sync with the enum.
 circuit isFullyConfigured(): Boolean {
-    return configured.size() == 10;
+    return configured.size() == 11;
 }
 
 // Writes every attribute passed as some(v); none() leaves it unchanged.
@@ -213,10 +261,10 @@ circuit applyConfig(
     resolver: Maybe<Bytes<32>>,
     buyerPayout: Maybe<UserAddress>,
     sellerPayout: Maybe<UserAddress>,
-    color: Maybe<Bytes<32>>,
     amount: Maybe<Uint<128>>,
     deadline: Maybe<Uint<64>>,
-    disputeEnd: Maybe<Uint<64>>
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
 ): [] {
     const i = disclose(inspector);
     if (i.is_some) { inspectorId = i.value; configured.insert(InitAttribute.Inspector); }
@@ -230,8 +278,6 @@ circuit applyConfig(
     if (bp.is_some) { buyerAddress = bp.value; configured.insert(InitAttribute.BuyerPayout); }
     const sp = disclose(sellerPayout);
     if (sp.is_some) { sellerAddress = sp.value; configured.insert(InitAttribute.SellerPayout); }
-    const c = disclose(color);
-    if (c.is_some) { escrowColor = c.value; configured.insert(InitAttribute.EscrowColor); }
     const a = disclose(amount);
     if (a.is_some) {
         assert(a.value > 0, "Escrow amount must be positive");
@@ -242,6 +288,12 @@ circuit applyConfig(
     if (d.is_some) { closingDeadline = d.value; configured.insert(InitAttribute.ClosingDeadline); }
     const de = disclose(disputeEnd);
     if (de.is_some) { disputeDeadline = de.value; configured.insert(InitAttribute.DisputeDeadline); }
+    const kp = disclose(policy);
+    if (kp.is_some) {
+        assert(kp.value.minKycLevel > 0, "KYC policy must require a KYC level");
+        kycPolicy = kp.value;
+        configured.insert(InitAttribute.KycPolicy);
+    }
 }
 
 // Admin populates (or corrects) any subset of the missing terms.
@@ -253,18 +305,46 @@ export circuit configure(
     resolver: Maybe<Bytes<32>>,
     buyerPayout: Maybe<UserAddress>,
     sellerPayout: Maybe<UserAddress>,
-    color: Maybe<Bytes<32>>,
     amount: Maybe<Uint<128>>,
     deadline: Maybe<Uint<64>>,
-    disputeEnd: Maybe<Uint<64>>
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
 ): [] {
     assert(status == EscrowStatus.Initializing, "Contract is already initialized");
     onlyAdmin();
     applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
-                sellerPayout, color, amount, deadline, disputeEnd);
+                sellerPayout, amount, deadline, disputeEnd, policy);
+    configChanged();
+}
+
+circuit configChanged(): [] {
     buyerAccepted = false;
     sellerAccepted = false;
     configVersion.increment(1);
+}
+
+// Trusted CASP whitelist. Managed by the admin during initialization;
+// accepted by buyer and seller with the rest of the configuration and
+// frozen at finalization.
+export circuit addKycIssuer(issuerId: Bytes<32>, issuerKey: JubjubPoint): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const k = disclose(issuerKey);
+    assert(!(jubjubPointX(k) == (0 as Field) && jubjubPointY(k) == (1 as Field)), "Issuer key must not be the identity point");
+    kycIssuers.insert(disclose(issuerId), k);
+    configured.insert(InitAttribute.KycIssuers);
+    configChanged();
+}
+export circuit removeKycIssuer(issuerId: Bytes<32>): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const id = disclose(issuerId);
+    assert(kycIssuers.member(id), "Unknown KYC issuer");
+    kycIssuers.remove(id);
+    if (kycIssuers.isEmpty()) {
+        configured.remove(InitAttribute.KycIssuers);
+    }
+    configChanged();
 }
 
 // Buyer and seller each sign off on the complete configuration they
@@ -328,6 +408,63 @@ circuit advanceIfAllCleared(): [] {
 }
 
 // ============================================================
+// KYC VERIFICATION
+// ============================================================
+// Schnorr verification over Jubjub: s*G == R + c*pk with
+// c = H(R, pk, msg). The challenge is reduced below 2^248 so that it is
+// a valid Jubjub scalar; the witness split is checked in-circuit and the
+// quotient bounded so the prover cannot pick an alternative challenge.
+// (Compiler >= 0.34 has stdlib jubjubSchnorrVerify; see contract/kyc.md.)
+circuit verifySchnorr(pk: JubjubPoint, msg: Field, sig: SchnorrSignature): Boolean {
+    const R = sig.announcement;
+    const cFull = transientHash<Vector<5, Field>>(
+        [jubjubPointX(R), jubjubPointY(R), jubjubPointX(pk), jubjubPointY(pk), msg]
+    );
+    const split = schnorrReduction(cFull);
+    const q = disclose(split[0]);
+    const c = disclose(split[1]);
+    assert(q < 116, "Schnorr quotient out of range");
+    assert(
+        (q as Field) * (452312848583266388373324160190187140051835877600158453279131187530910662656 as Field)
+            + (c as Field) == cFull,
+        "Schnorr challenge reduction mismatch"
+    );
+    const lhs = ecMulGenerator(sig.response);
+    const rhs = ecAdd(R, ecMul(pk, c as Field));
+    return jubjubPointX(lhs) == jubjubPointX(rhs) && jubjubPointY(lhs) == jubjubPointY(rhs);
+}
+
+// Message the CASP signs: domain tag + all claims.
+export pure circuit kycMessage(att: KycAttestation): Field {
+    return transientHash<[Bytes<32>, KycAttestation]>([pad(32, "re-escrow:kyc:v1"), att]);
+}
+// Hiding on-chain reference to the attestation (salted).
+export pure circuit kycReference(att: KycAttestation): Bytes<32> {
+    return persistentHash<[Bytes<32>, KycAttestation]>([pad(32, "re-escrow:kyc-ref:v1"), att]);
+}
+
+// Proves, without revealing the attestation, that the buyer holds a
+// valid, unexpired attestation from a whitelisted CASP for THIS buyer
+// and THIS payout wallet that meets the KYC/AML policy.
+circuit verifyBuyerKyc(): [] {
+    const [att, sig, issuer] = kycAttestation();
+    const issuerId = disclose(issuer);
+    assert(kycIssuers.member(issuerId), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(issuerId), kycMessage(att), sig)),
+        "ERROR_NOT_WHITELISTED: invalid KYC attestation signature"
+    );
+    assert(disclose(att.subject == buyerId), "ERROR_NOT_WHITELISTED: attestation is for another subject");
+    assert(disclose(att.wallet == buyerAddress), "ERROR_NOT_WHITELISTED: wallet is not the verified buyer wallet");
+    assert(blockTimeLt(disclose(att.validUntil)), "ERROR_KYC_EXPIRED");
+    assert(disclose(att.kycLevel >= kycPolicy.minKycLevel), "ERROR_KYC_LEVEL_INSUFFICIENT");
+    assert(disclose(att.amlRiskScore <= kycPolicy.maxAmlRiskScore), "ERROR_AML_RISK_TOO_HIGH");
+    buyerKycVerified = true;
+    buyerKycIssuer = issuerId;
+    buyerKycRef = disclose(kycReference(att));
+}
+
+// ============================================================
 // SETUP: CANCEL BEFORE FUNDING / DEPOSIT
 // ============================================================
 // Either side may walk away before any money is locked; while the
@@ -351,6 +488,7 @@ export circuit depositToEscrow(): [] {
     assert(status == EscrowStatus.Created, "Escrow is not ready for funding");
     onlyBuyer();
     assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    verifyBuyerKyc();   // KYC/AML gate: reverts before any funds move
     receiveUnshielded(escrowColor, escrowAmount);
     status = EscrowStatus.Funded;
     lifecycleRound.increment(1);
