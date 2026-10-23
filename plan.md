@@ -17,11 +17,19 @@ storage, crypto, tooling) · `src/presentation` (UI, hooks, providers, i18n). De
 
 ## Roles
 
-- **Buyer** — the account equal to the ledger `owner` (the deployer): deploy/registration, pause/unpause,
-  `emergencyWithdraw`, and may also coordinate multisig operations.
-- **Seller** — holds a signer key whose commitment is registered: authorises `mint`, `burn`, `contractWithdraw`,
-  `setEmergencyPauser`, `setThreshold`, `rotateSigner` by signing **offline**.
-- **Resolver** — anyone else: wallet transfers, `deposit`, balance and supply queries.
+- ** Admin ** - The account equal to the ledger `owner` (the deployer):
+
+- **Buyer** — the account equal to the buyer
+
+- **Seller** — the account equal to the seller
+
+- **Inspector** - The account
+
+- **Lender**
+
+- **title agent**
+
+- **Dispute Resolver**
 
 ## Constraints (unchanged)
 
@@ -40,27 +48,27 @@ Performance, security, accessibility, SEO, i18n (en/fr/es), testing, clean archi
 ## Relevant files
 
 `contract/conditional-real-estate-escrow-contingency-settlement.compact` ·
-`midnight.config.json` · `scripts/` (compile, deploy-cost,
-check-contract, verify-manager-key) · `docker-compose.yml` · `.github/workflows/ci.yml`
+`midnight.config.json` · `docker-compose.yml` . `compact.md`.
+`delay-init.md` .
 
 ---
 
 ## Implementation roadmap
 
-### Phase 1 — Wallet and deployment ✅
+### Phase 1 — Wallet connection and contract deployment ✅
 
-- [x] Reusable wallet connector for **Lace and 1AM** (detect, connect with timeouts, status, **disconnect**)
-- [x] Build & Deploy tab driven by `midnight.config.json`: compile → generate SDK → generate tests → run tests → deploy
-- [x] Toolchain pin (0.31.1) with `scripts/compile.mjs` compat step
-- [x] **Staged deploy** (4 circuits in the deploy tx, the rest by maintenance transactions) with resume from chain state
-- [x] Deploy/registration progress panel; authority key export/import
-- [x] Midnight theme, responsive layout
+- Reusable wallet connector for **Lace and 1AM** (detect, connect with timeouts, status, **disconnect**)
+- Build & Deploy tab driven by `midnight.config.json`: compile → generate SDK → generate tests → run tests → deploy
+- Toolchain pin (0.31.1) with `scripts/compile.mjs` scripts/deploy
+- To deploy a contract while retaining the ability to fill in missing attributes at a later time to complete the initalisation
+- **Staged deploy** (4 circuits in the deploy tx, the rest by maintenance transactions) with resume from chain state
+- Deploy/registration progress panel; authority key export/import
+- Midnight theme, responsive layout
 
 ### Phase 2 — Contract operations and roles ✅
 
-- [x] Role resolution and role-specific UI (buyer / seller / disputeResolver)
-- [x] All circuits: `mint`, `burn`, `contractWithdraw`, `deposit`, `pause`, `unpause`, `emergencyWithdraw`,
-      `setEmergencyPauser`, `setThreshold`, `rotateSigner`
+- [x] Role resolution and role-specific UI. Refer to the
+- [x] All circuits: Refer to the ## 5. Circuit reference of the contact/compact
 - [x] **Test Mode** (simulator, mock identities, replayed persistence) and **Wallet Mode**
 - [x] Step-by-step progress for every action
 - [x] Persistent transaction history and **history backfill** from the indexer

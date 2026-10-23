@@ -11,6 +11,10 @@ import CompactStandardLibrary;
 //
 // Strict phases (see contract/compact.md for the full graph):
 //
+//   Initializing ──configure* / accept (buyer+seller) / finalize (admin)──▶ Created
+//      │ (deployed with admin, buyer, seller; other terms may be missing)
+//   cancel ──▶ Cancelled
+//
 //   Created ──fund──▶ Funded ──open review──▶ ContingenciesPending
 //      │                 │                      │        │
 //   cancel            expire               all cleared  fail/withdraw/expire
@@ -24,6 +28,7 @@ import CompactStandardLibrary;
 // ============================================================
 
 export enum EscrowStatus {
+    Initializing,          // deployed, terms still being configured by the admin
     Created,               // deployed, waiting for the buyer's deposit
     Funded,                // deposit held, review not yet opened
     ContingenciesPending,  // attestors submitting outcomes
@@ -36,6 +41,21 @@ export enum EscrowStatus {
     Cancelled              // abandoned before funding, no funds ever held (terminal)
 }
 
+// Every term that may be missing at deployment and filled in later
+// by the admin. `configured` holds the ones already populated.
+export enum InitAttribute {
+    Inspector,
+    Lender,
+    TitleAgent,
+    Resolver,
+    BuyerPayout,
+    SellerPayout,
+    EscrowColor,
+    EscrowAmount,
+    ClosingDeadline,
+    DisputeDeadline
+}
+
 export enum Contingency {
     Inspection,
     Financing,
@@ -46,6 +66,15 @@ export ledger status: EscrowStatus;
 export ledger lifecycleRound: Counter;
 export ledger correctionCount: Counter;   // how many results the resolver voided
 export ledger disbursed: Boolean;
+
+// ------------------------------------------------------------
+// Delayed initialization
+// ------------------------------------------------------------
+export ledger adminId: Bytes<32>;               // configures terms; no power after finalize
+export ledger configured: Set<InitAttribute>;   // populated attributes (missing = all - configured)
+export ledger configVersion: Counter;           // bumped by every admin change
+export ledger buyerAccepted: Boolean;           // reset by every admin change
+export ledger sellerAccepted: Boolean;          // reset by every admin change
 
 // Role identities: persistentHash of each role holder's secret key.
 // Attestor roles may share an identity with each other (or with the
@@ -80,48 +109,35 @@ export ledger titleWaived: Boolean;
 
 witness localSecretKey(): Bytes<32>;
 
+// Only admin, buyer and seller are mandatory at deployment. Every
+// other term is a Maybe: pass none() to leave it for later, some(v)
+// to set it now. The contract starts in Initializing and is unusable
+// until finalizeInitialization() succeeds.
 constructor(
+    admin: Bytes<32>,
     buyer: Bytes<32>,
     seller: Bytes<32>,
-    inspector: Bytes<32>,
-    lender: Bytes<32>,
-    titleAgent: Bytes<32>,
-    resolver: Bytes<32>,
-    buyerPayout: UserAddress,
-    sellerPayout: UserAddress,
-    color: Bytes<32>,
-    amount: Uint<128>,
-    deadline: Uint<64>,
-    disputeEnd: Uint<64>
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<UserAddress>,
+    sellerPayout: Maybe<UserAddress>,
+    color: Maybe<Bytes<32>>,
+    amount: Maybe<Uint<128>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>
 ) {
+    adminId = disclose(admin);
     buyerId = disclose(buyer);
     sellerId = disclose(seller);
-    inspectorId = disclose(inspector);
-    lenderId = disclose(lender);
-    titleAgentId = disclose(titleAgent);
-    resolverId = disclose(resolver);
-
     assert(buyerId != sellerId, "Buyer and seller must be distinct");
-    assert(buyerId != resolverId, "Buyer must be distinct from dispute resolver");
-    assert(sellerId != resolverId, "Seller must be distinct from dispute resolver");
-    assert(inspectorId != resolverId, "Inspector must be distinct from dispute resolver");
-    assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
-    assert(titleAgentId != resolverId, "Title agent must be distinct from dispute resolver");
-    assert(inspectorId != sellerId, "Inspector must be independent from seller");
-    assert(lenderId != sellerId, "Lender must be independent from seller");
-    assert(titleAgentId != sellerId, "Title agent must be independent from seller");
+    assert(adminId != buyerId, "Admin must be the seller or a third party, not the buyer");
 
-    buyerAddress = disclose(buyerPayout);
-    sellerAddress = disclose(sellerPayout);
-    escrowColor = disclose(color);
-    escrowAmount = disclose(amount);
-    assert(escrowAmount > 0, "Escrow amount must be positive");
-    closingDeadline = disclose(deadline);
-    disputeDeadline = disclose(disputeEnd);
-    assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
-
-    status = EscrowStatus.Created;
+    status = EscrowStatus.Initializing;
     disbursed = false;
+    buyerAccepted = false;
+    sellerAccepted = false;
     inspectionSubmitted = false;
     inspectionPassed = false;
     inspectionWaived = false;
@@ -131,6 +147,9 @@ constructor(
     titleSubmitted = false;
     titleCleared = false;
     titleWaived = false;
+
+    applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
+                sellerPayout, color, amount, deadline, disputeEnd);
 }
 
 // ============================================================
@@ -148,6 +167,9 @@ circuit onlyBuyer(): [] {
 }
 circuit onlySeller(): [] {
     assert(disclose(roleId() == sellerId), "Caller is not the seller");
+}
+circuit onlyAdmin(): [] {
+    assert(disclose(roleId() == adminId), "Caller is not the admin");
 }
 circuit onlyBuyerOrSeller(): [] {
     const id = roleId();
@@ -174,6 +196,118 @@ circuit onlyTitleAgent(): [] {
 }
 
 // ============================================================
+// DELAYED INITIALIZATION
+// ============================================================
+// Number of InitAttribute members; keep in sync with the enum.
+circuit isFullyConfigured(): Boolean {
+    return configured.size() == 10;
+}
+
+// Writes every attribute passed as some(v); none() leaves it unchanged.
+// Only single-field sanity checks here; cross-field rules are checked
+// once, in finalizeInitialization(), when every value is known.
+circuit applyConfig(
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<UserAddress>,
+    sellerPayout: Maybe<UserAddress>,
+    color: Maybe<Bytes<32>>,
+    amount: Maybe<Uint<128>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>
+): [] {
+    const i = disclose(inspector);
+    if (i.is_some) { inspectorId = i.value; configured.insert(InitAttribute.Inspector); }
+    const l = disclose(lender);
+    if (l.is_some) { lenderId = l.value; configured.insert(InitAttribute.Lender); }
+    const t = disclose(titleAgent);
+    if (t.is_some) { titleAgentId = t.value; configured.insert(InitAttribute.TitleAgent); }
+    const r = disclose(resolver);
+    if (r.is_some) { resolverId = r.value; configured.insert(InitAttribute.Resolver); }
+    const bp = disclose(buyerPayout);
+    if (bp.is_some) { buyerAddress = bp.value; configured.insert(InitAttribute.BuyerPayout); }
+    const sp = disclose(sellerPayout);
+    if (sp.is_some) { sellerAddress = sp.value; configured.insert(InitAttribute.SellerPayout); }
+    const c = disclose(color);
+    if (c.is_some) { escrowColor = c.value; configured.insert(InitAttribute.EscrowColor); }
+    const a = disclose(amount);
+    if (a.is_some) {
+        assert(a.value > 0, "Escrow amount must be positive");
+        escrowAmount = a.value;
+        configured.insert(InitAttribute.EscrowAmount);
+    }
+    const d = disclose(deadline);
+    if (d.is_some) { closingDeadline = d.value; configured.insert(InitAttribute.ClosingDeadline); }
+    const de = disclose(disputeEnd);
+    if (de.is_some) { disputeDeadline = de.value; configured.insert(InitAttribute.DisputeDeadline); }
+}
+
+// Admin populates (or corrects) any subset of the missing terms.
+// Any change invalidates earlier buyer/seller acceptances.
+export circuit configure(
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<UserAddress>,
+    sellerPayout: Maybe<UserAddress>,
+    color: Maybe<Bytes<32>>,
+    amount: Maybe<Uint<128>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>
+): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
+                sellerPayout, color, amount, deadline, disputeEnd);
+    buyerAccepted = false;
+    sellerAccepted = false;
+    configVersion.increment(1);
+}
+
+// Buyer and seller each sign off on the complete configuration they
+// read at `expectedVersion`. If the admin changed anything in between,
+// the version no longer matches and the acceptance is rejected.
+export circuit acceptConfiguration(expectedVersion: Uint<64>): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    assert(isFullyConfigured(), "Configuration is incomplete");
+    assert(configVersion.read() == disclose(expectedVersion), "Configuration changed since it was read");
+    const id = roleId();
+    if (disclose(id == buyerId)) {
+        buyerAccepted = true;
+    } else {
+        assert(disclose(id == sellerId), "Caller is not buyer or seller");
+        sellerAccepted = true;
+    }
+}
+
+// All terms present, valid and accepted by both parties: the contract
+// becomes usable (Created). The configuration is frozen from here on
+// and the admin role has no further power.
+export circuit finalizeInitialization(): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    assert(isFullyConfigured(), "Configuration is incomplete");
+    assert(buyerAccepted && sellerAccepted, "Buyer and seller must accept the configuration");
+
+    assert(buyerId != resolverId, "Buyer must be distinct from dispute resolver");
+    assert(sellerId != resolverId, "Seller must be distinct from dispute resolver");
+    assert(inspectorId != resolverId, "Inspector must be distinct from dispute resolver");
+    assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
+    assert(titleAgentId != resolverId, "Title agent must be distinct from dispute resolver");
+    assert(inspectorId != sellerId, "Inspector must be independent from seller");
+    assert(lenderId != sellerId, "Lender must be independent from seller");
+    assert(titleAgentId != sellerId, "Title agent must be independent from seller");
+    assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
+    assert(blockTimeLt(closingDeadline), "Closing deadline is already in the past");
+
+    status = EscrowStatus.Created;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
 // PHASE HELPERS
 // ============================================================
 circuit allCleared(): Boolean {
@@ -196,16 +330,25 @@ circuit advanceIfAllCleared(): [] {
 // ============================================================
 // SETUP: CANCEL BEFORE FUNDING / DEPOSIT
 // ============================================================
-// Either side may walk away before any money is locked.
+// Either side may walk away before any money is locked; while the
+// contract is still Initializing the admin may abandon it too.
 export circuit cancelBeforeFunding(): [] {
-    assert(status == EscrowStatus.Created, "Escrow already funded");
-    onlyBuyerOrSeller();
+    assert(
+        status == EscrowStatus.Initializing || status == EscrowStatus.Created,
+        "Escrow already funded"
+    );
+    const id = roleId();
+    assert(
+        disclose(id == buyerId) || disclose(id == sellerId) ||
+        (status == EscrowStatus.Initializing && disclose(id == adminId)),
+        "Caller cannot cancel"
+    );
     status = EscrowStatus.Cancelled;
     lifecycleRound.increment(1);
 }
 
 export circuit depositToEscrow(): [] {
-    assert(status == EscrowStatus.Created, "Escrow already funded");
+    assert(status == EscrowStatus.Created, "Escrow is not ready for funding");
     onlyBuyer();
     assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
     receiveUnshielded(escrowColor, escrowAmount);
