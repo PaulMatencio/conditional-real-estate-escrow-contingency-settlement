@@ -1,10 +1,11 @@
 # Conditional real-estate escrow with contingency settlement
 
-A [Midnight](https://midnight.network) Compact smart contract that holds a buyer's funds in escrow (unshielded tokens) and releases them to the seller only after the inspection, financing and title contingencies clear. It refunds the buyer when a contingency fails, the seller withdraws, or a deadline passes.
+A [Midnight](https://midnight.network) Compact smart contract that holds a buyer's funds in escrow as a **shielded** token (e.g. a EUR e-money token), keeping the price and payout wallets private, and releases them to the seller only after the inspection, financing and title contingencies clear. It refunds the buyer when a contingency fails, the seller withdraws, or a deadline passes.
 
 - Contract: [`contract/conditional-real-estate-escrow-contingency-settlement.compact`](contract/conditional-real-estate-escrow-contingency-settlement.compact)
 - Review, circuit reference and state-machine diagram: [`contract/compact.md`](contract/compact.md)
-- Delayed initialization: [`contract/delay-init.md`](contract/delay-init.md) · KYC/AML: [`contract/kyc.md`](contract/kyc.md)
+- Delayed initialization: [`contract/delay-init.md`](contract/delay-init.md) · KYC/AML: [`contract/kyc.md`](contract/kyc.md) · Shielded custody: [`contract/shielded-token.md`](contract/shielded-token.md)
+- dApp requirements (SRS v2.0): [`dApp-requirements-specification.md`](dApp-requirements-specification.md)
 
 ## Roles
 

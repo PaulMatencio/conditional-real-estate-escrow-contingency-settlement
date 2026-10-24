@@ -5,15 +5,19 @@ import CompactStandardLibrary;
 // ============================================================
 // Conditional real-estate escrow with contingency settlement
 //
-// Custody model: UNSHIELDED ledger tokens. The contract itself
-// holds the funds (receiveUnshielded / sendUnshielded), so the
-// escrow state machine and the token movement are atomic.
+// Custody model: SHIELDED tokens (e.g. a MiCA EMT stablecoin issued as a
+// shielded Zswap token). The buyer's deposit is ONE shielded coin owned by
+// this contract (receiveShielded); payouts spend that exact coin to the
+// seller's or buyer's shielded coin public key (sendShielded). The amount
+// and both payout keys are PRIVATE: the ledger only holds salted
+// commitments, and parties supply the openings through the `privateTerms`
+// witness. The coin itself is never written to the public ledger.
 //
 // Strict phases (see contract/compact.md for the full graph):
 //
 //   Initializing ──configure* / accept (buyer+seller) / finalize (admin)──▶ Created
-//      │ (deployed with admin, buyer, seller, token color + ticker;
-//      │  other terms may be missing)
+//      │ (deployed with admin, buyer, seller, shielded token color + ticker;
+//      │  other terms, incl. the amount / payout-key commitments, may be missing)
 //   cancel ──▶ Cancelled
 //
 //   Created ──fund (buyer + valid KYC attestation)──▶ Funded ──open review──▶ ContingenciesPending
@@ -49,9 +53,9 @@ export enum InitAttribute {
     Lender,
     TitleAgent,
     Resolver,
-    BuyerPayout,
-    SellerPayout,
-    EscrowAmount,
+    BuyerPayout,     // commitment to the buyer's shielded payout key
+    SellerPayout,    // commitment to the seller's shielded payout key
+    EscrowAmount,    // commitment to the escrowed amount
     ClosingDeadline,
     DisputeDeadline,
     KycIssuers,      // at least one trusted CASP issuer key registered
@@ -67,12 +71,24 @@ export enum InitAttribute {
 // satisfies the policy. Only pass/fail and the issuer id become public;
 // level, risk score and salt stay private.
 export struct KycAttestation {
-    subject: Bytes<32>,       // buyer role id (roleIdOf(buyer secret))
-    wallet: UserAddress,      // wallet the CASP verified as the customer's
+    subject: Bytes<32>,       // buyer or seller role id (roleIdOf(secret))
+    wallet: ZswapCoinPublicKey, // shielded wallet key the CASP verified as the customer's
     kycLevel: Uint<8>,        // e.g. 1 = basic, 2 = full CDD, 3 = enhanced DD
     amlRiskScore: Uint<8>,    // 0 = lowest risk
     validUntil: Uint<64>,     // unix seconds
+    travelRuleRef: Bytes<32>, // salted commitment to off-chain Travel Rule (IVMS101) record
     salt: Bytes<32>           // random, keeps the on-chain reference hiding
+}
+
+// Private escrow terms, known to buyer, seller and admin, never on-chain.
+// The ledger holds a salted commitment to each part (see *CommitmentOf).
+export struct PrivateTerms {
+    amount: Uint<128>,
+    amountSalt: Bytes<32>,
+    buyerPayout: ZswapCoinPublicKey,   // refunds go here (shielded)
+    buyerSalt: Bytes<32>,
+    sellerPayout: ZswapCoinPublicKey,  // the purchase price goes here (shielded)
+    sellerSalt: Bytes<32>
 }
 
 export struct KycPolicy {
@@ -116,35 +132,52 @@ export ledger lenderId: Bytes<32>;
 export ledger titleAgentId: Bytes<32>;
 export ledger resolverId: Bytes<32>;
 
-// Payout destinations and escrowed asset
-export ledger buyerAddress: UserAddress;
-export ledger sellerAddress: UserAddress;
-export ledger escrowColor: Bytes<32>;            // unshielded token type, fixed at deployment
-export ledger escrowTicker: Opaque<"string">;     // display symbol, fixed at deployment
-export ledger escrowAmount: Uint<128>;
+// Escrowed asset and PRIVATE terms (commitments only)
+export ledger escrowColor: Bytes<32>;             // shielded token type, fixed at deployment
+export ledger escrowTicker: Opaque<"string">;      // display symbol, fixed at deployment
+export ledger amountCommitment: Bytes<32>;         // amountCommitmentOf(amount, amountSalt)
+export ledger buyerPayoutCommitment: Bytes<32>;    // payoutCommitmentOf(buyerPayout, buyerSalt)
+export ledger sellerPayoutCommitment: Bytes<32>;   // payoutCommitmentOf(sellerPayout, sellerSalt)
 export ledger closingDeadline: Uint<64>;   // unix seconds
 export ledger disputeDeadline: Uint<64>;   // unix seconds, > closingDeadline
 
-// KYC: trusted CASP whitelist, policy and the buyer's verification record.
+// KYC: trusted CASP whitelist, revocation set, policy and buyer/seller verification records.
 export ledger kycIssuers: Map<Bytes<32>, JubjubPoint>;
+export ledger revokedKycRefs: Set<Bytes<32>>;
 export ledger kycPolicy: KycPolicy;
 export ledger buyerKycVerified: Boolean;
 export ledger buyerKycIssuer: Bytes<32>;
-export ledger buyerKycRef: Bytes<32>;    // hiding commitment to the attestation (audit / notary)
+export ledger buyerKycRef: Bytes<32>;          // hiding commitment to the attestation (audit / notary)
+export ledger buyerTravelRuleRef: Bytes<32>;   // originator Travel Rule (IVMS101) commitment
+export ledger sellerKycVerified: Boolean;
+export ledger sellerKycIssuer: Bytes<32>;
+export ledger sellerKycRef: Bytes<32>;         // hiding commitment to seller's attestation
+export ledger sellerKycValidUntil: Uint<64>;   // expiry timestamp checked at payout / expiration
+export ledger sellerTravelRuleRef: Bytes<32>;  // beneficiary Travel Rule (IVMS101) commitment
 
 // Contingency results. `submitted` = an outcome is on record,
 // `passed` = that outcome is favourable, `waived` = buyer waived it.
+// Each attested submission also anchors an off-chain document commitment (`Bytes<32>`).
 export ledger inspectionSubmitted: Boolean;
 export ledger inspectionPassed: Boolean;
 export ledger inspectionWaived: Boolean;
+export ledger inspectionReport: Bytes<32>;
 export ledger financingSubmitted: Boolean;
 export ledger financingApproved: Boolean;
 export ledger financingWaived: Boolean;
+export ledger financingLetter: Bytes<32>;
 export ledger titleSubmitted: Boolean;
 export ledger titleCleared: Boolean;
 export ledger titleWaived: Boolean;
+export ledger titleCommitment: Bytes<32>;
+export ledger voidedReportHistory: Map<Uint<64>, Bytes<32>>;
 
 witness localSecretKey(): Bytes<32>;
+// Openings of amountCommitment / buyerPayoutCommitment / sellerPayoutCommitment.
+witness privateTerms(): PrivateTerms;
+// The vault coin with its Merkle-tree index (assigned by the chain when the
+// deposit is confirmed; the dApp reads it from the indexer / zswap state).
+witness vaultCoin(): QualifiedShieldedCoinInfo;
 // Buyer's private KYC attestation, the CASP signature and the issuer id.
 witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
 // Splits a 255-bit challenge c into q * 2^248 + r (r < 2^248), so r is a
@@ -166,9 +199,9 @@ constructor(
     lender: Maybe<Bytes<32>>,
     titleAgent: Maybe<Bytes<32>>,
     resolver: Maybe<Bytes<32>>,
-    buyerPayout: Maybe<UserAddress>,
-    sellerPayout: Maybe<UserAddress>,
-    amount: Maybe<Uint<128>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
     deadline: Maybe<Uint<64>>,
     disputeEnd: Maybe<Uint<64>>,
     policy: Maybe<KycPolicy>
@@ -181,6 +214,7 @@ constructor(
     escrowColor = disclose(color);
     escrowTicker = disclose(ticker);
     buyerKycVerified = false;
+    sellerKycVerified = false;
 
     status = EscrowStatus.Initializing;
     disbursed = false;
@@ -259,9 +293,9 @@ circuit applyConfig(
     lender: Maybe<Bytes<32>>,
     titleAgent: Maybe<Bytes<32>>,
     resolver: Maybe<Bytes<32>>,
-    buyerPayout: Maybe<UserAddress>,
-    sellerPayout: Maybe<UserAddress>,
-    amount: Maybe<Uint<128>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
     deadline: Maybe<Uint<64>>,
     disputeEnd: Maybe<Uint<64>>,
     policy: Maybe<KycPolicy>
@@ -274,14 +308,23 @@ circuit applyConfig(
     if (t.is_some) { titleAgentId = t.value; configured.insert(InitAttribute.TitleAgent); }
     const r = disclose(resolver);
     if (r.is_some) { resolverId = r.value; configured.insert(InitAttribute.Resolver); }
+    // Payout keys and amount arrive as salted commitments only.
     const bp = disclose(buyerPayout);
-    if (bp.is_some) { buyerAddress = bp.value; configured.insert(InitAttribute.BuyerPayout); }
+    if (bp.is_some) {
+        assert(bp.value != pad(32, ""), "Buyer payout commitment cannot be empty");
+        buyerPayoutCommitment = bp.value;
+        configured.insert(InitAttribute.BuyerPayout);
+    }
     const sp = disclose(sellerPayout);
-    if (sp.is_some) { sellerAddress = sp.value; configured.insert(InitAttribute.SellerPayout); }
+    if (sp.is_some) {
+        assert(sp.value != pad(32, ""), "Seller payout commitment cannot be empty");
+        sellerPayoutCommitment = sp.value;
+        configured.insert(InitAttribute.SellerPayout);
+    }
     const a = disclose(amount);
     if (a.is_some) {
-        assert(a.value > 0, "Escrow amount must be positive");
-        escrowAmount = a.value;
+        assert(a.value != pad(32, ""), "Amount commitment cannot be empty");
+        amountCommitment = a.value;
         configured.insert(InitAttribute.EscrowAmount);
     }
     const d = disclose(deadline);
@@ -303,9 +346,9 @@ export circuit configure(
     lender: Maybe<Bytes<32>>,
     titleAgent: Maybe<Bytes<32>>,
     resolver: Maybe<Bytes<32>>,
-    buyerPayout: Maybe<UserAddress>,
-    sellerPayout: Maybe<UserAddress>,
-    amount: Maybe<Uint<128>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
     deadline: Maybe<Uint<64>>,
     disputeEnd: Maybe<Uint<64>>,
     policy: Maybe<KycPolicy>
@@ -408,6 +451,75 @@ circuit advanceIfAllCleared(): [] {
 }
 
 // ============================================================
+// PRIVATE TERMS & SHIELDED VAULT
+// ============================================================
+// Salted commitments to the private terms. Exported so the dApp (and a
+// notary given an opening) can recompute them off-chain.
+export pure circuit amountCommitmentOf(amount: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:amount:v1"), amount, salt]);
+}
+export pure circuit payoutCommitmentOf(key: ZswapCoinPublicKey, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:payout:v1"), key.bytes, salt]);
+}
+// Nonce of the single vault coin. Deterministic, so buyer, seller and
+// resolver-side tooling that know the terms can rebuild the coin without
+// the depositor; bound to this contract and to secrets the notary's
+// amount opening does not reveal.
+export pure circuit vaultNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:vault-nonce:v1"), self, buyerSalt, sellerSalt]);
+}
+
+// Nonce of the coin a payout creates (sendShielded evolves the input
+// nonce). The recipient's dApp uses it to rebuild and import the payout
+// coin {payoutNonceOf(vaultNonce), escrowColor, amount} into its wallet.
+export pure circuit payoutNonceOf(vaultNonce: Bytes<32>): Bytes<32> {
+    return upgradeFromTransient(transientHash<Vector<2, Field>>(
+        [pad(28, "midnight:kernel:nonce_evolve") as Field, degradeToTransient(vaultNonce)]
+    ));
+}
+
+// Opens all three commitments from the private witness. Only the boolean
+// result is disclosed; amount and keys stay private.
+circuit openTerms(): PrivateTerms {
+    const t = privateTerms();
+    assert(disclose(amountCommitmentOf(t.amount, t.amountSalt)) == amountCommitment,
+           "ERROR_TERMS_MISMATCH: amount");
+    assert(disclose(payoutCommitmentOf(t.buyerPayout, t.buyerSalt)) == buyerPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: buyer payout key");
+    assert(disclose(payoutCommitmentOf(t.sellerPayout, t.sellerSalt)) == sellerPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: seller payout key");
+    return t;
+}
+
+circuit expectedVaultCoin(t: PrivateTerms): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: vaultNonceOf(kernel.self().bytes, t.buyerSalt, t.sellerSalt),
+        color: escrowColor,
+        value: t.amount
+    };
+}
+
+// Spends the whole vault coin to `recipient` (a shielded coin public key).
+// The coin comes from the witness and must be exactly the coin received at
+// deposit; Zswap rejects it if it was already spent or the index is wrong.
+// The recipient's wallet can rebuild the payout coin: its nonce is the
+// kernel's evolution of the vault nonce, same color and value.
+circuit payOutVault(t: PrivateTerms, recipient: ZswapCoinPublicKey): [] {
+    const q = vaultCoin();
+    const e = expectedVaultCoin(t);
+    assert(
+        disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
+        "ERROR_VAULT_COIN_MISMATCH"
+    );
+    const r = sendShielded(
+        disclose(q),
+        left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient)),
+        disclose(t.amount)
+    );
+    assert(!disclose(r.change.is_some), "Vault must be paid out in full");
+}
+
+// ============================================================
 // KYC VERIFICATION
 // ============================================================
 // Schnorr verification over Jubjub: s*G == R + c*pk with
@@ -442,11 +554,19 @@ export pure circuit kycMessage(att: KycAttestation): Field {
 export pure circuit kycReference(att: KycAttestation): Bytes<32> {
     return persistentHash<[Bytes<32>, KycAttestation]>([pad(32, "re-escrow:kyc-ref:v1"), att]);
 }
+// Message the CASP signs to revoke a single attestation by its kycReference.
+export pure circuit kycRevocationMessage(ref: Bytes<32>): Field {
+    return transientHash<[Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:kyc-revoke:v1"), ref]);
+}
+// Message the CASP signs to withdraw its own key from the escrow's whitelist.
+export pure circuit issuerRevocationMessage(issuerId: Bytes<32>): Field {
+    return transientHash<[Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:issuer-revoke:v1"), issuerId]);
+}
 
 // Proves, without revealing the attestation, that the buyer holds a
-// valid, unexpired attestation from a whitelisted CASP for THIS buyer
-// and THIS payout wallet that meets the KYC/AML policy.
-circuit verifyBuyerKyc(): [] {
+// valid, unexpired, unrevoked attestation from a whitelisted CASP for
+// THIS buyer and THIS payout wallet that meets the KYC/AML policy.
+circuit verifyBuyerKyc(t: PrivateTerms): [] {
     const [att, sig, issuer] = kycAttestation();
     const issuerId = disclose(issuer);
     assert(kycIssuers.member(issuerId), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
@@ -455,13 +575,87 @@ circuit verifyBuyerKyc(): [] {
         "ERROR_NOT_WHITELISTED: invalid KYC attestation signature"
     );
     assert(disclose(att.subject == buyerId), "ERROR_NOT_WHITELISTED: attestation is for another subject");
-    assert(disclose(att.wallet == buyerAddress), "ERROR_NOT_WHITELISTED: wallet is not the verified buyer wallet");
+    assert(disclose(att.wallet == t.buyerPayout), "ERROR_NOT_WHITELISTED: wallet is not the verified buyer wallet");
     assert(blockTimeLt(disclose(att.validUntil)), "ERROR_KYC_EXPIRED");
     assert(disclose(att.kycLevel >= kycPolicy.minKycLevel), "ERROR_KYC_LEVEL_INSUFFICIENT");
     assert(disclose(att.amlRiskScore <= kycPolicy.maxAmlRiskScore), "ERROR_AML_RISK_TOO_HIGH");
+    const ref = disclose(kycReference(att));
+    assert(!revokedKycRefs.member(ref), "ERROR_KYC_REVOKED");
     buyerKycVerified = true;
     buyerKycIssuer = issuerId;
-    buyerKycRef = disclose(kycReference(att));
+    buyerKycRef = ref;
+    buyerTravelRuleRef = disclose(att.travelRuleRef);
+}
+
+// Seller proves a valid, unexpired, unrevoked KYC/AML attestation bound
+// to sellerId and the seller's private payout key. May be submitted (or renewed) any time
+// from Created through Settled before releaseToSeller().
+export circuit submitSellerKyc(): [] {
+    assert(
+        status == EscrowStatus.Created ||
+        status == EscrowStatus.Funded ||
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose ||
+        status == EscrowStatus.Disputed ||
+        status == EscrowStatus.Settled,
+        "Seller KYC cannot be submitted in current state"
+    );
+    onlySeller();
+    const t = openTerms();
+    const [att, sig, issuer] = kycAttestation();
+    const issuerId = disclose(issuer);
+    assert(kycIssuers.member(issuerId), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(issuerId), kycMessage(att), sig)),
+        "ERROR_NOT_WHITELISTED: invalid KYC attestation signature"
+    );
+    assert(disclose(att.subject == sellerId), "ERROR_NOT_WHITELISTED: attestation is for another subject");
+    assert(disclose(att.wallet == t.sellerPayout), "ERROR_NOT_WHITELISTED: wallet is not the verified seller wallet");
+    const validUntil = disclose(att.validUntil);
+    assert(blockTimeLt(validUntil), "ERROR_KYC_EXPIRED");
+    assert(disclose(att.kycLevel >= kycPolicy.minKycLevel), "ERROR_KYC_LEVEL_INSUFFICIENT");
+    assert(disclose(att.amlRiskScore <= kycPolicy.maxAmlRiskScore), "ERROR_AML_RISK_TOO_HIGH");
+    const ref = disclose(kycReference(att));
+    assert(!revokedKycRefs.member(ref), "ERROR_KYC_REVOKED");
+    sellerKycVerified = true;
+    sellerKycIssuer = issuerId;
+    sellerKycRef = ref;
+    sellerKycValidUntil = validUntil;
+    sellerTravelRuleRef = disclose(att.travelRuleRef);
+}
+
+// Permissionless submission of a CASP-signed attestation revocation.
+export circuit revokeKycAttestation(issuerId: Bytes<32>, ref: Bytes<32>, sig: SchnorrSignature): [] {
+    const id = disclose(issuerId);
+    const r = disclose(ref);
+    assert(kycIssuers.member(id), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(id), kycRevocationMessage(r), sig)),
+        "Invalid KYC attestation revocation signature"
+    );
+    revokedKycRefs.insert(r);
+}
+
+// Permissionless submission of a CASP-signed key self-revocation.
+export circuit revokeKycIssuer(issuerId: Bytes<32>, sig: SchnorrSignature): [] {
+    const id = disclose(issuerId);
+    assert(kycIssuers.member(id), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(id), issuerRevocationMessage(id), sig)),
+        "Invalid KYC issuer revocation signature"
+    );
+    kycIssuers.remove(id);
+    if (status == EscrowStatus.Initializing && kycIssuers.isEmpty()) {
+        configured.remove(InitAttribute.KycIssuers);
+        configChanged();
+    }
+}
+
+circuit hasUsableSellerKyc(): Boolean {
+    return sellerKycVerified &&
+           kycIssuers.member(sellerKycIssuer) &&
+           !revokedKycRefs.member(sellerKycRef) &&
+           blockTimeLt(sellerKycValidUntil);
 }
 
 // ============================================================
@@ -484,12 +678,22 @@ export circuit cancelBeforeFunding(): [] {
     lifecycleRound.increment(1);
 }
 
-export circuit depositToEscrow(): [] {
+// The buyer's wallet creates ONE shielded output to this contract with
+// exactly expectedVaultCoin(terms): nonce from the terms, escrowColor and
+// the committed amount. The contract claims it with receiveShielded.
+export circuit depositToEscrow(coin: ShieldedCoinInfo): [] {
     assert(status == EscrowStatus.Created, "Escrow is not ready for funding");
     onlyBuyer();
     assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
-    verifyBuyerKyc();   // KYC/AML gate: reverts before any funds move
-    receiveUnshielded(escrowColor, escrowAmount);
+    const t = openTerms();
+    assert(disclose(t.amount > 0), "Escrow amount must be positive");
+    verifyBuyerKyc(t);   // KYC/AML gate: reverts before any funds move
+    const e = expectedVaultCoin(t);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_DEPOSIT_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
     status = EscrowStatus.Funded;
     lifecycleRound.increment(1);
 }
@@ -504,31 +708,41 @@ export circuit openContingencyReview(): [] {
     lifecycleRound.increment(1);
 }
 
-// Each contingency outcome is attested ONCE by its designated role.
+// Each contingency outcome is attested ONCE by its designated role,
+// anchored with a non-empty off-chain document commitment (`reportHash: Bytes<32>`).
 // A result can only be re-attested after the resolver voided it
 // (see voidContingencyResult); nobody can overwrite it in place.
-export circuit submitInspection(passed: Boolean): [] {
+export circuit submitInspection(passed: Boolean, reportHash: Bytes<32>): [] {
     assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
     assert(!inspectionSubmitted, "Inspection outcome already submitted");
     onlyInspector();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Inspection report commitment cannot be empty");
     inspectionSubmitted = true;
     inspectionPassed = disclose(passed);
+    inspectionReport = h;
     advanceIfAllCleared();
 }
-export circuit submitFinancing(approved: Boolean): [] {
+export circuit submitFinancing(approved: Boolean, reportHash: Bytes<32>): [] {
     assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
     assert(!financingSubmitted, "Financing outcome already submitted");
     onlyLender();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
     financingSubmitted = true;
     financingApproved = disclose(approved);
+    financingLetter = h;
     advanceIfAllCleared();
 }
-export circuit submitTitle(cleared: Boolean): [] {
+export circuit submitTitle(cleared: Boolean, reportHash: Bytes<32>): [] {
     assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
     assert(!titleSubmitted, "Title outcome already submitted");
     onlyTitleAgent();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Title commitment hash cannot be empty");
     titleSubmitted = true;
     titleCleared = disclose(cleared);
+    titleCommitment = h;
     advanceIfAllCleared();
 }
 
@@ -589,9 +803,14 @@ export circuit sellerWithdraw(): [] {
 // Before closing: past closingDeadline the deal is dead -> refundable.
 // While disputed: past disputeDeadline the resolver lost its chance;
 // default to refunding the buyer so funds can never be stuck forever.
+// In ReadyToClose or Settled: past disputeDeadline if the seller has no
+// usable KYC, expire so the buyer's funds are not locked forever.
 export circuit expireEscrow(): [] {
     if (status == EscrowStatus.Disputed) {
         assert(blockTimeGte(disputeDeadline), "Dispute deadline has not expired");
+    } else if (status == EscrowStatus.ReadyToClose || status == EscrowStatus.Settled) {
+        assert(blockTimeGte(disputeDeadline), "Dispute deadline has not expired");
+        assert(!hasUsableSellerKyc(), "Seller has valid KYC; escrow can be released");
     } else {
         assert(
             status == EscrowStatus.Funded ||
@@ -643,22 +862,30 @@ export circuit resolveDisputeSettlement(): [] {
 // Correction path #2 (resolver, only inside a dispute): erase a
 // contested attestation so the ORIGINAL attestor re-attests it.
 // The resolver chooses no value; a buyer waiver cannot be voided.
+// Preserves the old report commitment in `voidedReportHistory` for audit.
 export circuit voidContingencyResult(which: Contingency): [] {
     assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
     onlyDisputeResolver();
     const c = disclose(which);
+    const idx = correctionCount.read();
     if (c == Contingency.Inspection) {
         assert(inspectionSubmitted && !inspectionWaived, "No attested inspection to void");
+        voidedReportHistory.insert(idx, inspectionReport);
         inspectionSubmitted = false;
         inspectionPassed = false;
+        inspectionReport = pad(32, "");
     } else if (c == Contingency.Financing) {
         assert(financingSubmitted && !financingWaived, "No attested financing to void");
+        voidedReportHistory.insert(idx, financingLetter);
         financingSubmitted = false;
         financingApproved = false;
+        financingLetter = pad(32, "");
     } else {
         assert(titleSubmitted && !titleWaived, "No attested title to void");
+        voidedReportHistory.insert(idx, titleCommitment);
         titleSubmitted = false;
         titleCleared = false;
+        titleCommitment = pad(32, "");
     }
     correctionCount.increment(1);
     status = EscrowStatus.ContingenciesPending;
@@ -691,16 +918,14 @@ export circuit releaseToSeller(): [] {
     } else {
         onlyDisputeResolver();
     }
-    assert(
-        unshieldedBalanceGte(escrowColor, escrowAmount),
-        "Escrow balance is insufficient"
-    );
+    assert(sellerKycVerified, "ERROR_SELLER_KYC_REQUIRED");
+    assert(kycIssuers.member(sellerKycIssuer), "ERROR_NOT_WHITELISTED: seller KYC issuer was revoked");
+    assert(!revokedKycRefs.member(sellerKycRef), "ERROR_KYC_REVOKED");
+    assert(blockTimeLt(sellerKycValidUntil), "ERROR_KYC_EXPIRED");
+    const t = openTerms();
     disbursed = true;
     status = EscrowStatus.Closed;
-    sendUnshielded(
-        escrowColor, escrowAmount,
-        right<ContractAddress, UserAddress>(sellerAddress)
-    );
+    payOutVault(t, t.sellerPayout);
     lifecycleRound.increment(1);
 }
 
@@ -711,15 +936,9 @@ export circuit refundBuyer(): [] {
     );
     assert(!disbursed, "Funds already disbursed");
     onlyParty();
-    assert(
-        unshieldedBalanceGte(escrowColor, escrowAmount),
-        "Escrow balance is insufficient"
-    );
+    const t = openTerms();
     disbursed = true;
     status = EscrowStatus.Closed;
-    sendUnshielded(
-        escrowColor, escrowAmount,
-        right<ContractAddress, UserAddress>(buyerAddress)
-    );
+    payOutVault(t, t.buyerPayout);
     lifecycleRound.increment(1);
 }

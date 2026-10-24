@@ -11,6 +11,7 @@ import { createCaspSigner, schnorrReduction, verifyKycSignature, newSalt } from 
 const S = Object.fromEntries(Object.entries(EscrowStatus).filter(([k]) => isNaN(k)).map(([k, v]) => [v, k]));
 const sk = (n) => { const b = new Uint8Array(32); b[0] = n; return b; };
 const K = { admin: sk(8), buyer: sk(1), seller: sk(2), inspector: sk(3), lender: sk(4), title: sk(5), resolver: sk(6), rando: sk(9) };
+const DOC = { insp: sk(51), insp2: sk(52), fin: sk(53), title: sk(54), empty: new Uint8Array(32) };
 const id = (k) => pureCircuits.roleIdOf(k);
 const addr = (n) => ({ bytes: sk(100 + n) });
 // ---- CASPs (KYC providers): one trusted, one not whitelisted ----
@@ -31,11 +32,27 @@ const c = new Contract({
   localSecretKey: ({ privateState }) => [privateState, privateState.sk],
   kycAttestation: ({ privateState }) => [privateState, KYC],
   schnorrReduction: ({ privateState }, cFull) => [privateState, schnorrReduction(cFull)],
+  privateTerms: ({ privateState }) => [privateState, TERMS_W],
+  vaultCoin: ({ privateState }) => [privateState, VAULT_W],
 });
 const CPK = '00'.repeat(32);
-const CADDR = rt.sampleContractAddress ? rt.sampleContractAddress() : '02' + '11'.repeat(32);
+const CADDR = rt.sampleContractAddress();
 const T0 = 1_000_000, DL = 2_000_000, DDL = 3_000_000;
 let pass = 0, fail = 0;
+
+// ---- Private escrow terms (shielded custody) ----
+// Known off-chain to buyer, seller and admin; the ledger only stores salted commitments.
+const COLOR = sk(77);   // shielded token type (e.g. a shielded EUR EMT)
+const TERMS = { amount: 1000n, amountSalt: new Uint8Array(32).fill(21), buyerPayout: addr(1), buyerSalt: new Uint8Array(32).fill(22),
+  sellerPayout: addr(2), sellerSalt: new Uint8Array(32).fill(23) };
+const COMMIT = { amount: pureCircuits.amountCommitmentOf(TERMS.amount, TERMS.amountSalt),
+  buyer: pureCircuits.payoutCommitmentOf(TERMS.buyerPayout, TERMS.buyerSalt),
+  seller: pureCircuits.payoutCommitmentOf(TERMS.sellerPayout, TERMS.sellerSalt) };
+const SELF = new Uint8Array(rt.encodeContractAddress(CADDR));
+const VAULT_NONCE = pureCircuits.vaultNonceOf(SELF, TERMS.buyerSalt, TERMS.sellerSalt);
+const VAULT = { nonce: VAULT_NONCE, color: COLOR, value: TERMS.amount };   // the coin the buyer deposits
+let TERMS_W = TERMS;                       // what the caller's dApp supplies as privateTerms()
+let VAULT_W = { ...VAULT, mt_index: 0n };  // vault coin + Merkle index (from the indexer on a real network)
 
 const some = (v) => ({ is_some: true, value: v });
 const NONE32 = { is_some: false, value: new Uint8Array(32) };
@@ -43,11 +60,11 @@ const none = (v) => ({ is_some: false, value: v });
 const POLICY = { minKycLevel: 2n, maxAmlRiskScore: 30n };
 function fullTerms() {
   return [some(id(K.inspector)), some(id(K.lender)), some(id(K.title)), some(id(K.resolver)),
-    some(addr(1)), some(addr(2)), some(1000n), some(BigInt(DL)), some(BigInt(DDL)), some(POLICY)];
+    some(COMMIT.buyer), some(COMMIT.seller), some(COMMIT.amount), some(BigInt(DL)), some(BigInt(DDL)), some(POLICY)];
 }
 function emptyTerms() {
-  return [NONE32, NONE32, NONE32, NONE32, none({ bytes: new Uint8Array(32) }), none({ bytes: new Uint8Array(32) }),
-    none(0n), none(0n), none(0n), none({ minKycLevel: 0n, maxAmlRiskScore: 0n })];
+  return [NONE32, NONE32, NONE32, NONE32, NONE32, NONE32,
+    NONE32, none(0n), none(0n), none({ minKycLevel: 0n, maxAmlRiskScore: 0n })];
 }
 function deployRaw(terms, admin = K.seller, withIssuer = true) {
   const r = c.initialState(rt.createConstructorContext({ sk: K.buyer }, CPK), id(admin), id(K.buyer), id(K.seller), sk(77), 'EMT', ...terms);
@@ -64,9 +81,11 @@ function deploy() {
   return e;
 }
 function call(env, who, circuit, ...args) {
+  if (circuit === 'depositToEscrow' && args.length === 0) args = [VAULT];   // default: the correct vault coin
   const ctx = rt.createCircuitContext(CADDR, CPK, env.state, { sk: K[who] }, undefined, undefined, env.time);
   const r = c.circuits[circuit](ctx, ...args);
   env.state = r.context.currentQueryContext.state;
+  env.zswap = r.context.currentZswapLocalState;   // shielded inputs/outputs of the last call
   return r;
 }
 const st = (env) => S[ledger(env.state.data ?? env.state).status];
@@ -84,7 +103,26 @@ function expectErr(label, env, who, circuit, ...args) {
 }
 function toPending() { const e = deploy(); expectOk('fund', e, 'buyer', 'depositToEscrow'); expectOk('open review', e, 'seller', 'openContingencyReview'); return e; }
 
+const expectErrMsg = (label, env, who, circuit, needle, ...args) => {
+  const r = ok(env, who, circuit, ...args);
+  if (r !== true && String(r).includes(needle)) { pass++; console.log(`  ok   ${label}: ${needle}`); }
+  else { fail++; console.log(`  FAIL ${label}: expected "${needle}", got ${r === true ? 'success' : String(r).split('\n')[0]}`); }
+};
 const check = (label, cond) => { if (cond) { pass++; console.log(`  ok   ${label}`); } else { fail++; console.log(`  FAIL ${label}`); } };
+// Runs a payout on a COPY of the escrow and checks the shielded effects:
+// one input (the vault coin) and one output of the full amount to `to`.
+const h = (b) => Buffer.from(b).toString('hex');
+function expectPayout(label, env, who, circuit, to) {
+  const copy = { ...env };
+  const r = ok(copy, who, circuit);
+  const z = copy.zswap;
+  const o = z?.outputs?.[0];
+  const good = r === true && st(copy) === 'Closed' && z.inputs.length === 1 && z.outputs.length === 1 &&
+    h(z.inputs[0].nonce) === h(VAULT_NONCE) && o.coinInfo.value === TERMS.amount && h(o.coinInfo.color) === h(COLOR) &&
+    o.recipient.is_left && h(o.recipient.left.bytes) === h(to.bytes) && h(o.coinInfo.nonce) === h(pureCircuits.payoutNonceOf(VAULT_NONCE));
+  if (good) { pass++; console.log(`  ok   ${label} -> Closed, shielded output ${TERMS.amount} to ${h(to.bytes).slice(0, 8)}…`); }
+  else { fail++; console.log(`  FAIL ${label}: ${r === true ? 'unexpected shielded effects' : String(r).split('\n')[0]}`); }
+}
 
 console.log('CASP signing helper');
 {
@@ -99,37 +137,43 @@ console.log('CASP signing helper');
 
 console.log('Happy path');
 let e = toPending();
-expectErr('rando submits inspection', e, 'rando', 'submitInspection', true);
-expectOk('inspection pass', e, 'inspector', 'submitInspection', true);
-expectErr('inspector overwrites', e, 'inspector', 'submitInspection', false);
-expectOk('financing ok', e, 'lender', 'submitFinancing', true);
-expectOk('title ok', e, 'title', 'submitTitle', true);
+expectErr('rando submits inspection', e, 'rando', 'submitInspection', true, DOC.insp);
+expectErr('empty inspection report hash rejected', e, 'inspector', 'submitInspection', true, DOC.empty);
+expectOk('inspection pass', e, 'inspector', 'submitInspection', true, DOC.insp);
+check('inspectionReport hash anchored on-chain', Buffer.from(L(e).inspectionReport).equals(Buffer.from(DOC.insp)));
+expectErr('inspector overwrites', e, 'inspector', 'submitInspection', false, DOC.insp2);
+expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
+check('financingLetter hash anchored on-chain', Buffer.from(L(e).financingLetter).equals(Buffer.from(DOC.fin)));
+expectOk('title ok', e, 'title', 'submitTitle', true, DOC.title);
+check('titleCommitment hash anchored on-chain', Buffer.from(L(e).titleCommitment).equals(Buffer.from(DOC.title)));
 console.log('   status:', st(e));
-console.log('   (releaseToSeller needs a real unshielded balance; the simulator holds none:)', ok(e, 'seller', 'releaseToSeller') === true ? 'released' : 'balance check enforced');
+expectErrMsg('release blocked without seller KYC', e, 'seller', 'releaseToSeller', 'ERROR_SELLER_KYC_REQUIRED');
 
 console.log('Resolver cannot flip a FAILED inspection into a seller payout');
 e = toPending();
-expectOk('inspection FAIL', e, 'inspector', 'submitInspection', false);
-expectOk('financing ok', e, 'lender', 'submitFinancing', true);
-expectOk('title ok', e, 'title', 'submitTitle', true);
+expectOk('inspection FAIL', e, 'inspector', 'submitInspection', false, DOC.insp);
+expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
+expectOk('title ok', e, 'title', 'submitTitle', true, DOC.title);
 expectOk('seller disputes', e, 'seller', 'openDispute');
 expectErr('resolver settles to seller', e, 'resolver', 'resolveDisputeSettlement');
-expectErr('attestor submits while disputed', e, 'inspector', 'submitInspection', true);
+expectErr('attestor submits while disputed', e, 'inspector', 'submitInspection', true, DOC.insp2);
 expectOk('resolver voids inspection', e, 'resolver', 'voidContingencyResult', Contingency.Inspection);
-expectErr('resolver submits value itself', e, 'resolver', 'submitInspection', true);
-expectOk('original inspector re-attests', e, 'inspector', 'submitInspection', true);
+check('voided report hash archived in voidedReportHistory[0]', Buffer.from(L(e).voidedReportHistory.lookup(0n)).equals(Buffer.from(DOC.insp)));
+expectErr('resolver submits value itself', e, 'resolver', 'submitInspection', true, DOC.insp2);
+expectOk('original inspector re-attests', e, 'inspector', 'submitInspection', true, DOC.insp2);
+check('new inspectionReport hash replaces voided hash', Buffer.from(L(e).inspectionReport).equals(Buffer.from(DOC.insp2)));
 console.log('   status:', st(e), 'corrections:', ledger(e.state.data ?? e.state).correctionCount);
 
 console.log('Buyer waiver / cancellation');
 e = toPending();
-expectOk('title FAIL', e, 'title', 'submitTitle', false);
+expectOk('title FAIL', e, 'title', 'submitTitle', false, DOC.title);
 expectErr('seller waives', e, 'seller', 'waiveContingency', Contingency.Title);
 expectOk('buyer cancelAndRefund', e, 'buyer', 'cancelAndRefund');
 e = toPending();
-expectOk('title FAIL', e, 'title', 'submitTitle', false);
+expectOk('title FAIL', e, 'title', 'submitTitle', false, DOC.title);
 expectOk('buyer waives title', e, 'buyer', 'waiveContingency', Contingency.Title);
 expectOk('buyer waives inspection (pending)', e, 'buyer', 'waiveContingency', Contingency.Inspection);
-expectOk('financing ok', e, 'lender', 'submitFinancing', true);
+expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
 e.state; expectOk('dispute', e, 'buyer', 'openDispute');
 expectErr('resolver voids waived title', e, 'resolver', 'voidContingencyResult', Contingency.Title);
 expectOk('resolver dismisses', e, 'resolver', 'dismissDispute');
@@ -139,6 +183,7 @@ e = toPending();
 expectErr('expire before deadline', e, 'rando', 'expireEscrow');
 e.time = DL + 1; expectOk('expire after deadline', e, 'rando', 'expireEscrow');
 expectErr('rando refunds', e, 'rando', 'refundBuyer');
+expectPayout('seller triggers refund to the buyer (shielded)', e, 'seller', 'refundBuyer', TERMS.buyerPayout);
 e = toPending(); expectOk('dispute', e, 'buyer', 'openDispute');
 e.time = DL + 1; expectErr('expire disputed before dispute deadline', e, 'rando', 'expireEscrow');
 e.time = DDL; expectOk('expire disputed after dispute deadline', e, 'rando', 'expireEscrow');
@@ -158,11 +203,11 @@ console.log('   status:', st(e), '| missing:', missing(e).join(','));
 expectErr('fund while Initializing', e, 'buyer', 'depositToEscrow');
 expectErr('accept incomplete config', e, 'buyer', 'acceptConfiguration', 0n);
 expectErr('finalize incomplete', e, 'admin', 'finalizeInitialization');
-let t = emptyTerms(); t[0] = some(id(K.inspector)); t[6] = some(1000n); t[3] = some(id(K.resolver));
+let t = emptyTerms(); t[0] = some(id(K.inspector)); t[6] = some(COMMIT.amount); t[3] = some(id(K.resolver));
 expectErr('seller (not admin) configures', e, 'seller', 'configure', ...t);
 expectOk('admin sets inspector, resolver, amount', e, 'admin', 'configure', ...t);
 console.log('   missing now:', missing(e).join(','));
-t = emptyTerms(); t[6] = some(0n); expectErr('admin sets amount 0', e, 'admin', 'configure', ...t);
+t = emptyTerms(); t[6] = some(new Uint8Array(32)); expectErr('admin sets empty amount commitment', e, 'admin', 'configure', ...t);
 t = fullTerms(); t[0] = some(id(K.seller)); expectOk('admin sets remaining (seller as inspector!)', e, 'admin', 'configure', ...t);
 console.log('   missing now:', missing(e).join(',') || '(none)');
 expectErr('admin adds identity-point issuer', e, 'admin', 'addKycIssuer', CASP.id, rt.ecMulGenerator(0n));
@@ -212,14 +257,7 @@ tryDeposit('AML risk too high', goodAtt({ amlRiskScore: 31n }), CASP, CASP.id);
     Buffer.from(l.buyerKycRef).equals(Buffer.from(pureCircuits.kycReference(goodAtt()))), '| ticker', l.escrowTicker); }
 setKyc(goodAtt());
 
-const expectErrMsg = (label, env, who, circuit, needle, ...args) => {
-  const r = ok(env, who, circuit, ...args);
-  if (r !== true && String(r).includes(needle)) { pass++; console.log(`  ok   ${label}: ${needle}`); }
-  else { fail++; console.log(`  FAIL ${label}: expected "${needle}", got ${r === true ? 'success' : String(r).split('\n')[0]}`); }
-};
-// Simulator holds no unshielded balance, so a payout that passes every KYC gate stops at the balance check.
-const BAL = 'Escrow balance is insufficient';
-const readyToClose = () => { setKyc(goodAtt()); const e = toPending(); call(e, 'inspector', 'submitInspection', true); call(e, 'lender', 'submitFinancing', true); call(e, 'title', 'submitTitle', true); return e; };
+const readyToClose = () => { setKyc(goodAtt()); const e = toPending(); call(e, 'inspector', 'submitInspection', true, DOC.insp); call(e, 'lender', 'submitFinancing', true, DOC.fin); call(e, 'title', 'submitTitle', true, DOC.title); return e; };
 
 console.log('Travel Rule anchor');
 { setKyc(goodAtt()); const e = deploy(); call(e, 'buyer', 'depositToEscrow');
@@ -238,7 +276,7 @@ expectErr('seller attestation for another wallet', e, 'seller', 'submitSellerKyc
 setKyc(sellerAtt());
 expectOk('seller submits valid KYC', e, 'seller', 'submitSellerKyc');
 check('sellerTravelRuleRef recorded', Buffer.from(L(e).sellerTravelRuleRef).equals(Buffer.from(sellerAtt().travelRuleRef)));
-expectErrMsg('release passes KYC gates (stops at balance)', e, 'seller', 'releaseToSeller', BAL);
+expectPayout('release pays the seller (shielded)', e, 'seller', 'releaseToSeller', TERMS.sellerPayout);
 { const e2 = { ...e }; e2.time = Number(sellerAtt().validUntil);
   expectErrMsg('release after seller attestation expired', e2, 'seller', 'releaseToSeller', 'ERROR_KYC_EXPIRED'); }
 expectErr('expire Ready escrow before dispute deadline', e, 'rando', 'expireEscrow');
@@ -255,7 +293,7 @@ setKyc(sellerAtt());
 expectErrMsg('re-submit the revoked attestation', e, 'seller', 'submitSellerKyc', 'ERROR_KYC_REVOKED');
 setKyc(sellerAtt({ salt: new Uint8Array(32).fill(3) }));
 expectOk('seller submits a renewed attestation', e, 'seller', 'submitSellerKyc');
-expectErrMsg('release passes again (stops at balance)', e, 'seller', 'releaseToSeller', BAL);
+expectPayout('release pays the seller again after renewal', e, 'seller', 'releaseToSeller', TERMS.sellerPayout);
 { const ref = pureCircuits.kycReference(goodAtt()); const e4 = deploy();
   call(e4, 'rando', 'revokeKycAttestation', CASP.id, ref, CASP.revokeAttestation(ref));
   setKyc(goodAtt()); expectErrMsg('deposit with revoked buyer attestation', e4, 'buyer', 'depositToEscrow', 'ERROR_KYC_REVOKED'); }
@@ -270,6 +308,33 @@ setKyc(sellerAtt({ salt: new Uint8Array(32).fill(3) }));
 expectErrMsg('seller KYC from revoked issuer', e, 'seller', 'submitSellerKyc', 'issuer is not a trusted CASP');
 { const e5 = { ...e }; e5.time = DDL; expectOk('expire after dispute deadline (no usable seller KYC)', e5, 'rando', 'expireEscrow'); }
 setKyc(goodAtt());
+
+console.log('Shielded custody & private terms');
+{
+  const l = L(deploy());
+  check('no public amount / payout address on the ledger', !('escrowAmount' in l) && !('buyerAddress' in l) && !('sellerAddress' in l));
+  check('ledger holds only the salted commitments', h(l.amountCommitment) === h(COMMIT.amount) && h(l.buyerPayoutCommitment) === h(COMMIT.buyer));
+  setKyc(goodAtt());
+  let e = deploy();
+  expectErrMsg('deposit coin with wrong value', e, 'buyer', 'depositToEscrow', 'ERROR_DEPOSIT_COIN_MISMATCH', { ...VAULT, value: 999n });
+  expectErrMsg('deposit coin with wrong token color', e, 'buyer', 'depositToEscrow', 'ERROR_DEPOSIT_COIN_MISMATCH', { ...VAULT, color: sk(78) });
+  expectErrMsg('deposit coin with random nonce', e, 'buyer', 'depositToEscrow', 'ERROR_DEPOSIT_COIN_MISMATCH', { ...VAULT, nonce: sk(99) });
+  TERMS_W = { ...TERMS, amount: 1n };
+  expectErrMsg('deposit with wrong amount opening', e, 'buyer', 'depositToEscrow', 'ERROR_TERMS_MISMATCH: amount');
+  TERMS_W = { ...TERMS, buyerPayout: addr(7) };
+  expectErrMsg('deposit with another buyer payout key', e, 'buyer', 'depositToEscrow', 'ERROR_TERMS_MISMATCH: buyer payout key');
+  TERMS_W = TERMS;
+  expectOk('deposit of the exact vault coin', e, 'buyer', 'depositToEscrow');
+  check('receiveShielded: one shielded output to the contract', e.zswap.outputs.length === 1 && !e.zswap.outputs[0].recipient.is_left && h(e.zswap.outputs[0].coinInfo.nonce) === h(VAULT_NONCE));
+  call(e, 'seller', 'sellerWithdraw');
+  VAULT_W = { ...VAULT, value: 1n, mt_index: 0n };
+  expectErrMsg('refund with a different coin than the vault', e, 'buyer', 'refundBuyer', 'ERROR_VAULT_COIN_MISMATCH');
+  VAULT_W = { ...VAULT, mt_index: 0n };
+  TERMS_W = { ...TERMS, sellerPayout: addr(7) };
+  expectErrMsg('refund with tampered seller key opening', e, 'buyer', 'refundBuyer', 'ERROR_TERMS_MISMATCH: seller payout key');
+  TERMS_W = TERMS;
+  expectPayout('buyer refund to the committed buyer key', e, 'buyer', 'refundBuyer', TERMS.buyerPayout);
+}
 
 console.log('Constructor guards');
 for (const [lbl, a, b, sl] of [['admin == buyer', K.buyer, K.buyer, K.seller], ['buyer == seller', K.admin, K.buyer, K.buyer]]) {
