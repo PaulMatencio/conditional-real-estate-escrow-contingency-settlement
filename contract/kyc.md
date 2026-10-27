@@ -12,6 +12,8 @@ The EscrowColor (Byte<32>) and Escrow ticker symbol ( Opaque<"string">) must be 
 
 # Implementation and analysis
 
+> **Update 2026-10-27 (shared format + CASP simulator):** the attestation format now lives in the shared module `contract/KycAttestationV1.compact`: the `KycAttestation` and `SchnorrSignature` structs, the signed messages and `verifySchnorr`. The escrow contract imports it with `import "KycAttestationV1";`. The canonical copy is in the separate **eu-counterparty-simulator** project, a test-only CASP that issues, revokes and audits these attestations. Both repos pin the same sha256 (`contract/KycAttestationV1.sha256`, checked by `npm test`). Never edit the module here: a format change is a new `KycAttestationV2`.
+
 > **Update 2026-10-24 (shielded custody, `shielded-token.md`):** `KycAttestation.wallet` is now the party's **shielded coin public key** (`ZswapCoinPublicKey`). It is compared privately with the committed payout key, so neither appears on-chain. The off-chain source-of-funds check in 5.1, which read the deposit's unshielded inputs, **no longer applies**: shielded inputs cannot be traced. Source-of-funds assurance moves to the CASP attestation (see `shielded-token.md` R-6).
 
 *2026-10-23. Implemented in `conditional-real-estate-escrow-contingency-settlement.compact`. It compiles with `compactc` 0.31.1, the version pinned for this project's midnight-js 4.1.1 / ledger 8 stack. After the section 5 recommendations were added, `contract/test/escrow.sim.mjs` passes 129 of 129 checks, 35 of them for seller KYC, revocation and the Travel Rule anchor.*

@@ -1,6 +1,11 @@
 pragma language_version >= 0.23;
 
 import CompactStandardLibrary;
+// Shared KYC attestation format and Schnorr verifier (vendored, byte-identical
+// to eu-counterparty-simulator/compact/KycAttestationV1.compact).
+import "KycAttestationV1";
+export { KycAttestation, SchnorrSignature, kycMessage, kycReference,
+         kycRevocationMessage, issuerRevocationMessage };
 
 // ============================================================
 // Conditional real-estate escrow with contingency settlement
@@ -69,16 +74,8 @@ export enum InitAttribute {
 // signs these claims with its Jubjub key. The buyer keeps the signed
 // attestation privately and proves in-circuit that it is genuine and
 // satisfies the policy. Only pass/fail and the issuer id become public;
-// level, risk score and salt stay private.
-export struct KycAttestation {
-    subject: Bytes<32>,       // buyer or seller role id (roleIdOf(secret))
-    wallet: ZswapCoinPublicKey, // shielded wallet key the CASP verified as the customer's
-    kycLevel: Uint<8>,        // e.g. 1 = basic, 2 = full CDD, 3 = enhanced DD
-    amlRiskScore: Uint<8>,    // 0 = lowest risk
-    validUntil: Uint<64>,     // unix seconds
-    travelRuleRef: Bytes<32>, // salted commitment to off-chain Travel Rule (IVMS101) record
-    salt: Bytes<32>           // random, keeps the on-chain reference hiding
-}
+// level, risk score and salt stay private. The KycAttestation and
+// SchnorrSignature structs come from the shared KycAttestationV1 module.
 
 // Private escrow terms, known to buyer, seller and admin, never on-chain.
 // The ledger holds a salted commitment to each part (see *CommitmentOf).
@@ -94,11 +91,6 @@ export struct PrivateTerms {
 export struct KycPolicy {
     minKycLevel: Uint<8>,
     maxAmlRiskScore: Uint<8>
-}
-
-export struct SchnorrSignature {
-    announcement: JubjubPoint,  // R = k*G
-    response: Field             // s = k + c*sk  (mod Jubjub order)
 }
 
 export enum Contingency {
@@ -180,9 +172,6 @@ witness privateTerms(): PrivateTerms;
 witness vaultCoin(): QualifiedShieldedCoinInfo;
 // Buyer's private KYC attestation, the CASP signature and the issuer id.
 witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
-// Splits a 255-bit challenge c into q * 2^248 + r (r < 2^248), so r is a
-// valid Jubjub scalar. The circuit checks the split; see verifySchnorr.
-witness schnorrReduction(c: Field): [Uint<7>, Uint<248>];
 
 // Admin, buyer, seller, the escrowed token's color and its ticker are
 // mandatory at deployment and can never change. Every
@@ -522,46 +511,8 @@ circuit payOutVault(t: PrivateTerms, recipient: ZswapCoinPublicKey): [] {
 // ============================================================
 // KYC VERIFICATION
 // ============================================================
-// Schnorr verification over Jubjub: s*G == R + c*pk with
-// c = H(R, pk, msg). The challenge is reduced below 2^248 so that it is
-// a valid Jubjub scalar; the witness split is checked in-circuit and the
-// quotient bounded so the prover cannot pick an alternative challenge.
-// (Compiler >= 0.34 has stdlib jubjubSchnorrVerify; see contract/kyc.md.)
-circuit verifySchnorr(pk: JubjubPoint, msg: Field, sig: SchnorrSignature): Boolean {
-    const R = sig.announcement;
-    const cFull = transientHash<Vector<5, Field>>(
-        [jubjubPointX(R), jubjubPointY(R), jubjubPointX(pk), jubjubPointY(pk), msg]
-    );
-    const split = schnorrReduction(cFull);
-    const q = disclose(split[0]);
-    const c = disclose(split[1]);
-    assert(q < 116, "Schnorr quotient out of range");
-    assert(
-        (q as Field) * (452312848583266388373324160190187140051835877600158453279131187530910662656 as Field)
-            + (c as Field) == cFull,
-        "Schnorr challenge reduction mismatch"
-    );
-    const lhs = ecMulGenerator(sig.response);
-    const rhs = ecAdd(R, ecMul(pk, c as Field));
-    return jubjubPointX(lhs) == jubjubPointX(rhs) && jubjubPointY(lhs) == jubjubPointY(rhs);
-}
-
-// Message the CASP signs: domain tag + all claims.
-export pure circuit kycMessage(att: KycAttestation): Field {
-    return transientHash<[Bytes<32>, KycAttestation]>([pad(32, "re-escrow:kyc:v1"), att]);
-}
-// Hiding on-chain reference to the attestation (salted).
-export pure circuit kycReference(att: KycAttestation): Bytes<32> {
-    return persistentHash<[Bytes<32>, KycAttestation]>([pad(32, "re-escrow:kyc-ref:v1"), att]);
-}
-// Message the CASP signs to revoke a single attestation by its kycReference.
-export pure circuit kycRevocationMessage(ref: Bytes<32>): Field {
-    return transientHash<[Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:kyc-revoke:v1"), ref]);
-}
-// Message the CASP signs to withdraw its own key from the escrow's whitelist.
-export pure circuit issuerRevocationMessage(issuerId: Bytes<32>): Field {
-    return transientHash<[Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:issuer-revoke:v1"), issuerId]);
-}
+// verifySchnorr, kycMessage, kycReference and the revocation messages
+// come from the shared KycAttestationV1 module.
 
 // Proves, without revealing the attestation, that the buyer holds a
 // valid, unexpired, unrevoked attestation from a whitelisted CASP for

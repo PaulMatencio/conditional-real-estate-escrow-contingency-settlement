@@ -32,4 +32,4 @@ npm run compile   # -> contract/managed/escrow
 npm test
 ```
 
-`contract/test/casp-signer.mjs` is the KYC provider's signing helper. It issues the KYC attestation that the buyer proves at deposit, and it also gives the dApp a `schnorrReduction` witness and an off-chain signature check.
+`contract/KycAttestationV1.compact` is the shared KYC attestation format, vendored byte-for-byte from the **eu-counterparty-simulator** project (a test-only MiCA CASP simulator used for end-to-end tests); `npm test` checks its pinned sha256. `contract/test/casp-signer.mjs` is the lightweight in-repo signing helper. It issues the KYC attestation that the buyer proves at deposit, and it also gives the dApp a `schnorrReduction` witness and an off-chain signature check.
