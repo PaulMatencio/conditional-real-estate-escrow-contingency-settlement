@@ -157,7 +157,7 @@ export const es: Partial<Record<MessageKey, string>> = {
   'terms.backups': 'Copias confirmadas',
   'terms.backedUp': 'Copia descargada y registrada.',
   'terms.erase': 'Borrar localmente',
-  'terms.eraseBody': 'Elimina de este navegador las condiciones, sales, atestaciones y claves de rol de este depósito. Sin otra copia nadie aquí podrá pagar. Los compromisos en cadena quedan desvinculados.',
+  'terms.eraseBody': 'Esto borra de este navegador las condiciones privadas, las atestaciones KYC y todas las claves de rol de este depósito. Las claves quitadas ya no podrán restaurarse.',
   'kyc.titleBuyer': 'KYC del comprador (ordenante)',
   'kyc.titleSeller': 'KYC del vendedor (beneficiario)',
   'kyc.hint': 'El PSCA firma una atestación vinculada a su identificador de rol y a su clave de pago protegida comprometida. Solo el resultado y referencias con sal van a la cadena.',
@@ -374,5 +374,23 @@ export const es: Partial<Record<MessageKey, string>> = {
   'vaultBackup.new': 'depósito(s) nuevo(s)',
   'vaultBackup.merged': 'fusionado(s)',
   'vaultBackup.adminRestored': 'clave secreta del administrador restaurada',
-  'vaultBackup.adminKept': 'la clave de administrador de la copia difiere de la de este navegador: se conserva la actual (impórtela en la pestaña Claves si es necesario)'
+  'vaultBackup.adminKept': 'la clave de administrador de la copia difiere de la de este navegador: se conserva la actual (impórtela en la pestaña Claves si es necesario)',
+  'keys.hint': 'El rol de administrador se prueba con esta clave. Solo se guarda en la bóveda cifrada de este navegador: haga una copia (pestaña Bóveda).',
+  'keys.vaultLocked': 'Desbloquee la bóveda para ver, generar o importar la clave de administrador: se guarda allí, cifrada.',
+  // Role key removal
+  'confirm.typePhrase': 'Escriba {phrase} para confirmar',
+  'roleKey.removeTitle': '¿Quitar su clave del rol {role} de este navegador?',
+  'roleKey.removeBody': 'No podrá actuar aquí como {role} (aceptar, depositar, disputar, liberar…) hasta que vuelva a poner la clave. Su rol en el depósito no cambia.',
+  'roleKey.removeWarn': 'Antes de quitarla, guarde la clave en un lugar seguro (copia de la bóveda o gestor de contraseñas).',
+  'roleKey.removeHistory': 'Puede deshacerlo con «Restaurar clave quitada», siempre que no borre los datos de este depósito.',
+  'roleKey.restoreRemoved': 'Restaurar clave quitada',
+  'roleKey.removedAt': 'quitada el',
+  'roleKey.eraseWarn': 'Si nadie más tiene una copia, el pago y el reembolso serán imposibles. Exporte antes una copia de la bóveda.',
+  'terms.eraseConfirm': 'Borrar datos',
+  'terms.eraseTitle': '¿Borrar los datos de este depósito de este navegador?',
+  'confirm.phraseErase': 'BORRAR',
+  'confirm.phraseRemove': 'QUITAR',
+  'confirm.keepData': 'Conservar los datos',
+  'confirm.keepKey': 'Conservar la clave',
+  'roleKey.removeConfirm': 'Quitar clave'
 };

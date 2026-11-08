@@ -2,14 +2,15 @@
 import { useEffect, useState } from 'react';
 import { FlaskConical, KeyRound, Lock, Radio, Unlock, WalletCards } from 'lucide-react';
 import { isHex32, bytesToHex } from '@/domain/hex';
-import { rolesOf, type PartyRole } from '@/domain/roles';
+import { ROLE_SLUG, rolesOf, type PartyRole } from '@/domain/roles';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { shieldedKeyToHex } from '@/infrastructure/wallet/providers';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useApp } from '../../providers/AppProvider';
 import { useT } from '../../i18n';
+import type { MessageKey } from '../../i18n/en';
 import { Alert, Badge, Card, Field, Mono, Spinner } from '../ui';
-import { fmtTime } from './helpers';
+import { TypedConfirmDialog, fmtTime } from './helpers';
 
 /** FR-WALLET-04: Wallet Mode ⇄ Simulator Mode, the escrow address and the simulator controls. */
 export function ModeBar() {
@@ -152,8 +153,12 @@ export function VaultGate() {
 /** FR-WALLET-02/03: the role secret for this escrow, its role id, and every on-chain role it matches. */
 export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleChange?: (r: PartyRole) => void }) {
   const { t } = useT();
-  const { roleKey, setRoleKey, view, vaultUnlocked, mode } = useEscrow();
+  const { roleKey, setRoleKey, view, vaultUnlocked, mode, record } = useEscrow();
   const [imp, setImp] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removed = (record.roleKeyHistory ?? []).filter((h) => h.role === role).at(-1);
+  // Translated role name, lower-cased for use mid-sentence ("act as buyer", "agir en tant que acheteur").
+  const roleLabel = t(role === 'admin' ? 'nav.admin' : (`nav.${ROLE_SLUG[role]}` as MessageKey)).toLocaleLowerCase();
   const [msg, setMsg] = useState<string | null>(null);
   const hex = roleKey(role);
   const id = hex ? roleIdHex(secretKeyFromHex(hex)) : null;
@@ -188,14 +193,45 @@ export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleCha
             </div>
           )}
           {mode === 'wallet' && (
-            <button type="button" className="btn-ghost text-xs" onClick={() => void setRoleKey(role, null)}>
+            <button type="button" className="btn-ghost text-xs" onClick={() => setConfirmRemove(true)}>
               {t('party.forgetKey')}
             </button>
+          )}
+          {confirmRemove && (
+            <TypedConfirmDialog
+              title={t('roleKey.removeTitle').replace('{role}', roleLabel)}
+              phrase={t('confirm.phraseRemove')}
+              alsoAccept={['REMOVE']}
+              confirmLabel={t('roleKey.removeConfirm')}
+              cancelLabel={t('confirm.keepKey')}
+              body={
+                <>
+                  <p>{t('roleKey.removeBody').replace('{role}', roleLabel)}</p>
+                  <p>{t('roleKey.removeHistory')}</p>
+                  <p className="text-warn">{t('roleKey.removeWarn')}</p>
+                </>
+              }
+              onCancel={() => setConfirmRemove(false)}
+              onConfirm={() => {
+                setConfirmRemove(false);
+                void setRoleKey(role, null).catch((e) => setMsg((e as Error).message));
+              }}
+            />
           )}
         </div>
       ) : (
         <>
           <p className="mb-3 text-sm text-slate-400">{t('party.roleKeyHint')}</p>
+          {removed && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button type="button" className="btn-ghost" onClick={() => void setRoleKey(role, removed.key).catch((e) => setMsg((e as Error).message))}>
+                {t('roleKey.restoreRemoved')}
+              </button>
+              <span className="text-xs text-slate-500">
+                {t('roleKey.removedAt')} {new Date(removed.removedAt).toLocaleString()}
+              </span>
+            </div>
+          )}
           <Field label={t('role.import')} htmlFor={`rk-${role}`}>
             <div className="flex gap-2">
               <input id={`rk-${role}`} type="password" className="input mono" value={imp} onChange={(e) => setImp(e.target.value)} autoComplete="off" spellCheck={false} />

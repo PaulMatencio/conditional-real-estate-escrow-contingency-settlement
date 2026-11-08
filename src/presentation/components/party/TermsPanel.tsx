@@ -8,7 +8,7 @@ import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
-import { ConfirmDialog, FilePick, downloadJson, readJsonFile } from './helpers';
+import { FilePick, TypedConfirmDialog, downloadJson, readJsonFile } from './helpers';
 
 /**
  * Private Terms Vault for one party (FR-TERMS-03..06): import the package (plain, passphrase-sealed or an X25519
@@ -114,7 +114,21 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
         </div>
       )}
       {erase && (
-        <ConfirmDialog title={t('terms.erase')} body={t('terms.eraseBody')} confirmLabel={t('terms.erase')} onCancel={() => setErase(false)} onConfirm={() => void eraseLocal().then(() => setErase(false))} />
+        <TypedConfirmDialog
+          title={t('terms.eraseTitle')}
+          phrase={t('confirm.phraseErase')}
+          alsoAccept={['ERASE']}
+          cancelLabel={t('confirm.keepData')}
+          body={
+            <>
+              <p>{t('terms.eraseBody')}</p>
+              <p className="text-warn">{t('roleKey.eraseWarn')}</p>
+            </>
+          }
+          confirmLabel={t('terms.eraseConfirm')}
+          onCancel={() => setErase(false)}
+          onConfirm={() => void eraseLocal().then(() => setErase(false))}
+        />
       )}
     </Card>
   );

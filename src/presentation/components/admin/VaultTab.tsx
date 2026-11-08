@@ -56,7 +56,7 @@ function Summary({ s }: { s: BackupSummary }) {
  */
 export function VaultTab() {
   const { t } = useT();
-  const { adminKey, setAdminKey, contractAddress, loadContract } = useApp();
+  const { adminKey, contractAddress, loadContract } = useApp();
   const { vaultUnlocked, reloadVault } = useEscrow();
   const [current, setCurrent] = useState<BackupSummary | null>(null);
   const [includeAdmin, setIncludeAdmin] = useState(true);
@@ -82,7 +82,7 @@ export function VaultTab() {
     if (pass !== pass2) return setMsg({ tone: 'bad', text: t('vaultBackup.passMismatch') });
     setBusy(true);
     try {
-      const b = await exportVault(sharedVault(), includeAdmin ? { secretKey: adminKey ?? undefined, contractAddress: contractAddress ?? undefined } : { contractAddress: contractAddress ?? undefined });
+      const b = await exportVault(sharedVault(), { includeAdminKey: includeAdmin, contractAddress: contractAddress ?? undefined });
       downloadJson(`escrow-vault-backup-${new Date().toISOString().slice(0, 10)}.json`, await sealBackup(b, pass));
       const now = Date.now();
       try {
@@ -122,16 +122,9 @@ export function VaultTab() {
     setMsg(null);
     try {
       const r = await restoreVault(sharedVault(), opened);
-      let admin: string | null = null;
-      const bk = opened.admin?.secretKey;
-      if (bk) {
-        if (!adminKey) {
-          await setAdminKey(bk);
-          admin = t('vaultBackup.adminRestored');
-        } else if (adminKey !== bk) admin = t('vaultBackup.adminKept');
-      }
+      const admin = r.admin === null ? null : r.admin.startsWith('admin secret key restored') ? t('vaultBackup.adminRestored') : t('vaultBackup.adminKept');
       if (!contractAddress && opened.admin?.contractAddress) await loadContract(opened.admin.contractAddress);
-      await reloadVault();
+      await reloadVault(); // also tells the admin console to re-read its key from the vault
       setReport({ ...r, admin });
       setOpened(null);
       setRpass('');

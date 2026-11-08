@@ -6,7 +6,7 @@ import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { EncryptedVault } from '@/infrastructure/storage/encryptedVault';
 import { MemoryStore } from '@/infrastructure/storage/kv';
 import { persistentPrivateStateProvider, signingKeyCapture } from '@/infrastructure/storage/privateStateProvider';
-import { migratePlaintextAuthorityKeys, vaultSigningKeys } from '@/infrastructure/storage/vaultInstance';
+import { loadAdminKey, migratePlaintextAdminKey, migratePlaintextAuthorityKeys, saveAdminKey, vaultSigningKeys } from '@/infrastructure/storage/vaultInstance';
 import { importAuthorityKey, exportAuthorityKey } from '@/infrastructure/storage/authorityKey';
 import { BUYER_KEY, K, configuredEscrow, hex, rid } from './helpers/fixtures';
 
@@ -99,5 +99,33 @@ describe('party checks against an active maintenance authority', () => {
     const immutable = { ...base, status: 'Created' as const, maintenance: { committeeSize: 0, threshold: 1, counter: '1' } };
     const ok = await preflight(ctx, immutable, 'buyer', 'depositToEscrow', [], BigInt(sim.time));
     expect(ok.problems.join(' ')).not.toMatch(/maintenance authority/);
+  });
+});
+
+describe('admin secret key in the vault', () => {
+  it('moves the plaintext admin key into the vault and deletes it', async () => {
+    const vault = await unlocked();
+    const plain = new MemoryStore();
+    await plain.set('admin:sk', JSON.stringify(hex(0x21)));
+    expect(await migratePlaintextAdminKey(plain, vault)).toBe(true);
+    expect(await plain.get('admin:sk')).toBeNull();
+    expect(await loadAdminKey(vault)).toBe(hex(0x21));
+  });
+
+  it('keeps the vault key when the plaintext one differs (old one goes to history)', async () => {
+    const vault = await unlocked();
+    await saveAdminKey(vault, hex(0x22));
+    const plain = new MemoryStore();
+    await plain.set('admin:sk', JSON.stringify(hex(0x23)));
+    await migratePlaintextAdminKey(plain, vault);
+    expect(await loadAdminKey(vault)).toBe(hex(0x22));
+    expect((await vault.load('_admin')).adminKeyHistory?.map((h) => h.key)).toEqual([hex(0x23)]);
+    expect(await plain.get('admin:sk')).toBeNull();
+  });
+
+  it('refuses to save while locked and returns null when locked', async () => {
+    const vault = new EncryptedVault(new MemoryStore());
+    await expect(saveAdminKey(vault, hex(1))).rejects.toThrow(/Unlock the vault/);
+    expect(await loadAdminKey(vault)).toBeNull();
   });
 });

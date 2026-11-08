@@ -157,7 +157,7 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'terms.backups': 'Sauvegardes confirmées',
   'terms.backedUp': 'Sauvegarde téléchargée et enregistrée.',
   'terms.erase': 'Effacer localement',
-  'terms.eraseBody': 'Supprime de ce navigateur les conditions, sels, attestations et clés de rôle de ce séquestre. Sans autre copie, personne ici ne pourra payer. Les engagements sur la chaîne deviennent non reliables.',
+  'terms.eraseBody': 'Cela supprime de ce navigateur les conditions privées, les attestations KYC et toutes les clés de rôle de ce séquestre. Les clés retirées ne pourront plus être restaurées.',
   'kyc.titleBuyer': 'KYC acquéreur (donneur d\'ordre)',
   'kyc.titleSeller': 'KYC vendeur (bénéficiaire)',
   'kyc.hint': 'Le PSCA signe une attestation liée à votre identifiant de rôle et à votre clé de paiement protégée engagée. Seuls le résultat et des références salées vont sur la chaîne.',
@@ -374,5 +374,23 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'vaultBackup.new': 'nouveau(x) séquestre(s)',
   'vaultBackup.merged': 'fusionné(s)',
   'vaultBackup.adminRestored': 'clé secrète administrateur restaurée',
-  'vaultBackup.adminKept': 'la clé administrateur de la sauvegarde diffère de celle de ce navigateur : la clé actuelle est conservée (importez-la dans l\'onglet Clés si besoin)'
+  'vaultBackup.adminKept': 'la clé administrateur de la sauvegarde diffère de celle de ce navigateur : la clé actuelle est conservée (importez-la dans l\'onglet Clés si besoin)',
+  'keys.hint': 'Le rôle administrateur est prouvé avec cette clé. Elle n\'est stockée que dans le coffre chiffré de ce navigateur : sauvegardez-la (onglet Coffre).',
+  'keys.vaultLocked': 'Déverrouillez le coffre pour afficher, générer ou importer la clé administrateur : elle y est stockée, chiffrée.',
+  // Role key removal
+  'confirm.typePhrase': 'Tapez {phrase} pour confirmer',
+  'roleKey.removeTitle': 'Retirer votre clé du rôle {role} de ce navigateur ?',
+  'roleKey.removeBody': 'Vous ne pourrez plus agir ici en tant que {role} (accepter, déposer, contester, libérer…) tant que vous n\'aurez pas remis la clé. Votre rôle dans le séquestre ne change pas.',
+  'roleKey.removeWarn': 'Avant de la retirer, conservez la clé en lieu sûr (sauvegarde du coffre ou gestionnaire de mots de passe).',
+  'roleKey.removeHistory': 'Vous pouvez annuler avec « Restaurer la clé retirée », tant que vous n\'effacez pas les données de ce séquestre.',
+  'roleKey.restoreRemoved': 'Restaurer la clé retirée',
+  'roleKey.removedAt': 'retirée le',
+  'roleKey.eraseWarn': 'Si personne d\'autre n\'en détient une copie, le paiement et le remboursement deviennent impossibles. Exportez d\'abord une sauvegarde du coffre.',
+  'terms.eraseConfirm': 'Effacer les données',
+  'terms.eraseTitle': 'Effacer les données de ce séquestre de ce navigateur ?',
+  'confirm.phraseErase': 'EFFACER',
+  'confirm.phraseRemove': 'RETIRER',
+  'confirm.keepData': 'Conserver les données',
+  'confirm.keepKey': 'Conserver la clé',
+  'roleKey.removeConfirm': 'Retirer la clé'
 };

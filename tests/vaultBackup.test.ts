@@ -1,7 +1,7 @@
 /** Vault backup / restore: round trip, merge without loss, identity rules, wrong passphrase and wrong file kinds. */
 import { describe, expect, it } from 'vitest';
-import { IDENTITY_RECORD } from '@/application/partyPorts';
-import { mergeIdentity, mergeRecord, summarize } from '@/application/vaultBackup';
+import { ADMIN_RECORD, IDENTITY_RECORD } from '@/application/partyPorts';
+import { BACKUP_FORMAT, mergeAdmin, mergeIdentity, mergeRecord, summarize } from '@/application/vaultBackup';
 import { generateRecipientKeyPair, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { EncryptedVault } from '@/infrastructure/storage/encryptedVault';
 import { MemoryStore } from '@/infrastructure/storage/kv';
@@ -25,13 +25,15 @@ describe('vault backup round trip', () => {
     await src.save(IDENTITY_RECORD, { identity: id });
     await src.save(A, { roleKeys: { admin: hex(1), buyer: hex(2) }, authorityKey: hex(3), history: [{ at: 1, circuit: 'configure', txHash: 'h1', status: 'confirmed' }] });
     await src.save(B, { authorityRenouncedAt: 5 });
-    const sealed = await sealBackup(await exportVault(src, { secretKey: hex(9), contractAddress: A }), PASS);
+    await src.save(ADMIN_RECORD, { adminKey: hex(9) });
+    const sealed = await sealBackup(await exportVault(src, { contractAddress: A }), PASS);
     expect(JSON.stringify(sealed)).not.toContain(hex(3)); // encrypted
 
     const opened = await openBackup(JSON.parse(JSON.stringify(sealed)), PASS);
     const s = summarize(opened);
     expect(s.contracts.map((c) => c.address).sort()).toEqual([A, B].sort());
     expect(s).toMatchObject({ identity: true, adminKey: true, adminContract: A });
+    expect(summarize(await exportVault(src, { includeAdminKey: false })).adminKey).toBe(false);
 
     // New browser: a fresh vault (its own new identity, no escrows yet).
     const dst = await vaultWith('another-pass');
@@ -43,6 +45,8 @@ describe('vault backup round trip', () => {
     const idRec = await dst.load(IDENTITY_RECORD);
     expect(idRec.identity?.publicKey).toBe(id.publicKey); // unused fresh identity replaced by the backup's
     expect(idRec.identityHistory?.map((k) => k.publicKey)).toEqual([fresh.publicKey]);
+    expect((await dst.load(ADMIN_RECORD)).adminKey).toBe(hex(9));
+    expect(r.admin).toBe('admin secret key restored');
   });
 
   it('rejects a wrong passphrase, short passphrases and other encrypted files', async () => {
@@ -88,5 +92,16 @@ describe('merge rules (never delete, never silently overwrite)', () => {
     const { record } = mergeIdentity({ identity: cur }, { identity: old }, true);
     expect(record.identity?.publicKey).toBe(cur.publicKey);
     expect(record.identityHistory?.map((k) => k.publicKey)).toEqual([old.publicKey]);
+  });
+});
+
+describe('admin key in backups', () => {
+  it('restores a legacy backup key (admin.secretKey) and never replaces a current key', () => {
+    const legacy = { format: BACKUP_FORMAT, createdAt: '', records: {}, admin: { secretKey: hex(9) } } as const;
+    expect(mergeAdmin({}, legacy).record.adminKey).toBe(hex(9));
+    const kept = mergeAdmin({ adminKey: hex(1) }, legacy);
+    expect(kept.record.adminKey).toBe(hex(1));
+    expect(kept.record.adminKeyHistory?.map((h) => h.key)).toEqual([hex(9)]);
+    expect(kept.note).toMatch(/kept the current one/);
   });
 });

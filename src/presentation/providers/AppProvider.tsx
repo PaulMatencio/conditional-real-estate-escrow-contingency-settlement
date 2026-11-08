@@ -10,12 +10,11 @@ import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
 import { exportAuthorityKey, importAuthorityKey } from '@/infrastructure/storage/authorityKey';
-import { sharedVault } from '@/infrastructure/storage/vaultInstance';
+import { loadAdminKey, saveAdminKey, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
 import { WalletConnector, detectWallets, waitForWallets, type ConnectorState, type DetectedWallet } from '@/infrastructure/wallet/connector';
 import { createWalletProviders, type AppProviders } from '@/infrastructure/wallet/providers';
 import { readDust, type DustReport } from '@/infrastructure/wallet/dust';
 
-const ADMIN_KEY_SLOT = 'admin:sk';
 
 interface App {
   connector: ConnectorState;
@@ -79,7 +78,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const gatewayRef = useRef<AdminGateway | null>(null);
 
   const getSecretKey = useCallback(() => {
-    if (!adminKeyRef.current) throw new Error('No admin secret key. Generate or import one on the Keys tab.');
+    if (!adminKeyRef.current) throw new Error(sharedVault().unlocked ? 'No admin secret key. Generate or import one on the Keys tab.' : 'Unlock the vault: the admin secret key is stored there, encrypted.');
     return secretKeyFromHex(adminKeyRef.current);
   }, []);
   const adminKeyRef = useRef<string | null>(null);
@@ -98,12 +97,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Restore persisted key / contract; reconnect the last wallet silently.
   useEffect(() => {
     void (async () => {
-      setAdminKeyState(JSON.parse((await store.get(ADMIN_KEY_SLOT)) ?? 'null'));
       setContractAddress(await store.get(CONTRACT_SLOT));
       setWallets(await waitForWallets());
       await connector.tryAutoReconnect();
     })();
   }, [store, connector]);
+
+  // The admin secret key lives only in the encrypted vault: re-read it whenever the vault is unlocked, locked or restored.
+  const vaultVersion = useSyncExternalStore(vaultSignal.subscribe, vaultSignal.getVersion, () => 0);
+  useEffect(() => {
+    gatewayRef.current = null;
+    void loadAdminKey(sharedVault()).then(setAdminKeyState, () => setAdminKeyState(null));
+  }, [vaultVersion]);
 
   const session = connState.status === 'connected' ? connState.session : null;
   const [dust, setDust] = useState<DustReport | null>(null);
@@ -163,14 +168,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAdminKey: async (hex) => {
       if (hex !== null) secretKeyFromHex(hex); // validates
       gatewayRef.current = null;
-      if (hex === null) await store.remove(ADMIN_KEY_SLOT);
-      else await store.set(ADMIN_KEY_SLOT, JSON.stringify(hex.toLowerCase().replace(/^0x/, '')));
+      await saveAdminKey(sharedVault(), hex);
       setAdminKeyState(hex ? hex.toLowerCase().replace(/^0x/, '') : null);
     },
     newAdminKey: async () => {
       const hex = bytesToHex(generateSecretKey());
       gatewayRef.current = null;
-      await store.set(ADMIN_KEY_SLOT, JSON.stringify(hex));
+      await saveAdminKey(sharedVault(), hex);
       setAdminKeyState(hex);
       return hex;
     },

@@ -114,6 +114,8 @@ export interface VaultRecord {
   kyc?: Partial<Record<'buyer' | 'seller', AttestationBundle>>;
   /** Role secret keys held for this contract, hex (FR-WALLET-02). */
   roleKeys?: Record<string, string>;
+  /** Role keys removed or replaced in this vault, kept so a mistaken removal can be undone. */
+  roleKeyHistory?: { role: string; key: string; removedAt: number }[];
   /** FR-TERMS-04: at least one confirmed backup before finalize. */
   backups?: { at: number; kind: 'file' | 'custodian'; note?: string }[];
   /** Salt + metadata of documents this party committed (FR-ATTEST-02). */
@@ -125,6 +127,9 @@ export interface VaultRecord {
   authorityRenouncedAt?: number;
   /** X25519 key pair for receiving encrypted terms packages (stored under the IDENTITY_RECORD id). */
   identity?: { publicKey: string; privateKeyJwk: JsonWebKey };
+  /** ADMIN_RECORD only: the admin secret key (64 hex) and the keys it replaced. */
+  adminKey?: string;
+  adminKeyHistory?: { key: string; replacedAt: number }[];
   /** Earlier envelope key pairs (e.g. restored from a backup); still tried when opening envelopes. */
   identityHistory?: { publicKey: string; privateKeyJwk: JsonWebKey }[];
   /** FR-AUDIT-03: local transaction history. */
@@ -133,6 +138,8 @@ export interface VaultRecord {
 
 /** Vault record id that holds this browser's envelope identity rather than a contract. */
 export const IDENTITY_RECORD = '_identity';
+/** Vault record id that holds the admin console's secret key (one per browser, not per contract). */
+export const ADMIN_RECORD = '_admin';
 
 export interface Vault {
   readonly unlocked: boolean;

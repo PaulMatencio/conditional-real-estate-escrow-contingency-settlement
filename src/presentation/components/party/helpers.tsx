@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useT } from '../../i18n';
 
 /** Saves JSON as a local file (never uploaded). BigInts become strings. */
@@ -78,7 +79,8 @@ export function ConfirmDialog({ title, body, confirmLabel, onCancel, onConfirm, 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
-  return (
+  // Portal: a dialog rendered inside a .card (backdrop-filter) would otherwise be positioned and clipped inside it.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
       <div role="alertdialog" aria-modal="true" aria-labelledby="cd-title" className="card w-full max-w-md space-y-3 p-5" onClick={(e) => e.stopPropagation()}>
         <h2 id="cd-title" className="text-base font-semibold text-white">{title}</h2>
@@ -93,6 +95,44 @@ export function ConfirmDialog({ title, body, confirmLabel, onCancel, onConfirm, 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
+  );
+}
+
+/**
+ * Confirmation for destructive actions on keys: the confirm button stays disabled until the user types `phrase`.
+ * Used for every removal of a role key and for "Erase locally".
+ */
+export function TypedConfirmDialog({ title, body, phrase, alsoAccept = [], confirmLabel, cancelLabel, onCancel, onConfirm }: { title: string; body: ReactNode; phrase: string; alsoAccept?: string[]; confirmLabel: string; cancelLabel?: string; onCancel: () => void; onConfirm: () => void }) {
+  const { t } = useT();
+  const [typed, setTyped] = useState('');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  // Case-insensitive; the English word is also accepted so a user who switches language mid-flow is not stuck.
+  const ok = [phrase, ...alsoAccept].some((p) => typed.trim().toLocaleUpperCase() === p.toLocaleUpperCase());
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="tcd-title" className="card w-full max-w-md space-y-3 p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 id="tcd-title" className="text-base font-semibold text-white">{title}</h2>
+        <div className="space-y-2 text-sm text-slate-300">{body}</div>
+        <label className="block text-sm">
+          <span className="label">{t('confirm.typePhrase').replace('{phrase}', phrase)}</span>
+          <input className="input mono" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} autoFocus />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onCancel}>
+            {cancelLabel ?? t('keys.replaceCancel')}
+          </button>
+          <button type="button" className="btn-danger" disabled={!ok} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }

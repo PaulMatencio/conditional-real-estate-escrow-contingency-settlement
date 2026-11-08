@@ -235,6 +235,7 @@ function InitializeTab() {
 function KeysTab() {
   const { t } = useT();
   const { adminKey, adminRoleId, newAdminKey, setAdminKey, verifyAdminKey, state } = useApp();
+  const { vaultUnlocked } = useEscrow();
   const [shown, setShown] = useState(false);
   const [imp, setImp] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
@@ -257,6 +258,7 @@ function KeysTab() {
     <div className="space-y-4">
       <Card title={t('keys.title')} icon={<KeyRound size={16} aria-hidden />}>
         <p className="mb-3 text-sm text-slate-400">{t('keys.hint')}</p>
+        {!vaultUnlocked && <Alert tone="warn">{t('keys.vaultLocked')}</Alert>}
         {adminRoleId && <Field label={t('deploy.admin')}><Mono value={adminRoleId} /></Field>}
         <div className="mb-3 flex flex-wrap gap-2">
           <button type="button" className="btn-primary" onClick={() => request({ kind: 'generate' })}>{t('keys.generate')}</button>

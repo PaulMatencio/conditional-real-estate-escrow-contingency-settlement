@@ -27,8 +27,9 @@ The browser vault is the only place that holds an escrow's private material: rol
 | Document salts and report hashes (attestors) | vault record |
 | Contract maintenance-authority key and its history; renounce date | vault record |
 | Local transaction history and confirmed terms backups | vault record |
-| Envelope key pair (X25519) and earlier envelope keys | vault identity record |
-| Admin secret key and loaded contract address (optional) | admin console |
+| Envelope key pair (X25519) and earlier envelope keys | vault identity record (`_identity`) |
+| Admin secret key and the keys it replaced (optional) | vault admin record (`_admin`) |
+| Loaded contract address | admin console |
 
 ### Encryption
 
@@ -53,14 +54,30 @@ AES-256-GCM with a key derived from the backup passphrase (PBKDF2-SHA-256, 310,0
 | Authority key | added if missing; if different, the current one is kept and the backup's goes to the key history; a key whose authority was renounced is never brought back |
 | Authority key history, documents, confirmed backups, transaction history | merged (union, no duplicates) |
 | Envelope key | if this vault holds no escrows yet (new browser), the backup's key becomes current and the newly created one is kept as a previous key; otherwise the current key is kept and the backup's is stored as a previous key |
-| Admin secret key | restored only if this browser has none; otherwise kept, with a note (import it on the Keys tab if needed) |
+| Admin secret key | restored only if this browser has none; otherwise the current key is kept and the backup's goes to the admin key history. Backups made before 2026-11-08 (key in `admin.secretKey`) are handled the same way |
 | Loaded contract address | set only if no contract is loaded |
 
 Previous envelope keys are still tried when importing an envelope, so terms packages encrypted to an older key still open.
 
 ---
 
-## 3. When to make a backup
+## 3. Where the vault is stored
+
+In the browser's **IndexedDB**, database `escrow-vault`, object store `kv`, for the dApp's origin (e.g. `http://localhost:3000`). On Linux, inside the browser profile, e.g. `~/.config/google-chrome/Default/IndexedDB/http_localhost_3000.indexeddb.leveldb/`. Inspect it in DevTools → *Application* → *IndexedDB*.
+
+| Entry | Content |
+| :--- | :--- |
+| `vault:meta` | random salt and an encrypted check value (the passphrase is never stored) |
+| `vault:rec:<contract address>` | one AES-GCM record per escrow |
+| `vault:rec:_identity` | envelope key pair |
+| `vault:rec:_admin` | admin secret key (since 2026-11-08) |
+
+- One vault per browser profile **and** per origin: `localhost:3000` and `127.0.0.1:3000` have separate vaults.
+- Clearing site data, or a private window, removes it: keep a backup.
+- Since 2026-11-08 the **admin secret key** is no longer in plain `localStorage`. On the next unlock, a key found at `escrow:admin:sk` is moved into the vault, verified, then deleted (a different key already in the vault stays current; the old one goes to the history). The admin console reads the key only while the vault is unlocked; when locked, the Keys tab asks to unlock it.
+- Still in plain `localStorage` (`escrow:…`): only non-secret settings (mode, loaded contract address, language, theme, last backup date).
+
+## 4. When to make a backup
 
 - Right after deploying, while the vault holds a live maintenance-authority key. Losing it before renouncing means losing control of the contract.
 - After generating or importing a terms package, role keys or KYC attestations.
@@ -68,7 +85,7 @@ Previous envelope keys are still tried when importing an envelope, so terms pack
 
 ---
 
-## 4. Implementation
+## 5. Implementation
 
 | File | Role |
 | :--- | :--- |
@@ -77,11 +94,14 @@ Previous envelope keys are still tried when importing an envelope, so terms pack
 | `src/presentation/components/admin/VaultTab.tsx` | Admin Vault tab (backup and restore cards) |
 | `src/presentation/providers/EscrowProvider.tsx` | `identities` (current + previous envelope keys), `reloadVault` after a restore |
 | `src/presentation/components/party/TermsPanel.tsx` | Opens envelopes with any envelope key the vault holds |
-| `tests/vaultBackup.test.ts` | Round trip, merge rules, wrong passphrase, wrong file kinds |
+| `src/infrastructure/storage/vaultInstance.ts` | Shared vault, `vaultSignal`, admin key load/save and plaintext migration |
+| `tests/vaultBackup.test.ts` | Round trip, merge rules, wrong passphrase, wrong file kinds, legacy admin key |
+| `tests/authority.test.ts` | Authority and admin key migration, locked-vault behaviour |
 
 Texts are available in English, French and Spanish.
 
-## 5. Verification
+## 6. Verification
 
 - Unit tests: export → seal → open → restore into a fresh vault; merge without loss; renounced authority key not restored; identity rules; wrong passphrase; a terms-backup file rejected as "not a vault backup".
 - Browser test: backup downloaded in one browser profile, restored into a fresh one ("Restored: 1 new escrow(s)", envelope key restored), no page errors.
+- Browser test: a plaintext admin key is moved into the vault on unlock and deleted from `localStorage`; the Keys tab hides it while locked and shows it again after a reload and unlock.

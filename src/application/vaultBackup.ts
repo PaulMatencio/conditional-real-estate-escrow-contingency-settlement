@@ -7,7 +7,7 @@
  * difference reported (authority keys and envelope identities are kept in their history so nothing is lost).
  */
 import type { VaultRecord } from './partyPorts';
-import { IDENTITY_RECORD } from './partyPorts';
+import { ADMIN_RECORD, IDENTITY_RECORD } from './partyPorts';
 
 export const BACKUP_FORMAT = 'EscrowVaultBackupV1';
 
@@ -35,7 +35,7 @@ export function summarize(b: VaultBackup): BackupSummary {
   return {
     createdAt: b.createdAt,
     contracts: Object.entries(b.records)
-      .filter(([id]) => id !== IDENTITY_RECORD)
+      .filter(([id]) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD)
       .map(([address, r]) => ({
         address,
         terms: !!r.terms,
@@ -46,7 +46,7 @@ export function summarize(b: VaultBackup): BackupSummary {
         history: r.history?.length ?? 0
       })),
     identity: !!b.records[IDENTITY_RECORD]?.identity,
-    adminKey: !!b.admin?.secretKey,
+    adminKey: !!b.records[ADMIN_RECORD]?.adminKey || !!b.admin?.secretKey,
     adminContract: b.admin?.contractAddress
   };
 }
@@ -98,6 +98,7 @@ export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: 
   out.authorityKeyHistory = unionBy(out.authorityKeyHistory, incoming.authorityKeyHistory, (h) => h.key);
   if (incoming.authorityRenouncedAt && !current.authorityRenouncedAt) out.authorityRenouncedAt = incoming.authorityRenouncedAt;
 
+  out.roleKeyHistory = unionBy(current.roleKeyHistory, incoming.roleKeyHistory, (h) => `${h.role}:${h.key}`);
   out.backups = unionBy(current.backups, incoming.backups, (b) => `${b.at}:${b.kind}`);
   out.documents = unionBy(current.documents, incoming.documents, (d) => d.reportHash);
   out.history = unionBy(current.history, incoming.history, (h) => `${h.txHash}:${h.circuit}`)?.sort((a, b) => a.at - b.at);
@@ -122,6 +123,28 @@ export function mergeIdentity(current: VaultRecord, incoming: VaultRecord, curre
     return { record: { ...current, identity: inc, identityHistory: unionBy(current.identityHistory, [cur], (k) => k.publicKey) }, note: 'envelope key restored (the one created in this browser is kept as a previous key)' };
   }
   return { record: { ...current, identityHistory: unionBy(current.identityHistory, [inc], (k) => k.publicKey) }, note: 'kept this browser’s envelope key; the backup’s is kept as a previous key and still opens envelopes sent to it' };
+}
+
+/**
+ * The admin secret key (ADMIN_RECORD). Restored when this browser has none; otherwise the current key is kept and the
+ * backup's goes to the history. Backups made before the key moved into the vault carry it in `admin.secretKey`.
+ */
+export function mergeAdmin(current: VaultRecord, backup: VaultBackup): { record: VaultRecord; note: string | null } {
+  const inc = backup.records[ADMIN_RECORD];
+  const incomingKeys = [inc?.adminKey, backup.admin?.secretKey].filter((k): k is string => !!k).map((k) => k.toLowerCase());
+  const history = unionBy(current.adminKeyHistory, inc?.adminKeyHistory, (h) => h.key);
+  if (!incomingKeys.length) return { record: { ...current, adminKeyHistory: history }, note: null };
+  const [primary, ...others] = incomingKeys;
+  if (!current.adminKey) {
+    const extra = others.filter((k) => k !== primary).map((key) => ({ key, replacedAt: Date.now() }));
+    return { record: { ...current, adminKey: primary, adminKeyHistory: unionBy(history, extra, (h) => h.key) }, note: 'admin secret key restored' };
+  }
+  const differing = incomingKeys.filter((k) => k !== current.adminKey).map((key) => ({ key, replacedAt: Date.now() }));
+  if (!differing.length) return { record: { ...current, adminKeyHistory: history }, note: null };
+  return {
+    record: { ...current, adminKeyHistory: unionBy(history, differing, (h) => h.key) },
+    note: 'the backup\u2019s admin key differs from this browser\u2019s: kept the current one (the backup\u2019s is in the admin key history)'
+  };
 }
 
 export interface RestoreReport {

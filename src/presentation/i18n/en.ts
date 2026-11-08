@@ -72,7 +72,7 @@ export const en = {
   'init.finalize': 'Finalize initialization',
   'init.finalizeHint': 'Irreversible: the admin loses all power once the escrow is finalized.',
   'keys.title': 'Admin secret key',
-  'keys.hint': 'The admin role is proven with this key. It exists only in this browser: back it up.',
+  'keys.hint': 'The admin role is proven with this key. It is stored only in this browser\'s encrypted vault: back it up (Vault tab).',
   'keys.generate': 'Generate new key',
   'keys.export': 'Reveal / export',
   'keys.import': 'Import key (64 hex)',
@@ -210,7 +210,7 @@ export const en = {
   'terms.backups': 'Confirmed backups',
   'terms.backedUp': 'Backup downloaded and recorded.',
   'terms.erase': 'Erase locally',
-  'terms.eraseBody': 'Deletes this escrow\'s terms, salts, attestations and role keys from this browser. Without another copy nobody here can pay out. The on-chain commitments become unlinkable.',
+  'terms.eraseBody': 'This deletes the private terms, KYC attestations and every role key for this escrow from this browser. Removed keys can\'t be restored afterwards.',
   'kyc.titleBuyer': 'Buyer KYC (originator)',
   'kyc.titleSeller': 'Seller KYC (beneficiary)',
   'kyc.hint': 'The CASP signs an attestation bound to your role id and your committed shielded payout key. Only pass/fail and salted references go on-chain.',
@@ -427,7 +427,24 @@ export const en = {
   'vaultBackup.new': 'new escrow(s)',
   'vaultBackup.merged': 'merged',
   'vaultBackup.adminRestored': 'admin secret key restored',
-  'vaultBackup.adminKept': 'the backup\'s admin key differs from this browser\'s: kept the current one (import it on the Keys tab if needed)'
+  'vaultBackup.adminKept': 'the backup\'s admin key differs from this browser\'s: kept the current one (import it on the Keys tab if needed)',
+  'keys.vaultLocked': 'Unlock the vault to see, generate or import the admin key: it is stored there, encrypted.',
+  // Role key removal
+  'confirm.typePhrase': 'Type {phrase} to confirm',
+  'roleKey.removeTitle': 'Remove your {role} key from this browser?',
+  'roleKey.removeBody': 'You won\'t be able to act as {role} here (accept, deposit, dispute, release…) until you put the key back. Your role on the escrow doesn\'t change.',
+  'roleKey.removeWarn': 'Before removing it, save the key somewhere safe (a vault backup or a password manager).',
+  'roleKey.removeHistory': 'You can undo this with "Restore removed key", as long as you don\'t erase this escrow\'s data.',
+  'roleKey.restoreRemoved': 'Restore removed key',
+  'roleKey.removedAt': 'removed on',
+  'roleKey.eraseWarn': 'If no one else holds a copy, payout and refund become impossible. Export a vault backup first.',
+  'terms.eraseConfirm': 'Erase data',
+  'terms.eraseTitle': 'Erase this escrow\'s data from this browser?',
+  'confirm.phraseErase': 'ERASE',
+  'confirm.phraseRemove': 'REMOVE',
+  'confirm.keepData': 'Keep data',
+  'confirm.keepKey': 'Keep key',
+  'roleKey.removeConfirm': 'Remove key'
 } as const;
 
 export type MessageKey = keyof typeof en;

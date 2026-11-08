@@ -20,7 +20,7 @@ import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { PartyGateway } from '@/infrastructure/gateway/partyGateway';
 import { EscrowSimulator } from '@/infrastructure/simulator/escrowSimulator';
-import { migratePlaintextAuthorityKeys, sharedVault } from '@/infrastructure/storage/vaultInstance';
+import { migratePlaintextAdminKey, migratePlaintextAuthorityKeys, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
 import { createWalletProviders, type AppProviders } from '@/infrastructure/wallet/providers';
 import { activeSink } from '@/application/deployProgress';
@@ -194,8 +194,14 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         setIdentityHistory((await vault.load(IDENTITY_RECORD)).identityHistory ?? []);
         // Earlier versions kept the contract authority key in plain localStorage: move it into the vault, then delete it.
         const moved = await migratePlaintextAuthorityKeys(prefs, vault).catch(() => 0);
-        if (moved) setNotice(`${moved} contract authority key(s) moved from plain browser storage into the encrypted vault.`);
+        const adminMoved = await migratePlaintextAdminKey(prefs, vault).catch(() => false);
+        const notes = [
+          moved ? `${moved} contract authority key(s)` : null,
+          adminMoved ? 'the admin secret key' : null
+        ].filter(Boolean);
+        if (notes.length) setNotice(`Moved ${notes.join(' and ')} from plain browser storage into the encrypted vault.`);
         setUnlocked(true);
+        vaultSignal.emit();
         return null;
       } catch (e) {
         vault.lock();
@@ -208,6 +214,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
   const lockVault = useCallback(() => {
     vault.lock();
     setUnlocked(false);
+    vaultSignal.emit();
     setRecord({});
     setIdentity(null);
     setIdentityHistory([]);
@@ -259,9 +266,16 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
       if (hex !== null) secretKeyFromHex(hex);
       await updateRecord((r) => {
         const keys = { ...(r.roleKeys ?? {}) };
-        if (hex === null) delete keys[role];
-        else keys[role] = hex.trim().toLowerCase().replace(/^0x/, '');
-        return { ...r, roleKeys: keys };
+        const previous = keys[role];
+        const next = hex === null ? undefined : hex.trim().toLowerCase().replace(/^0x/, '');
+        if (next === undefined) delete keys[role];
+        else keys[role] = next;
+        // A removed or replaced key is kept in the record's history so it can be put back (Restore removed key).
+        const history =
+          previous && previous !== next && !(r.roleKeyHistory ?? []).some((h) => h.role === role && h.key === previous)
+            ? [...(r.roleKeyHistory ?? []), { role, key: previous, removedAt: Date.now() }]
+            : r.roleKeyHistory;
+        return { ...r, roleKeys: keys, roleKeyHistory: history };
       });
     },
     [updateRecord]
@@ -382,6 +396,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     setIdentity(idRec.identity ?? null);
     setIdentityHistory(idRec.identityHistory ?? []);
     if (activeAddress) setRecord(await vault.load(activeAddress));
+    vaultSignal.emit();
   }, [vault, activeAddress]);
 
   const eraseLocal = useCallback(async () => {
