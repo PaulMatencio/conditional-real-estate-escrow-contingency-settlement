@@ -128,7 +128,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                 <FilePick label={t('notary.loadOpening')} accept="application/json,.json" onFile={(f) => void onOpening(f)} />
                 <FilePick label={t('notary.loadCasp')} accept="application/json,.json" onFile={(f) => void onCasp(f)} />
               </div>
-              <Field label={t('notary.docSalt')} htmlFor="doc-salt">
+              <Field label={t('notary.docSalt')} tip={t('tip.notary.docSalt')} htmlFor="doc-salt">
                 <div className="flex gap-2">
                   <input id="doc-salt" className="input mono" value={docSalt} onChange={(e) => setDocSalt(e.target.value)} spellCheck={false} />
                   <FilePick label={t('notary.loadDoc')} onFile={(f) => void onDocument(f)} />

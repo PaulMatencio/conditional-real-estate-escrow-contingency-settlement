@@ -162,7 +162,7 @@ export function TermsKycTab() {
         </Card>
       )}
 
-      <Card title={t('adminTerms.casp')} icon={<Building size={16} aria-hidden />}>
+      <Card title={t('adminTerms.casp')} tip={t('tip.adminTerms.casp')} icon={<Building size={16} aria-hidden />}>
         <p className="mb-3 text-sm text-slate-400">{t('adminTerms.caspHint')}</p>
         {keys.length === 0 && <Alert tone="warn">{t('casp.offline')}</Alert>}
         <ul className="space-y-2 text-sm">

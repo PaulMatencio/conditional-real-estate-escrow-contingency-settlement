@@ -152,7 +152,7 @@ export function VaultTab() {
               <input type="checkbox" checked={includeAdmin} onChange={(e) => setIncludeAdmin(e.target.checked)} /> {t('vaultBackup.includeAdmin')}
             </label>
             <div className="mt-3 grid gap-x-4 sm:grid-cols-2">
-              <Field label={t('vaultBackup.pass')} htmlFor="vb-pass" hint={t('vaultBackup.passHint')}>
+              <Field label={t('vaultBackup.pass')} tip={t('tip.vaultBackup.pass')} htmlFor="vb-pass" hint={t('vaultBackup.passHint')}>
                 <input id="vb-pass" type="password" className="input" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" />
               </Field>
               <Field label={t('vaultBackup.pass2')} htmlFor="vb-pass2">

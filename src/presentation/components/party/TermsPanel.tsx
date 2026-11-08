@@ -47,10 +47,10 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
   };
 
   return (
-    <Card title={t('terms.title')} icon={<FileLock2 size={16} aria-hidden />}>
+    <Card title={t('terms.title')} tip={t('tip.terms.title')} icon={<FileLock2 size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('terms.hint')}</p>
       {identity && (
-        <Field label={t('terms.myEnvelopeKey')} hint={t('terms.myEnvelopeKeyHint')}>
+        <Field label={t('terms.myEnvelopeKey')} tip={t('tip.terms.myEnvelopeKey')} hint={t('terms.myEnvelopeKeyHint')}>
           <Mono value={identity.publicKey} />
         </Field>
       )}

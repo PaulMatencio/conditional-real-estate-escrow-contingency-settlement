@@ -48,7 +48,7 @@ export function AttestorPanel({ contingency }: { contingency: ContingencyName })
       </div>
       {doc && (
         <>
-          <Field label={t('attest.hash')} hint={t('attest.hashHint')}>
+          <Field label={t('attest.hash')} tip={t('tip.attest.hash')} hint={t('attest.hashHint')}>
             <Mono value={doc.hash} />
           </Field>
           <fieldset className="mb-3 flex gap-4 text-sm">

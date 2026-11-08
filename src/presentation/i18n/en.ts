@@ -444,7 +444,28 @@ export const en = {
   'confirm.phraseRemove': 'REMOVE',
   'confirm.keepData': 'Keep data',
   'confirm.keepKey': 'Keep key',
-  'roleKey.removeConfirm': 'Remove key'
+  'roleKey.removeConfirm': 'Remove key',
+  'common.moreInfo': 'More information',
+  'tip.party.roleKey': 'The secret that proves you hold this role. It stays encrypted in this browser\'s vault and is never sent anywhere.',
+  'tip.role.roleId': 'A public fingerprint of your secret key. The admin writes it into the contract so the escrow recognises you.',
+  'tip.role.secret': 'Anyone with this key can act as you. Store it in a password manager; it can\'t be recovered if lost.',
+  'tip.payout.title': 'Where your share of the funds is paid. It comes from your connected Midnight wallet and is only shared with the admin.',
+  'tip.terms.title': 'The confidential deal terms (amount, payout keys). Only commitments go on-chain; the details stay in your vault.',
+  'tip.terms.myEnvelopeKey': 'Give this to the admin so they can send you the terms encrypted for this browser only.',
+  'tip.status.anchors': 'Hashes recorded on-chain. They prove the terms and reports exist without revealing their content.',
+  'tip.status.contingencies': 'Conditions (inspection, financing, title) that must be met or waived before the funds can be released.',
+  'tip.deadline.closing': 'Funds must be deposited before this time. If contingencies are still open after it, the escrow can expire and refund the buyer.',
+  'tip.deadline.dispute': 'Last moment to open a dispute. After it, no new dispute is accepted.',
+  'tip.fund.nonce': 'A random value that identifies your locked coin. It\'s generated for you and kept in the vault.',
+  'tip.attest.hash': 'A fingerprint of your report. Only this hash goes on-chain; the report itself stays private.',
+  'tip.casp.title': 'The regulated crypto-asset provider that checks identities (KYC) and signs the attestations.',
+  'tip.casp.reference': 'The provider\'s ID for this KYC check. Recorded on-chain so the attestation can be audited or revoked.',
+  'tip.adminTerms.casp': 'Only KYC attestations signed by these providers are accepted.',
+  'tip.notary.docSalt': 'A random value mixed into the document hash so nobody can guess the document from its hash.',
+  'tip.authority.title': 'Who can change the contract\'s code after deployment. "Immutable" means nobody can, the safest state.',
+  'tip.keys.title': 'The admin\'s own secret. It authorises admin actions on this escrow and is stored encrypted in the vault.',
+  'tip.deploy.color': 'The on-chain identifier of the token held in escrow. Get it from the token issuer or your wallet.',
+  'tip.vaultBackup.pass': 'Encrypts the backup file. It can differ from your vault passphrase; without it the backup can\'t be opened.'
 } as const;
 
 export type MessageKey = keyof typeof en;

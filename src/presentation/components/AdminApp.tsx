@@ -82,7 +82,7 @@ function DeployTab() {
         <Field label={t('deploy.seller')} htmlFor="seller">
           <input id="seller" className="input mono" value={seller} onChange={(e) => setSeller(e.target.value)} placeholder="64 hex" spellCheck={false} />
         </Field>
-        <Field label={t('deploy.color')} htmlFor="color">
+        <Field label={t('deploy.color')} tip={t('tip.deploy.color')} htmlFor="color">
           <input id="color" className="input mono" value={color} onChange={(e) => setColor(e.target.value)} placeholder="64 hex" spellCheck={false} />
         </Field>
         <Field label={t('deploy.ticker')} htmlFor="ticker">
@@ -256,7 +256,7 @@ function KeysTab() {
   };
   return (
     <div className="space-y-4">
-      <Card title={t('keys.title')} icon={<KeyRound size={16} aria-hidden />}>
+      <Card title={t('keys.title')} tip={t('tip.keys.title')} icon={<KeyRound size={16} aria-hidden />}>
         <p className="mb-3 text-sm text-slate-400">{t('keys.hint')}</p>
         {!vaultUnlocked && <Alert tone="warn">{t('keys.vaultLocked')}</Alert>}
         {adminRoleId && <Field label={t('deploy.admin')}><Mono value={adminRoleId} /></Field>}

@@ -34,7 +34,7 @@ export function AuthorityCard() {
   const canRenounce = !!state && level === 'controlled' && missing === 0 && status === 'match' && !busy;
 
   return (
-    <Card title={t('authority.title')} icon={<ShieldOff size={16} aria-hidden />}>
+    <Card title={t('authority.title')} tip={t('tip.authority.title')} icon={<ShieldOff size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('authority.hint')}</p>
       {notice && <Alert tone="ok" onClose={() => setNotice(null)}>{notice}</Alert>}
       {state && <AuthorityBadge maintenance={state.maintenance} />}

@@ -32,7 +32,7 @@ export function RoleIdTool() {
         <p className="text-sm text-slate-400">{t('role.subtitle')}</p>
       </div>
       <Alert tone="warn">{t('role.warn')}</Alert>
-      <Card title={t('role.card')} icon={<KeyRound size={16} aria-hidden />}>
+      <Card title={t('role.card')} tip={t('tip.role.roleId')} icon={<KeyRound size={16} aria-hidden />}>
         <div className="mb-3 flex flex-wrap gap-2">
           <button type="button" className="btn-primary" onClick={() => { setSecret(bytesToHex(generateSecretKey())); setMsg(null); }}>{t('role.generate')}</button>
           {secret && <button type="button" className="btn-ghost" onClick={() => setSecret(null)}>{t('role.clear')}</button>}
@@ -46,8 +46,8 @@ export function RoleIdTool() {
         {msg && <Alert tone="bad" onClose={() => setMsg(null)}>{msg}</Alert>}
         {secret && roleId && (
           <div className="mt-4 space-y-3">
-            <Field label={t('role.roleId')} hint={t('role.roleIdHint')}><Mono value={roleId} /></Field>
-            <Field label={t('role.secret')} hint={t('role.secretHint')}><Mono value={secret} /></Field>
+            <Field label={t('role.roleId')} tip={t('tip.role.roleId')} hint={t('role.roleIdHint')}><Mono value={roleId} /></Field>
+            <Field label={t('role.secret')} tip={t('tip.role.secret')} hint={t('role.secretHint')}><Mono value={secret} /></Field>
           </div>
         )}
       </Card>

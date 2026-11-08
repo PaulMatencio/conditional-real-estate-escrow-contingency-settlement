@@ -168,10 +168,10 @@ export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleCha
 
   if (!vaultUnlocked) return null;
   return (
-    <Card title={t('party.roleKey')} icon={<KeyRound size={16} aria-hidden />}>
+    <Card title={t('party.roleKey')} tip={t('tip.party.roleKey')} icon={<KeyRound size={16} aria-hidden />}>
       {id ? (
         <div className="space-y-2">
-          <Field label={t('role.roleId')}>
+          <Field label={t('role.roleId')} tip={t('tip.role.roleId')}>
             <Mono value={id} />
           </Field>
           {view &&
@@ -286,7 +286,7 @@ export function PayoutKeyCard({ party }: { party: 'buyer' | 'seller' }) {
 
   if (mode !== 'wallet') return null;
   return (
-    <Card title={t('payout.title')} icon={<WalletCards size={16} aria-hidden />}>
+    <Card title={t('payout.title')} tip={t('tip.payout.title')} icon={<WalletCards size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('payout.hint')}</p>
       <button type="button" className="btn-primary" disabled={!session} onClick={() => void reveal()}>
         {t('payout.show')}

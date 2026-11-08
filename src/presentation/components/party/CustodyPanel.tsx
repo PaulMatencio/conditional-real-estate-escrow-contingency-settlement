@@ -42,7 +42,7 @@ export function FundingPanel() {
           value={balance === undefined ? '…' : balance === null ? '—' : `${balance} ${view.escrowTicker}`}
           sub={balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${need - balance}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
         />
-        <Stat label={t('fund.nonce')} value={<span className="mono">{shortHex(bytesToHex(coin.nonce))}</span>} sub={`color ${shortHex(view.escrowColor)}`} />
+        <Stat label={t('fund.nonce')} tip={t('tip.fund.nonce')} value={<span className="mono">{shortHex(bytesToHex(coin.nonce))}</span>} sub={`color ${shortHex(view.escrowColor)}`} />
       </div>
       {walletKey && walletKey !== pkg.terms.buyerPayout && walletKey !== pkg.terms.sellerPayout && <Alert tone="warn">{t('fund.keyDiffers')}</Alert>}
       {walletKey && (

@@ -53,8 +53,8 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           {d && <Countdown to={d.at} now={now} label={t(`deadline.${d.kind}`)} />}
-          <Stat label={t('deadline.closing')} value={<span className="text-sm">{fmtTime(view.closingDeadline)}</span>} />
-          <Stat label={t('deadline.dispute')} value={<span className="text-sm">{fmtTime(view.disputeDeadline)}</span>} />
+          <Stat label={t('deadline.closing')} tip={t('tip.deadline.closing')} value={<span className="text-sm">{fmtTime(view.closingDeadline)}</span>} />
+          <Stat label={t('deadline.dispute')} tip={t('tip.deadline.dispute')} value={<span className="text-sm">{fmtTime(view.disputeDeadline)}</span>} />
         </div>
       </Card>
 
@@ -79,7 +79,7 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
         </Card>
       )}
 
-      <Card title={t('status.contingencies')}>
+      <Card title={t('status.contingencies')} tip={t('tip.status.contingencies')}>
         <ul className="space-y-2 text-sm">
           {CONTINGENCIES.map((c) => {
             const s = view.contingencies[c];
@@ -110,7 +110,7 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
       </Card>
 
       {!compact && (
-        <Card title={t('status.anchors')}>
+        <Card title={t('status.anchors')} tip={t('tip.status.anchors')}>
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <div>
               <dt className="label">{t('status.commitments')}</dt>

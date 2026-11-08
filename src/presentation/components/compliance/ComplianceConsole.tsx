@@ -64,7 +64,7 @@ export function ComplianceConsole() {
       {error && <Alert tone="bad" onClose={() => setError(null)}>{error}</Alert>}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <Card title={t('casp.title')} icon={<Building size={16} aria-hidden />} actions={<button type="button" className="btn-ghost !p-1.5" onClick={() => void load()} aria-label={t('common.refresh')}><RefreshCw size={14} /></button>}>
+          <Card title={t('casp.title')} tip={t('tip.casp.title')} icon={<Building size={16} aria-hidden />} actions={<button type="button" className="btn-ghost !p-1.5" onClick={() => void load()} aria-label={t('common.refresh')}><RefreshCw size={14} /></button>}>
             {health ? <Alert tone="ok">{t('casp.connected')}: {health}</Alert> : <Alert tone="bad">{caspErr ?? t('casp.offline')}</Alert>}
             <ul className="mt-3 space-y-2 text-sm">
               {keys.map((k) => (
@@ -79,7 +79,7 @@ export function ComplianceConsole() {
 
           <Card title={t('casp.revoke')} icon={<Ban size={16} aria-hidden />}>
             <p className="mb-3 text-sm text-slate-400">{t('casp.revokeHint')}</p>
-            <Field label={t('casp.reference')} htmlFor="rev-ref">
+            <Field label={t('casp.reference')} tip={t('tip.casp.reference')} htmlFor="rev-ref">
               <input id="rev-ref" className="input mono" value={ref} onChange={(e) => setRef(e.target.value)} spellCheck={false} />
             </Field>
             {view && (
