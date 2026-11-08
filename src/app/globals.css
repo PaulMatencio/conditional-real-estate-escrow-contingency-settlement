@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --m-950: 7 8 18; --m-900: 11 13 28; --m-850: 16 19 42; --m-800: 21 25 54; --m-700: 30 35 71; --m-600: 42 48 96; --m-500: 59 67 128;
+  --accent-soft: 165 170 255; --ok: 61 220 151; --warn: 255 200 87; --bad: 255 107 129;
+}
+:root.light {
+  color-scheme: light;
+  --m-950: 244 245 252; --m-900: 255 255 255; --m-850: 250 250 255; --m-800: 238 240 252; --m-700: 218 222 242; --m-600: 188 194 226; --m-500: 150 158 205;
+  --accent-soft: 70 78 220; --ok: 14 140 88; --warn: 160 100 0; --bad: 205 40 70;
+}
+/* Light mode: the few hard-coded text shades invert with the surfaces. */
+.light .text-white { color: rgb(20 22 48); }
+.light .text-slate-100, .light .text-slate-200, .light .text-slate-300 { color: rgb(40 44 80); }
+.light .text-slate-400, .light .text-slate-500 { color: rgb(90 96 130); }
+
+html { background: rgb(var(--m-950)); }
+body {
+  @apply min-h-screen bg-midnight-950 font-sans text-slate-200 antialiased;
+  background-image:
+    radial-gradient(1200px 500px at 15% -10%, rgba(90, 98, 240, 0.14), transparent 60%),
+    radial-gradient(900px 450px at 100% 0%, rgba(168, 85, 247, 0.09), transparent 55%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-midnight-700 bg-midnight-850/80 p-4 shadow-glow backdrop-blur sm:p-5; }
+  .card-title { @apply mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-accent-soft; }
+  .label { @apply mb-1 block text-xs font-medium text-slate-400; }
+  .input { @apply w-full rounded-lg border border-midnight-600 bg-midnight-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-accent-strong text-white hover:bg-accent; }
+  .btn-ghost { @apply btn border border-midnight-600 bg-midnight-800 text-slate-200 hover:border-accent/60 hover:bg-midnight-700; }
+  .btn-danger { @apply btn border border-bad/40 bg-bad/10 text-bad hover:bg-bad/20; }
+  .badge { @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium; }
+  .mono { @apply font-mono text-xs break-all; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

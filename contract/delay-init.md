@@ -70,3 +70,100 @@ stateDiagram-v2
 - Show the current `configVersion` and all values to buyer and seller, and pass that version to `acceptConfiguration`.
 - TypeScript `Maybe` shape: `{ is_some: true, value: v }` / `{ is_some: false, value: <zero of the type> }`.
 - `isFullyConfigured()` compares `configured.size()` with `11`. If you add a new `InitAttribute`, update that constant.
+
+---
+
+# Choosing the initialization values (2026-11-03)
+
+Practical guidance for the attributes the admin fills in during `Initializing`, written after the Phase 2 dApp (`phase-2.md`). It applies to the **preview** network and to the eu-counterparty-simulator CASP used for tests.
+
+## Admin sequence in the dApp
+
+1. **Contract tab:** if circuits are missing, *Register remaining circuits*.
+2. **Initialize tab:** inspector, lender, title agent and resolver role ids, the two deadlines, and the KYC policy.
+3. **Terms & KYC tab:**
+   - *Whitelist* the CASP issuer key (read from the CASP's `/.well-known/casp-keys`). This sets `KycIssuers`.
+   - Enter the amount and the buyer's and seller's shielded payout keys (each party copies its key from its own page), *Generate package*, then *Commit to the contract*. This sets `EscrowAmount`, `BuyerPayout` and `SellerPayout` as commitments only.
+   - Distribute the package (encrypted per recipient) and record at least one backup.
+4. **Buyer and seller pages:** import the role key and the package, check it matches the ledger, *Accept configuration*.
+5. **Terms & KYC tab:** *Finalize*. It is enabled only when all 11 attributes are set, both parties accepted the current `configVersion`, a backup exists, separation of duties holds, and the deadlines are valid.
+
+Any change in steps 2–3 increments `configVersion` and resets both acceptances, so finish the configuration before the parties accept.
+
+## KYC policy (`KycPolicy`)
+
+### `minKycLevel` — recommended **2**
+
+The level comes from the CASP's scale (eu-counterparty-simulator):
+
+| Level | Meaning | Simulator personas |
+| :--- | :--- | :--- |
+| 0 | not verified | rejected by the contract (`KYC policy must require a KYC level`) |
+| 1 | basic: identity only, no address proof | `buyer-basic-only` |
+| **2** | **full customer due diligence (CDD)** | `buyer-clean`, `seller-clean` |
+| 3 | enhanced due diligence (EDD) completed | `buyer-corporate-edd`, `buyer-pep-edd` |
+
+Level 2 is the sensible floor for a property purchase settled in a EUR e-money token: MiCA and AMLR expect full due diligence on the counterparties, not basic identification. It also gives a clean test split: `buyer-clean` / `seller-clean` pass, `buyer-basic-only` fails with `ERROR_KYC_LEVEL_INSUFFICIENT`. Use **3** only if every party must have gone through EDD.
+
+### `maxAmlRiskScore`
+
+The simulator scores risk as: base 5, PEP +35, high-risk country +35, undocumented source of funds +25, high volume +10, complex ownership +10. It requires EDD from 40 and rejects at 80 (`eu-counterparty-simulator/config/policy.json`).
+
+| Value | Effect |
+| :--- | :--- |
+| **30** | Accepts clean retail parties (≈5) and the corporate EDD buyer (≈25); rejects the PEP with EDD (≈40). Used by Simulator Mode. |
+| 39 | Only parties that never needed EDD (just below the CASP's EDD threshold). |
+| 79 | Anyone the CASP approved, including an EDD-cleared PEP; relies on the CASP's own reject threshold. |
+
+**For preview tests: `minKycLevel = 2`, `maxAmlRiskScore = 30`.** It matches Simulator Mode and gives a pass, a level failure and a risk failure to test.
+
+For a production deployment the policy is a decision of the obliged entity's compliance function, not a technical choice.
+
+## Deadlines (`ClosingDeadline`, `DisputeDeadline`)
+
+**The dispute deadline must be after the closing deadline.** `finalizeInitialization` asserts `disputeDeadline > closingDeadline` ("Dispute deadline must follow closing deadline") and `blockTimeLt(closingDeadline)` ("Closing deadline is already in the past"); the admin form checks the order before submitting. Both are unix seconds.
+
+| Deadline | Purpose | Enforced by |
+| :--- | :--- | :--- |
+| `closingDeadline` | Deal funded and contingencies settled | `depositToEscrow` fails after it; `expireEscrow` is allowed after it in `Funded` / `ContingenciesPending`; must still be in the future at finalize |
+| `disputeDeadline` | End of the dispute and payout window: the backstop that keeps the buyer's funds from being locked forever | `openDispute` only before it; `expireEscrow` after it in `Disputed`, or in `ReadyToClose` / `Settled` when the seller has no usable KYC |
+
+Leave enough time between the two for a dispute opened near closing to be resolved and paid out.
+
+| Setting | Closing | Dispute |
+| :--- | :--- | :--- |
+| Simulator Mode default | now + 30 days | now + 45 days (closing + 15 days) |
+| Quick preview test of expiry paths | now + 2 h | now + 4 h |
+
+**Seller KYC vs deadlines:** the simulator's attestations are valid for 7 days (`attestationValidityDays`). `releaseToSeller` needs an unexpired seller attestation, and after `disputeDeadline` an escrow in `ReadyToClose` / `Settled` whose seller KYC has expired can be expired and refunded instead of released. For long deadlines, have the seller renew (`submitSellerKyc` again) before release.
+
+## Other attributes
+
+- **Roles:** the resolver must differ from buyer, seller and every attestor; attestors must differ from the seller. A cash buyer may also be the lender (`lenderId == buyerId`).
+- **Commitments:** never typed by hand; generated from the private terms package (fresh salts per package). Losing every copy of the package makes payout impossible, so the dApp requires a confirmed backup before finalize.
+- **KycIssuers:** whitelist only CASPs independent of the seller and the resolver. Removing the last issuer during `Initializing` removes the attribute again.
+
+---
+
+# Maintenance authority (2026-11-06)
+
+The deploy creates a **contract maintenance authority**: a signing key that can add, remove or replace circuit verifier keys and replace the authority itself. Whoever holds it can change the contract's rules after the parties accepted them — for example swap in a `refundBuyer` that pays another key, or remove every payout circuit. The project therefore applies the strongest option:
+
+1. **Renounce the authority once every circuit is registered.** *Admin → Keys → Renounce authority (make immutable)* submits one maintenance transaction replacing the authority with an **empty committee, threshold 1** (no one can ever reach the threshold — it is also the ledger's own default for "no authority"). Irreversible: no verifier key can be added, removed or replaced afterwards. The button is enabled only when all 25 circuits are registered and the vault's key matches the on-chain authority; the confirmation requires typing `RENOUNCE`. On success the key is deleted from the vault.
+2. **Show the authority to every party (and the notary).** The status card on every page reads the on-chain committee:
+   - *Contract immutable* — committee empty (renounced);
+   - *Maintenance authority active* — a key can still change the rules;
+   - *Danger* — threshold 0 (anyone could change the rules).
+
+   The pre-flight **blocks `depositToEscrow`** while the authority is active and **warns** on `acceptConfiguration`. The notary certificate records the authority level, committee size, threshold and counter.
+3. **The key is stored only in the encrypted vault.** It is no longer written to plain `localStorage`:
+   - the deploy requires an unlocked vault, and the key midnight-js creates is saved encrypted in the contract's vault record;
+   - keys midnight-js invents when opening a contract (it does so whenever none is stored) stay in memory and are never persisted;
+   - keys left in plain `localStorage` by earlier versions (`escrow:sk:<address>`, including `:replaced:` copies) are moved into the vault on the next unlock, verified, then deleted;
+   - export / import on the Keys tab work through the vault; importing keeps the previous key in the record's history.
+
+The key is never sent over the network: maintenance updates (batched circuit registration and the renounce) are signed in the browser and only the signature goes into the transaction.
+
+**Recommended order:** deploy → register the remaining circuits (batches of 4) → test → **renounce** → configure terms → parties accept → finalize → deposit.
+
+**To validate on preview (V-6):** that the node accepts the replacement by an empty committee with threshold 1, and that `contractState.maintenanceAuthority` then reports an empty committee.

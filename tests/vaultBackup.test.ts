@@ -1,0 +1,92 @@
+/** Vault backup / restore: round trip, merge without loss, identity rules, wrong passphrase and wrong file kinds. */
+import { describe, expect, it } from 'vitest';
+import { IDENTITY_RECORD } from '@/application/partyPorts';
+import { mergeIdentity, mergeRecord, summarize } from '@/application/vaultBackup';
+import { generateRecipientKeyPair, sealWithPassphrase } from '@/infrastructure/crypto/aead';
+import { EncryptedVault } from '@/infrastructure/storage/encryptedVault';
+import { MemoryStore } from '@/infrastructure/storage/kv';
+import { exportVault, openBackup, restoreVault, sealBackup } from '@/infrastructure/storage/vaultBackupStore';
+import { hex } from './helpers/fixtures';
+
+const A = hex(0xa1);
+const B = hex(0xb2);
+const PASS = 'backup-pass-123';
+
+async function vaultWith(pass = 'vault-pass-1') {
+  const v = new EncryptedVault(new MemoryStore());
+  await v.unlock(pass);
+  return v;
+}
+
+describe('vault backup round trip', () => {
+  it('exports every record, seals it and restores it into a new browser', async () => {
+    const src = await vaultWith();
+    const id = await generateRecipientKeyPair();
+    await src.save(IDENTITY_RECORD, { identity: id });
+    await src.save(A, { roleKeys: { admin: hex(1), buyer: hex(2) }, authorityKey: hex(3), history: [{ at: 1, circuit: 'configure', txHash: 'h1', status: 'confirmed' }] });
+    await src.save(B, { authorityRenouncedAt: 5 });
+    const sealed = await sealBackup(await exportVault(src, { secretKey: hex(9), contractAddress: A }), PASS);
+    expect(JSON.stringify(sealed)).not.toContain(hex(3)); // encrypted
+
+    const opened = await openBackup(JSON.parse(JSON.stringify(sealed)), PASS);
+    const s = summarize(opened);
+    expect(s.contracts.map((c) => c.address).sort()).toEqual([A, B].sort());
+    expect(s).toMatchObject({ identity: true, adminKey: true, adminContract: A });
+
+    // New browser: a fresh vault (its own new identity, no escrows yet).
+    const dst = await vaultWith('another-pass');
+    const fresh = await generateRecipientKeyPair();
+    await dst.save(IDENTITY_RECORD, { identity: fresh });
+    const r = await restoreVault(dst, opened);
+    expect(r.contractsAdded.sort()).toEqual([A, B].sort());
+    expect((await dst.load(A)).authorityKey).toBe(hex(3));
+    const idRec = await dst.load(IDENTITY_RECORD);
+    expect(idRec.identity?.publicKey).toBe(id.publicKey); // unused fresh identity replaced by the backup's
+    expect(idRec.identityHistory?.map((k) => k.publicKey)).toEqual([fresh.publicKey]);
+  });
+
+  it('rejects a wrong passphrase, short passphrases and other encrypted files', async () => {
+    const v = await vaultWith();
+    await v.save(A, { roleKeys: { buyer: hex(2) } });
+    const sealed = await sealBackup(await exportVault(v), PASS);
+    await expect(openBackup(sealed, 'wrong-passphrase')).rejects.toThrow(/Wrong passphrase/);
+    await expect(sealBackup(await exportVault(v), 'short')).rejects.toThrow(/at least 12/);
+    const termsBackup = await sealWithPassphrase({ format: 'EscrowTermsV1', terms: {}, commitments: {} }, PASS);
+    await expect(openBackup(termsBackup, PASS)).rejects.toThrow(/not a vault backup/);
+    await expect(openBackup({ hello: 1 }, PASS)).rejects.toThrow(/Not an encrypted vault backup/);
+  });
+});
+
+describe('merge rules (never delete, never silently overwrite)', () => {
+  it('fills gaps, unions lists and keeps the current value on conflicts', () => {
+    const current = { roleKeys: { buyer: hex(2) }, authorityKey: hex(3), history: [{ at: 2, circuit: 'deposit', txHash: 'h2', status: 'confirmed' }] };
+    const incoming = {
+      roleKeys: { buyer: hex(7), seller: hex(4) },
+      authorityKey: hex(8),
+      history: [
+        { at: 1, circuit: 'configure', txHash: 'h1', status: 'confirmed' },
+        { at: 2, circuit: 'deposit', txHash: 'h2', status: 'confirmed' }
+      ]
+    };
+    const { record, added, conflicts } = mergeRecord(current, incoming, 'A');
+    expect(record.roleKeys).toEqual({ buyer: hex(2), seller: hex(4) });
+    expect(record.authorityKey).toBe(hex(3));
+    expect(record.authorityKeyHistory?.map((h) => h.key)).toEqual([hex(8)]);
+    expect(record.history?.map((h) => h.txHash)).toEqual(['h1', 'h2']);
+    expect(added).toEqual(['A: seller role key', 'A: 1 history entry']);
+    expect(conflicts).toHaveLength(2);
+  });
+
+  it('does not bring back an authority key that was renounced', () => {
+    const { record } = mergeRecord({ authorityRenouncedAt: 10 }, { authorityKey: hex(3) }, 'A');
+    expect(record.authorityKey).toBeUndefined();
+  });
+
+  it('keeps an identity in use and stores the backup one as previous', async () => {
+    const cur = await generateRecipientKeyPair();
+    const old = await generateRecipientKeyPair();
+    const { record } = mergeIdentity({ identity: cur }, { identity: old }, true);
+    expect(record.identity?.publicKey).toBe(cur.publicKey);
+    expect(record.identityHistory?.map((k) => k.publicKey)).toEqual([old.publicKey]);
+  });
+});

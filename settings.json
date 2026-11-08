@@ -1,0 +1,36 @@
+{
+  "enabledPlugins": {
+    "midnight-expert@midnight-expert": true,
+    "compact-core@midnight-expert": true,
+    "compact-examples@midnight-expert": true,
+    "core-concepts@midnight-expert": true,
+    "midnight-plugin-utils@midnight-expert": true,
+    "midnight-tooling@midnight-expert": true,
+    "midnight-verify@midnight-expert": true,
+    "midnight-cq@midnight-expert": true,
+    "midnight-wallet@midnight-expert": true,
+    "midnight-fact-check@midnight-expert": true,
+    "compact-cli-dev@midnight-expert": true,
+    "midnight-dapp-dev@midnight-expert": true,
+    "midnight-status-codes@midnight-expert": true,
+    "proof-server@midnight-expert": true,
+    "midnight-indexer@midnight-expert": true,
+    "midnight-node@midnight-expert": true,
+    "frontend-design@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "midnight-expert": {
+      "source": {
+        "source": "url",
+        "url": "https://midnightntwrk.expert"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/anthropics/claude-plugins-official.git"
+      }
+    }
+  },
+  "theme": "dark"
+}

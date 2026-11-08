@@ -72,14 +72,7 @@ Instructions:
   - Verify the owner of the contract key ( reuse the project `fungible-token-workspace/scripts/verify-manager-key.mjs`)
 - Midnight theme, responsive layout
 
-### Phase 2 - Simulate a CASP Crypto-asset service provider (MiCA)
-
-- Build a CASP signer simulator using React 19, Next.js 15 (App Router), TypeScript, Tailwind (midnight theme), vitest
-  To build a Crypto-Asset Service Provider (CASP) Signer Simulator in Next.js/React, you need to simulate both the cryptographic signing layer (custody/key management) and the regulatory compliance engine mandated by MiCA (Regulation EU 2023/1114) and the EU Transfer of Funds Regulation (TFR / Travel Rule, Regulation EU 2023/1113)
-
-### Phase 3 - Simulate an escrow service provider ()
-
-### Phase 3 — Build the functional requirements
+### Phase 2 — Build the functional requirements
 
 - Use the generated Sdk of the phase 1
 - Implement the functional requirements specified in the `dApp-requirements-specification.md`[## 3. Functional Requirements]
@@ -91,8 +84,8 @@ Instructions:
   - The "in scope" is specified in
     ## `dApp-requirements-specification.md`[## 1.3. In scope]
 
-### Phase 4 — Test the font-end dApp
+### Phase 3 — Test the font-end dApp
 
     - Write  a markdown `end-to-end-testing.md` on  how to test the front end dApp for every role   using their Zero knowledged proof ( authentication) , their wallet,  the midnight contract  and the CASP simulator  for the users ( KYC attestations binding to  the users’s shielded wallet)
 
-### Phase 5 — Remaining work (next steps)
+### Phase 4 — Remaining work (next steps)

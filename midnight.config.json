@@ -1,9 +1,25 @@
 {
-  "networkId": "preprod",
-  "indexer": "https://indexer.preprod.midnight.network/api/v4/graphql",
-  "indexerWS": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
-  "nodeRpc": "https://rpc.preprod.midnight.network",
+  "networkId": "preview",
+  "indexer": "https://indexer.preview.midnight.network/api/v4/graphql",
+  "indexerWS": "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
+  "nodeRpc": "https://rpc.preview.midnight.network",
   "proofServer": "http://127.0.0.1:6300",
-  "faucet": "https://faucet.preprod.midnight.network",
+  "faucet": "https://midnight-tmnight-preview.nethermind.dev/",
   "explorer": "https://explorer.1am.xyz",
+  "contract": {
+    "source": "contract/conditional-real-estate-escrow-contingency-settlement.compact",
+    "name": "escrow",
+    "managedDir": "contract/managed/escrow",
+    "sdkDir": "sdk/escrow",
+    "testsDir": "tests",
+    "compilerVersion": "0.31.1",
+    "deployCircuits": [
+      "configure",
+      "addKycIssuer",
+      "removeKycIssuer",
+      "acceptConfiguration",
+      "finalizeInitialization"
+    ],
+    "maintenanceBatchSize": 4
+  }
 }

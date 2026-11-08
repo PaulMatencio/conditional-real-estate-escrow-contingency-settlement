@@ -6,3 +6,6 @@ contract/.compat/
 secrets/
 *.log
 .DS_Store
+.next/
+*.tsbuildinfo
+next-env.d.ts
