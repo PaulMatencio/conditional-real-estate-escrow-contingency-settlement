@@ -14,8 +14,10 @@
 //   R = k*G,  c = transientHash(Rx, Ry, pkx, pky, msg),
 //   c' = c mod 2^248 (valid Jubjub scalar),  s = k + c'*sk  (mod Jubjub order)
 //   verify: s*G == R + c'*pk
-// (Compact >= 0.34 has stdlib jubjubSchnorrVerify; this module targets
-//  language 0.23 / compiler 0.31.1, which has none.)
+// (The stdlib jubjubSchnorrVerify of Compact >= 0.34 uses its own challenge
+//  hash, so it cannot check these signatures. Since compiler 0.36 / language
+//  0.28, ecMul / ecMulGenerator take a JubjubScalar: s and c' are cast to it.
+//  Messages and structs are unchanged, so existing signatures still verify.)
 // ============================================================
 module KycAttestationV1 {
     import CompactStandardLibrary;
@@ -74,8 +76,8 @@ module KycAttestationV1 {
                 + (c as Field) == cFull,
             "Schnorr challenge reduction mismatch"
         );
-        const lhs = ecMulGenerator(sig.response);
-        const rhs = ecAdd(R, ecMul(pk, c as Field));
+        const lhs = ecMulGenerator(sig.response as JubjubScalar);
+        const rhs = ecAdd(R, ecMul(pk, c as JubjubScalar));
         return jubjubPointX(lhs) == jubjubPointX(rhs) && jubjubPointY(lhs) == jubjubPointY(rhs);
     }
 }

@@ -1,5 +1,5 @@
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import type { ContractState } from '@midnight-ntwrk/ledger-v8';
+import type { ContractState } from '@midnight-ntwrk/compact-runtime';
 import { Contract } from './module';
 import { createWitnesses, type PrivateInputs } from './witnesses';
 import { contractConfig } from '../config/network';
@@ -15,7 +15,7 @@ export const ZK_ASSET_PATH = `/zk/${contractConfig.name}`;
 /** Copy of `state` that keeps only the named operations (data, authority and balances are carried over). */
 export function onlyOperations(state: ContractState, keep: readonly string[]): ContractState {
   // Same class as the original: the constructor's state comes from onchain-runtime, a different WASM module
-  // than ledger-v8's ContractState, and their ChargedState/authority objects are not interchangeable.
+  // than ledger-v9's ContractState, and their ChargedState/authority objects are not interchangeable.
   const next = new (state.constructor as new () => ContractState)();
   next.data = state.data;
   next.maintenanceAuthority = state.maintenanceAuthority;

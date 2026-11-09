@@ -338,7 +338,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const id = (r: PartyRole) => roleIdHex(secretKeyFromHex(keys[r]));
         const t0 = Math.floor(Date.now() / 1000);
         const color = bytesToHex(generateSecretKey());
-        const s = new EscrowSimulator({ adminRoleId: id('admin'), buyerRoleId: id('buyer'), sellerRoleId: id('seller'), tokenColor: color, ticker: 'EURe' }, { time: t0 });
+        const s = await EscrowSimulator.create({ adminRoleId: id('admin'), buyerRoleId: id('buyer'), sellerRoleId: id('seller'), tokenColor: color, ticker: 'EURe' }, { time: t0 });
         const wallet = session ? await createWalletProviders(session, prefs).then((p) => p.walletProvider.getCoinPublicKey() as unknown as string).catch(() => null) : null;
         const pkg = {
           ...createTermsPackage(termsCrypto, { amount: opts.amount ?? '250000', buyerPayout: wallet ?? bytesToHex(generateSecretKey()), sellerPayout: bytesToHex(generateSecretKey()) }),
@@ -347,7 +347,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           escrowTicker: 'EURe'
         };
         const admin = secretKeyFromHex(keys.admin);
-        s.configure(admin, {
+        await s.configure(admin, {
           inspector: id('inspector'),
           lender: id('lender'),
           titleAgent: id('titleAgent'),
@@ -361,7 +361,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         });
         if (opts.useCasp !== false) {
           const { keys: issuers } = await casp.issuerKeys();
-          for (const k of issuers.filter((i) => i.status === 'active')) s.addKycIssuer(admin, k.issuerId, k.publicKey);
+          for (const k of issuers.filter((i) => i.status === 'active')) await s.addKycIssuer(admin, k.issuerId, k.publicKey);
         }
         await vault.save(s.contractAddress, { terms: pkg, roleKeys: keys });
         lastRound.current = null;
@@ -383,7 +383,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
       const r = await vault.load(sim.contractAddress);
       const blockers = finalizeBlockers(sim.view(), r, termsCrypto, BigInt(sim.time));
       if (blockers.length) throw new Error(blockers.join(' · '));
-      sim.finalize(secretKeyFromHex(r.roleKeys!.admin));
+      await sim.finalize(secretKeyFromHex(r.roleKeys!.admin));
       await refresh();
     } catch (e) {
       setError(friendlyMessage(e));

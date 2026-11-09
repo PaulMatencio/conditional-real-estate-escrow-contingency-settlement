@@ -33,16 +33,17 @@ roleId    = persistentHash([pad(32, "re-escrow:role:"), secretKey])
 ## Compile
 
 ```sh
-compact compile +0.31.1 --skip-zk \
+compact update 0.36.0          # once
+compact compile +0.36.0 --skip-zk \
   contract/conditional-real-estate-escrow-contingency-settlement.compact \
   contract/managed/escrow
 ```
 
-Language version 0.23 (compiler 0.31.1). Compiler 0.34 and later would need the stdlib `jubjubSchnorrVerify` (see `contract/kyc.md`).
+Compiler 0.36.0 (Compact language 0.28, compact-runtime 0.21, ledger 9, ZKIR v3), the toolchain of the preview network since it moved to ledger 9. The dApp runs it with midnight-js 5.0.0 and proof server 9.0.1. See `compiler-0.36.md` for what changed.
 
 ## Test
 
-The simulator tests run every circuit off-chain with `@midnight-ntwrk/compact-runtime` 0.16.0, without a node or proofs:
+The simulator tests run every circuit off-chain with `@midnight-ntwrk/compact-runtime` 0.21.0, without a node or proofs:
 
 ```sh
 cd contract
@@ -57,7 +58,7 @@ npm test
 
 ```sh
 npm install
-npm run compile:contract   # full ZK build -> contract/managed/escrow (compiler 0.31.1)
+npm run compile:contract   # full ZK build -> contract/managed/escrow (compiler 0.36.0)
 npm run generate:sdk       # typed client -> sdk/escrow
 npm run proof-server:start # local proof server on 127.0.0.1:6300
 npm run dev                # http://localhost:3000/admin

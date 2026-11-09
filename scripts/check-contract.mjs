@@ -7,7 +7,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import * as ledgerLib from '@midnight-ntwrk/ledger-v8';
 import { ContractState as RtContractState } from '@midnight-ntwrk/compact-runtime';
 
 const cfg = JSON.parse(readFileSync('midnight.config.json', 'utf8'));
@@ -29,7 +28,8 @@ if (j.error || !j.result) {
 }
 const raw = Buffer.from(j.result.replace(/^0x/, ''), 'hex');
 
-const state = ledgerLib.ContractState.deserialize(raw);
+// compact-runtime 0.21 (Compact 0.36) decodes ledger 9 contract states; a ledger 8 contract fails here.
+const state = RtContractState.deserialize(raw);
 const registered = new Set(state.operations().map((o) => (typeof o === 'string' ? o : new TextDecoder().decode(o))));
 const dir = cfg.contract.managedDir;
 const expected = readdirSync(`${dir}/keys`).filter((f) => f.endsWith('.verifier')).map((f) => f.replace('.verifier', '')).sort();

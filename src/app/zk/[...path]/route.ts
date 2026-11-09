@@ -7,8 +7,12 @@ import { contractConfig } from '@/infrastructure/config/network';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** Only ZK artefacts the SDK's FetchZkConfigProvider requests: keys/*.{prover,verifier}, zkir/*.bzkir. */
-const ALLOWED = /^(keys\/[A-Za-z0-9_]+\.(prover|verifier)|zkir\/[A-Za-z0-9_]+\.bzkir)$/;
+/**
+ * Only the ZK artefacts midnight-js 5's FetchZkConfigProvider requests: keys/*.{prover,verifier}, zkir/*.bzkir, and
+ * the compiler's integrity manifest / contract info (compiler/contract-manifest.json, compiler/contract-info.json),
+ * from which it checks every artefact's hash and reads the runtime version (ledger era) the contract was built for.
+ */
+const ALLOWED = /^(keys\/[A-Za-z0-9_]+\.(prover|verifier)|zkir\/[A-Za-z0-9_]+\.bzkir|compiler\/contract-(manifest|info)\.json)$/;
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path: parts } = await ctx.params;
@@ -22,7 +26,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: stri
     const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
     return new NextResponse(stream, {
       headers: {
-        'content-type': 'application/octet-stream',
+        'content-type': rel.endsWith('.json') ? 'application/json' : 'application/octet-stream',
         'content-length': String(st.size),
         'cache-control': 'public, max-age=3600',
         'access-control-allow-origin': '*'

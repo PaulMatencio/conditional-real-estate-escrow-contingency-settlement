@@ -3,14 +3,13 @@
  * midnight-js and the connected wallet (Lace / 1AM). Mirrors the staged-deploy pattern of the token workspace.
  */
 import { deployContract, findDeployedContract, submitTx } from '@midnight-ntwrk/midnight-js-contracts';
-import { ContractMaintenanceAuthority, ContractOperationVersionedVerifierKey, Intent, MaintenanceUpdate, ReplaceAuthority, Transaction, VerifierKeyInsert, signData, signatureVerifyingKey } from '@midnight-ntwrk/ledger-v8';
+import { ContractMaintenanceAuthority, ContractOperationVersionedVerifierKey, Intent, MaintenanceUpdate, ReplaceAuthority, Transaction, VerifierKeyInsert, signData, signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { authorityLevel } from '@/domain/escrowView';
 import { maintenanceOf } from '../contract/view';
 import { signingKeyCapture } from '../storage/privateStateProvider';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import { SucceedEntirely } from '@midnight-ntwrk/midnight-js-types';
-import { ttlOneHour } from '@midnight-ntwrk/midnight-js-utils';
+import { LedgerTransaction, SucceedEntirely } from '@midnight-ntwrk/midnight-js-types';
+import { operationNames, readContractState, type ChainContractState } from '../contract/chainState';
 import { AppError, compactText, deepMessage } from '@/domain/errors';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, TxReceipt } from '@/domain/escrow';
@@ -79,9 +78,9 @@ export class AdminGateway {
 
   /** Circuit names whose verifier key is currently registered on-chain. */
   static async registered(providers: AppProviders, address: string): Promise<Set<string>> {
-    const s = await providers.publicDataProvider.queryContractState(address);
+    const s = await readContractState(providers.publicDataProvider, address);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
-    return new Set(s.operations().map((o: unknown) => (typeof o === 'string' ? o : new TextDecoder().decode(o as Uint8Array))));
+    return operationNames(s);
   }
 
   /**
@@ -149,7 +148,7 @@ export class AdminGateway {
 
   /** Public state of the contract, decoded (what the details panel shows). */
   static async readState(providers: AppProviders, address: string): Promise<AdminState> {
-    const s = await providers.publicDataProvider.queryContractState(address);
+    const s = await readContractState(providers.publicDataProvider, address);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     const L = ledger(s.data);
     const hex = (b: Uint8Array) => bytesToHex(b);
@@ -187,7 +186,7 @@ export class AdminGateway {
 
   /** Whether the authority key held in this browser is a member of the on-chain maintenance committee. */
   async authorityKeyStatus(): Promise<'match' | 'mismatch' | 'missing' | 'renounced'> {
-    const s = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    const s = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     if (authorityLevel(maintenanceOf(s)) === 'immutable') return 'renounced';
     const key = await vaultSigningKeys(sharedVault()).load(this.contractAddress);
@@ -205,7 +204,7 @@ export class AdminGateway {
   async renounceAuthority(): Promise<TxReceipt> {
     const missing = await this.missingCircuits();
     if (missing.length) throw new AppError('VALIDATION', `Register every circuit first (missing: ${missing.join(', ')}). After renouncing, no circuit can ever be added.`);
-    const state = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    const state = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!state) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     if (authorityLevel(maintenanceOf(state)) === 'immutable') return { txId: '', txHash: '(already immutable)' };
     const status = await this.authorityKeyStatus();
@@ -214,7 +213,7 @@ export class AdminGateway {
     const counter = state.maintenanceAuthority.counter;
     const unsigned = new MaintenanceUpdate(this.contractAddress, [new ReplaceAuthority(new ContractMaintenanceAuthority([], 1, counter + 1n))], counter);
     const update = unsigned.addSignature(0n, signData(key as never, unsigned.dataToSign));
-    const unprovenTx = Transaction.fromParts(getNetworkId(), undefined, undefined, Intent.new(ttlOneHour()).addMaintenanceUpdate(update));
+    const unprovenTx = this.maintenanceTx(update);
     try {
       const submit = (submitTx as unknown as (p: unknown, o: unknown) => Promise<{ status: string; txId?: string; txHash: string; blockHeight: number }>)(this.providers, { unprovenTx });
       submit.catch(() => {});
@@ -238,12 +237,21 @@ export class AdminGateway {
     }
   }
 
+  /**
+   * An unproven transaction carrying only a signed maintenance update, as midnight-js 5 builds them: ledger 9 classes,
+   * the network id and TTL from the providers' config, sealed into an era-tagged handle for `submitTx`.
+   */
+  private maintenanceTx(update: MaintenanceUpdate) {
+    const ttl = new Date(Date.now() + this.providers.config.ttlSeconds * 1000);
+    return LedgerTransaction.seal('v9', 'Unproven', Transaction.fromParts(this.providers.config.networkId, undefined, undefined, Intent.new(ttl).addMaintenanceUpdate(update)));
+  }
+
   private async pollImmutable(stop: { done: boolean }, timeoutMs = 10 * 60_000, everyMs = 4_000): Promise<void> {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end && !stop.done) {
       await new Promise((r) => setTimeout(r, everyMs));
       try {
-        const s = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+        const s = await readContractState(this.providers.publicDataProvider, this.contractAddress);
         if (s && authorityLevel(maintenanceOf(s)) === 'immutable') return;
       } catch {
         /* keep polling */
@@ -333,7 +341,7 @@ export class AdminGateway {
 
   /** Builds, signs and submits one MaintenanceUpdate with a VerifierKeyInsert per circuit not yet registered. */
   private async submitBatch(circuits: string[]): Promise<TxReceipt> {
-    const state = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    const state: ChainContractState | null = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!state) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     const todo = circuits.filter((c) => state.operation(c) === undefined); // resumable: skip what is already on-chain
     if (todo.length === 0) return { txId: '', txHash: '(already registered)' };
@@ -342,12 +350,13 @@ export class AdminGateway {
       throw new AppError('VALIDATION', sharedVault().unlocked ? 'The contract authority key is not in the vault (or does not match the chain). Import it on the Keys tab.' : 'Unlock the vault: the contract authority key is stored there, encrypted.');
     }
     const updates = await Promise.all(
-      todo.map(async (c) => new VerifierKeyInsert(c, new ContractOperationVersionedVerifierKey('v3', (await this.providers.zkConfigProvider.getVerifierKey(c)) as unknown as Uint8Array)))
+      // Ledger 9 verifier keys are operation version 'v4' (ZKIR v3 circuits), as midnight-js / compact-js 3 build them.
+      todo.map(async (c) => new VerifierKeyInsert(c, new ContractOperationVersionedVerifierKey('v4', (await this.providers.zkConfigProvider.getVerifierKey(c)) as unknown as Uint8Array)))
     );
     // The update is valid against the authority's current counter; index 0 = the single deploy-time committee key.
     const unsigned = new MaintenanceUpdate(this.contractAddress, updates, state.maintenanceAuthority.counter);
     const update = unsigned.addSignature(0n, signData(signingKey as never, unsigned.dataToSign));
-    const unprovenTx = Transaction.fromParts(getNetworkId(), undefined, undefined, Intent.new(ttlOneHour()).addMaintenanceUpdate(update));
+    const unprovenTx = this.maintenanceTx(update);
 
     const submit = (submitTx as unknown as (p: unknown, o: unknown) => Promise<{ status: string; txId?: string; txHash: string; blockHeight: number }>)(this.providers, { unprovenTx });
     submit.catch(() => {}); // a late rejection after the chain already confirmed must not surface as unhandled

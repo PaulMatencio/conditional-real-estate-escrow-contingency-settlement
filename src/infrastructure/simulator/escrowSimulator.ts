@@ -56,7 +56,11 @@ export class EscrowSimulator {
   readonly log: { at: number; circuit: string; txHash: string; round: string; shielded?: ShieldedEffects }[] = [];
   private listeners = new Set<() => void>();
 
-  constructor(params: DeployParams, opts: { time?: number; contractAddress?: string } = {}) {
+  /**
+   * compact-runtime 0.21 (compiler 0.36) runs the constructor and every circuit asynchronously, so the simulator is
+   * built with the async factory `EscrowSimulator.create(...)`.
+   */
+  private constructor(opts: { time?: number; contractAddress?: string }) {
     this.contractAddress = opts.contractAddress ?? rt.sampleContractAddress();
     this.time = opts.time ?? Math.floor(Date.now() / 1000);
     // Witnesses read the per-call inputs, so one Contract instance serves every role.
@@ -69,7 +73,11 @@ export class EscrowSimulator {
         vaultCoin: () => (self.inputs.vaultCoin ?? missing('the vault coin'))()
       })
     );
-    const r = (this.contract.initialState as unknown as (...a: unknown[]) => { currentContractState: unknown })(
+  }
+
+  static async create(params: DeployParams, opts: { time?: number; contractAddress?: string } = {}): Promise<EscrowSimulator> {
+    const sim = new EscrowSimulator(opts);
+    const r = await (sim.contract.initialState as unknown as (...a: unknown[]) => Promise<{ currentContractState: unknown }>)(
       rt.createConstructorContext(undefined, CPK),
       hex32ToBytes(params.adminRoleId),
       hex32ToBytes(params.buyerRoleId),
@@ -78,8 +86,9 @@ export class EscrowSimulator {
       params.ticker,
       ...maybeTermsArgs(params.terms ?? {})
     );
-    this.state = (r.currentContractState as unknown as { data: unknown }).data;
-    this.record('constructor', undefined);
+    sim.state = (r.currentContractState as unknown as { data: unknown }).data;
+    sim.record('constructor', undefined);
+    return sim;
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -106,16 +115,33 @@ export class EscrowSimulator {
     return { txId: txHash, txHash, blockHeight: this.counter, shielded };
   }
 
+  // Calls are serialized: the witnesses read `this.inputs`, which must not change while a circuit is running.
+  private queue: Promise<unknown> = Promise.resolve();
+
   /** Runs any impure circuit (admin ones included) with the given private inputs. */
-  run(circuit: string, args: unknown[], inputs: PrivateInputs): CallReceipt {
-    const fn = (this.contract.impureCircuits as unknown as Record<string, (ctx: unknown, ...a: unknown[]) => { context: { currentQueryContext: { state: unknown }; currentZswapLocalState: ZswapLike } }>)[circuit];
+  run(circuit: string, args: unknown[], inputs: PrivateInputs): Promise<CallReceipt> {
+    const next = this.queue.then(() => this.runNow(circuit, args, inputs));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async runNow(circuit: string, args: unknown[], inputs: PrivateInputs): Promise<CallReceipt> {
+    type Ctx = { queryContexts: Record<string, { state: unknown }>; zswapLocalStates: Record<string, ZswapLike> };
+    const fn = (this.contract.impureCircuits as unknown as Record<string, (ctx: unknown, ...a: unknown[]) => Promise<{ context: Ctx }>>)[circuit];
     if (!fn) throw new AppError('VALIDATION', `Unknown circuit ${circuit}`);
     this.inputs = inputs;
     try {
-      const ctx = rt.createCircuitContext(this.contractAddress, CPK, this.state as never, undefined, undefined, undefined, this.time);
-      const r = fn(ctx, ...args);
-      this.state = r.context.currentQueryContext.state;
-      const receipt = this.record(circuit, effects(r.context.currentZswapLocalState));
+      const ctx = rt.createCircuitContext({
+        circuitId: circuit as never,
+        contractAddress: this.contractAddress,
+        coinPublicKeyOrZswapState: CPK,
+        contractState: this.state as never,
+        privateState: undefined,
+        time: this.time
+      });
+      const r = await fn(ctx, ...args);
+      this.state = r.context.queryContexts[this.contractAddress].state;
+      const receipt = this.record(circuit, effects(r.context.zswapLocalStates[this.contractAddress]));
       this.emit();
       return receipt;
     } catch (e) {
@@ -147,7 +173,7 @@ export class EscrowSimulator {
       async call<C extends PartyCircuit>(circuit: C, args: CircuitArgs[C], material: CallMaterial): Promise<CallReceipt> {
         const v = sim.view();
         const ctx = { contractAddress: sim.contractAddress, escrowColor: v.escrowColor, material };
-        const receipt = sim.run(circuit, contractArgs(circuit, args, ctx), witnessInputs(ctx));
+        const receipt = await sim.run(circuit, contractArgs(circuit, args, ctx), witnessInputs(ctx));
         // The simulator has no Merkle tree: the single contract-owned coin is index 0.
         return circuit === 'depositToEscrow' ? { ...receipt, vaultIndex: 0n } : receipt;
       },

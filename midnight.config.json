@@ -12,7 +12,7 @@
     "managedDir": "contract/managed/escrow",
     "sdkDir": "sdk/escrow",
     "testsDir": "tests",
-    "compilerVersion": "0.31.1",
+    "compilerVersion": "0.36.0",
     "deployCircuits": [
       "configure",
       "addKycIssuer",

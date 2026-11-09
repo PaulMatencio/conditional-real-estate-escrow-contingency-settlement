@@ -11,7 +11,7 @@ import { payoutCoinOf } from '@/infrastructure/crypto/escrowCrypto';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { BUYER_KEY, DDL, DL, K, SELLER_KEY, configuredEscrow, hex, rid } from './helpers/fixtures';
 
-function party(sim: ReturnType<typeof configuredEscrow>['sim'], sk: Uint8Array, record: VaultRecord): PartyContext {
+function party(sim: Awaited<ReturnType<typeof configuredEscrow>>['sim'], sk: Uint8Array, record: VaultRecord): PartyContext {
   return { gateway: sim.gateway(), crypto: termsCrypto, record, secretKey: sk };
 }
 
@@ -22,7 +22,7 @@ async function act(ctx: PartyContext, caller: Caller, circuit: Parameters<typeof
 }
 
 async function toPending() {
-  const { sim, pkg, casp } = configuredEscrow();
+  const { sim, pkg, casp } = await configuredEscrow();
   const buyer = party(sim, K.buyer, { terms: pkg, kyc: { buyer: casp.bundle(rid(K.buyer), BUYER_KEY) } });
   const seller = party(sim, K.seller, { terms: pkg, kyc: { seller: casp.bundle(rid(K.seller), SELLER_KEY, { travelRuleRef: hex(5) }) } });
   const v = sim.view();
@@ -31,7 +31,7 @@ async function toPending() {
   await act(seller, 'seller', 'acceptConfiguration', [v.configVersion]);
   expect(finalizeBlockers(sim.view(), { terms: pkg }, termsCrypto, BigInt(sim.time))).toContain('Confirm at least one backup of the private terms package (FR-TERMS-04)');
   expect(finalizeBlockers(sim.view(), { terms: pkg, backups: [{ at: 1, kind: 'file' }] }, termsCrypto, BigInt(sim.time))).toEqual([]);
-  sim.finalize(K.admin);
+  await sim.finalize(K.admin);
   expect(sim.view().status).toBe('Created');
   const dep = await act(buyer, 'buyer', 'depositToEscrow');
   expect(dep.vaultIndex).toBe(0n);
@@ -112,14 +112,14 @@ describe('refund paths', () => {
 
 describe('pre-flight guards (no proof is attempted)', () => {
   it('refuses a deposit with a tampered terms package (TERMS_COMMITMENT_MISMATCH)', async () => {
-    const { sim, pkg, casp } = configuredEscrow();
+    const { sim, pkg, casp } = await configuredEscrow();
     const bad = { ...pkg, terms: { ...pkg.terms, amount: '1' } };
     const buyer = party(sim, K.buyer, { terms: bad, kyc: { buyer: casp.bundle(rid(K.buyer), BUYER_KEY) } });
     await expect(runPartyAction(buyer, 'buyer', 'acceptConfiguration', [sim.view().configVersion])).rejects.toThrow(/TERMS_COMMITMENT_MISMATCH: amount/);
   });
 
   it('flags an attestation bound to the wrong wallet, an untrusted issuer and a low KYC level', async () => {
-    const { sim, pkg, casp } = configuredEscrow();
+    const { sim, pkg, casp } = await configuredEscrow();
     const v = sim.view();
     const ctx = party(sim, K.buyer, { terms: pkg, kyc: { buyer: casp.bundle(rid(K.buyer), SELLER_KEY, { kycLevel: 1 }) } });
     const pf = await preflight(ctx, { ...v, status: 'Created' }, 'buyer', 'depositToEscrow', [], BigInt(sim.time));
@@ -131,7 +131,7 @@ describe('pre-flight guards (no proof is attempted)', () => {
   });
 
   it('a tampered signature fails the off-chain Schnorr check', async () => {
-    const { sim, pkg, casp } = configuredEscrow();
+    const { sim, pkg, casp } = await configuredEscrow();
     const b = casp.bundle(rid(K.buyer), BUYER_KEY);
     const forged = { ...b, attestation: { ...b.attestation, amlRiskScore: 0 } };
     const pf = await preflight(party(sim, K.buyer, { terms: pkg, kyc: { buyer: forged } }), { ...sim.view(), status: 'Created' }, 'buyer', 'depositToEscrow', [], BigInt(sim.time));

@@ -56,12 +56,12 @@ export function makeCasp(secret = 0x1234567890abcdefn, issuerId = hex(0xc0)) {
 }
 
 /** A simulator escrow with every term configured and the CASP whitelisted (still Initializing), plus the terms package. */
-export function configuredEscrow(): { sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> } {
-  const sim = new EscrowSimulator({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
+export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
+  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
   const pkg0 = createTermsPackage(termsCrypto, { amount: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
   const casp = makeCasp();
-  sim.configure(K.admin, {
+  await sim.configure(K.admin, {
     inspector: rid(K.inspector),
     lender: rid(K.lender),
     titleAgent: rid(K.title),
@@ -73,6 +73,6 @@ export function configuredEscrow(): { sim: EscrowSimulator; pkg: TermsPackage; c
     disputeDeadline: DDL,
     kycPolicy: { minKycLevel: 2, maxAmlRiskScore: 30 }
   });
-  sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
+  await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
   return { sim, pkg, casp };
 }

@@ -1,12 +1,10 @@
-import type { ConnectedAPI } from '@midnight-ntwrk/dapp-connector-api';
-import { Transaction } from '@midnight-ntwrk/ledger-v8';
+import type { ConnectedAPI } from '@midnightntwrk/dapp-connector-api';
+import { dappConnectorWalletProviders } from '@midnight-ntwrk/midnight-js-dapp-connector-proof-provider';
 import { FetchZkConfigProvider } from '@midnight-ntwrk/midnight-js-fetch-zk-config-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import type { MidnightProvider, MidnightProviders, PrivateStateProvider, WalletProvider } from '@midnight-ntwrk/midnight-js-types';
-import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
-import { MidnightBech32m, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
+import type { MidnightProviders, PrivateStateProvider, ProofProvider } from '@midnight-ntwrk/midnight-js-types';
+import { MidnightBech32m, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from '@midnightntwrk/wallet-sdk-address-format';
 import type { KeyValueStore } from '@/application/ports';
 import type { StepSink } from '@/application/deployProgress';
 import { compactText, deepMessage } from '@/domain/errors';
@@ -52,7 +50,7 @@ export async function assertProofServerReachable(url: string, timeoutMs = 4000):
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e) {
     throw new Error(
-      `Local proof server not reachable at ${url} (${e instanceof Error ? e.message : String(e)}). Start it (docker: midnightntwrk/proof-server:8.1.0, port 6300) or change "proofServer" in midnight.config.json.`
+      `Local proof server not reachable at ${url} (${e instanceof Error ? e.message : String(e)}). Start it (docker: midnightntwrk/proof-server:9.0.1 — ledger 9 / Compact 0.36 circuits need proof server 9, port 6300) or change "proofServer" in midnight.config.json.`
     );
   }
 }
@@ -104,30 +102,33 @@ export function withFallback(primary: Pdp, fallback: Pdp): Pdp {
   });
 }
 
+/** How long a built transaction stays valid (midnight-js 5 `config.ttlSeconds`). */
+const TTL_SECONDS = 3600;
+
 /**
- * Assembles midnight-js providers from a connected wallet. Endpoints come from
- * the wallet's own configuration (respects the user's network choice); the
- * proof server falls back to the configured local one.
+ * Assembles midnight-js 5 providers from a connected wallet. Endpoints and the network id come from the wallet's own
+ * configuration (respects the user's network choice); the proof server is the configured local one.
  */
 export async function createWalletProviders(session: WalletSession, store: KeyValueStore, sink?: StepSink): Promise<AppProviders> {
   const api: ConnectedAPI = session.api;
   const cfg = await api.getConfiguration();
-  setNetworkId(cfg.networkId);
 
   const walletIndexer = indexerPublicDataProvider(cfg.indexerUri, cfg.indexerWsUri);
   const publicDataProvider =
     cfg.networkId === networkConfig.networkId
       ? withFallback(indexerPublicDataProvider(networkConfig.indexer, networkConfig.indexerWS), walletIndexer)
       : walletIndexer;
-  const zkConfigProvider = new FetchZkConfigProvider<string>(`${window.location.origin}${ZK_ASSET_PATH}`, fetch.bind(window));
+  // midnight-js 5 checks every artefact against the compiler's contract-manifest.json (served by the /zk route).
+  const zkConfigProvider = new FetchZkConfigProvider<string>(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });
   // Proving always uses the LOCAL proof server from midnight.config.json — never the wallet's hosted one
-  // (cfg.proverServerUri). A proof request carries the circuit's private inputs (witnesses such as the token
-  // secret key), which must not leave this machine; a shared remote prover also rejected this contract's circuits (HTTP 500).
+  // (cfg.proverServerUri) nor the wallet's in-extension prover. A proof request carries the circuit's private inputs
+  // (witnesses such as the role secret key), which must not leave this machine. Compact 0.36 circuits are ZKIR v3:
+  // the proof server must be version 9 (it proves both the contract's v3 and the wallet's v2 circuits).
   const baseProofProvider = httpClientProofProvider(networkConfig.proofServer, zkConfigProvider);
   // midnight-js order: build unproven tx → prove → balance → submit → confirm. Each wrapper reports its stage.
-  const proofProvider: typeof baseProofProvider = {
-    ...baseProofProvider,
-    proveTx: async (...a: Parameters<typeof baseProofProvider.proveTx>) => {
+  const proofProvider: ProofProvider = {
+    supportedEras: baseProofProvider.supportedEras,
+    proveTx: async (...a: Parameters<ProofProvider['proveTx']>) => {
       await assertProofServerReachable(networkConfig.proofServer);
       sink?.done('build');
       sink?.begin('prove');
@@ -137,49 +138,49 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
     }
   };
 
-  const keys = await api.getShieldedAddresses();
-  const shieldedCoinPublicKey = shieldedKeyToHex(keys.shieldedCoinPublicKey, 'coin', cfg.networkId);
-  const shieldedEncryptionPublicKey = shieldedKeyToHex(keys.shieldedEncryptionPublicKey, 'encryption', cfg.networkId);
-
-  const walletProvider: WalletProvider = {
-    getCoinPublicKey: () => shieldedCoinPublicKey,
-    getEncryptionPublicKey: () => shieldedEncryptionPublicKey,
-    // The connected wallet selects DUST inputs and pays the fee (payFees: true).
-    balanceTx: async (tx) => {
+  // The wallet providers come from midnight-js (one handler per ledger era); this wrapper around the connector adds
+  // stage reporting, the DUST diagnosis on a fee failure, and the wallet's recent history on a submit failure. It also
+  // hands midnight-js the shielded keys as hex, the form the rest of the app shows and compares.
+  const wrapped = {
+    getShieldedAddresses: async () => {
+      const keys = await api.getShieldedAddresses();
+      return {
+        ...keys,
+        shieldedCoinPublicKey: shieldedKeyToHex(keys.shieldedCoinPublicKey, 'coin', cfg.networkId),
+        shieldedEncryptionPublicKey: shieldedKeyToHex(keys.shieldedEncryptionPublicKey, 'encryption', cfg.networkId)
+      };
+    },
+    // The connected wallet selects DUST inputs and pays the fee (payFees defaults to true).
+    balanceUnsealedTransaction: async (tx: string, options?: { payFees?: boolean }) => {
       sink?.begin('balance');
-      let balancedHex: string;
       try {
-        ({ tx: balancedHex } = await stage('wallet.balanceUnsealedTransaction', () => api.balanceUnsealedTransaction(toHex(tx.serialize()), { payFees: true })));
+        const r = await stage('wallet.balanceUnsealedTransaction', () => api.balanceUnsealedTransaction(tx, { payFees: true, ...options }));
+        sink?.done('balance');
+        return r;
       } catch (e) {
         // Fee payment failed: say what the wallet itself reports as spendable DUST, to tell a sync / generation
         // problem (low balance) from a wallet-side sponsoring problem (balance fine but still refused).
         const dust = await readDust(api);
         throw new Error(`${e instanceof Error ? e.message : String(e)} [${describeDust(dust)}]`, { cause: e });
       }
-      sink?.done('balance');
-      return Transaction.deserialize('signature', 'proof', 'binding', fromHex(balancedHex));
-    }
-  };
-
-  const midnightProvider: MidnightProvider = {
-    submitTx: async (tx) => {
-      const id = tx.identifiers()[0];
+    },
+    submitTransaction: async (tx: string) => {
       sink?.begin('submit');
       try {
-        await stage('wallet.submitTransaction', () => api.submitTransaction(toHex(tx.serialize())));
+        await stage('wallet.submitTransaction', () => api.submitTransaction(tx));
       } catch (e) {
         // A node "temporarily banned" / "already imported" rejection usually means an earlier attempt is
         // still pending or was dropped: show what the wallet itself last saw.
         const hist = await api.getTxHistory(0, 5).catch(() => null);
         const recent = hist ? hist.map((h) => `${String(h.txHash).slice(0, 10)}…=${h.txStatus.status}`).join(', ') : 'unavailable';
-        console.error('[wallet] submit failed; tx id', id, 'recent wallet history:', hist);
-        throw new Error(`${e instanceof Error ? e.message : String(e)} [tx ${String(id).slice(0, 12)}…; wallet recent: ${recent}]`, { cause: e });
+        console.error('[wallet] submit failed; recent wallet history:', hist);
+        throw new Error(`${e instanceof Error ? e.message : String(e)} [wallet recent: ${recent}]`, { cause: e });
       }
       sink?.done('submit');
       sink?.begin('confirm');
-      return id;
     }
   };
+  const { walletProvider, midnightProvider } = await dappConnectorWalletProviders(wrapped as never);
 
   const privateStateProvider: PrivateStateProvider<string, unknown> = persistentPrivateStateProvider(store, vaultSigningKeys(sharedVault()));
 
@@ -189,6 +190,7 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
     zkConfigProvider,
     proofProvider,
     walletProvider,
-    midnightProvider
+    midnightProvider,
+    config: { networkId: cfg.networkId, ttlSeconds: TTL_SECONDS }
   };
 }

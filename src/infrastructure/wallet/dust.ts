@@ -1,4 +1,4 @@
-import type { ConnectedAPI } from '@midnight-ntwrk/dapp-connector-api';
+import type { ConnectedAPI } from '@midnightntwrk/dapp-connector-api';
 
 /**
  * DUST (fee resource) and NIGHT as the connected wallet reports them, in base units:

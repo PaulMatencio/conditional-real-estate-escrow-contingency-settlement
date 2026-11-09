@@ -3,9 +3,9 @@
  *
  * Framework-free and free of imports from the rest of this app — copy this
  * folder into another project as-is. The only dependency is the
- * `@midnight-ntwrk/dapp-connector-api` types.
+ * `@midnightntwrk/dapp-connector-api` types.
  */
-import type { ConnectedAPI, InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
+import type { ConnectedAPI, InitialAPI } from '@midnightntwrk/dapp-connector-api';
 
 export type WalletErrorCode = 'NOT_FOUND' | 'REJECTED' | 'DISCONNECTED' | 'NETWORK_MISMATCH' | 'UNKNOWN';
 

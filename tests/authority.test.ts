@@ -87,7 +87,7 @@ describe('authority key storage', () => {
 
 describe('party checks against an active maintenance authority', () => {
   it('blocks the deposit and warns on acceptance until the authority is renounced', async () => {
-    const { sim, pkg, casp } = configuredEscrow();
+    const { sim, pkg, casp } = await configuredEscrow();
     const ctx = { gateway: sim.gateway(), crypto: termsCrypto, record: { terms: pkg, kyc: { buyer: casp.bundle(rid(K.buyer), BUYER_KEY) } }, secretKey: K.buyer };
     const base = sim.view();
     const controlled = { ...base, maintenance: { committeeSize: 1, threshold: 1, counter: '0' } };

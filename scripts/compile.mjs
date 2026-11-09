@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Full compilation (ZK keys included) of the escrow contract with the compiler pinned in
- * midnight.config.json (`contract.compilerVersion`). midnight-js 4.1.1 / compact-js 2.5.x only run
- * contracts built for compact-runtime 0.16.0, i.e. compiler 0.31.x.
+ * midnight.config.json (`contract.compilerVersion`): 0.36.0 (Compact language 0.28, compact-runtime 0.21,
+ * ledger 9, ZKIR v3), the version midnight-js 5.0.0 / compact-js 3.0.0 run on the preview network.
+ * Install it once with `compact update 0.36.0`.
  *
  *   node scripts/compile.mjs [--skip-zk]
  *

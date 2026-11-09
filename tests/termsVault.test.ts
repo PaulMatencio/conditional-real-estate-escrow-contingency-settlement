@@ -21,8 +21,8 @@ describe('terms package (FR-TERMS-01/03/05)', () => {
     expect(() => createTermsPackage(termsCrypto, { amount: '0', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY })).toThrow(/positive/);
     expect(() => createTermsPackage(termsCrypto, { amount: '5', buyerPayout: BUYER_KEY, sellerPayout: BUYER_KEY })).toThrow(/differ/);
   });
-  it('matches the ledger and verifies single openings without revealing the rest', () => {
-    const { sim, pkg } = configuredEscrow();
+  it('matches the ledger and verifies single openings without revealing the rest', async () => {
+    const { sim, pkg } = await configuredEscrow();
     const v = sim.view();
     expect(checkTermsAgainstLedger(termsCrypto, pkg, v)).toMatchObject({ ok: true, amount: 'match' });
     const amount = selectiveOpening(pkg, 'amount');
@@ -34,8 +34,8 @@ describe('terms package (FR-TERMS-01/03/05)', () => {
     expect(cert.lockedFunds.locked).toBe(true);
     expect(JSON.stringify(cert)).not.toContain(pkg.terms.amountSalt);
   });
-  it('builds the vault and payout coins deterministically', () => {
-    const { sim, pkg } = configuredEscrow();
+  it('builds the vault and payout coins deterministically', async () => {
+    const { sim, pkg } = await configuredEscrow();
     const a = vaultCoinOf(sim.contractAddress, pkg.escrowColor!, pkg.terms);
     expect(a.value).toBe(250000n);
     expect(payoutCoinOf(sim.contractAddress, pkg.escrowColor!, pkg.terms).nonce).toBe(bytesToHex(pureCircuits.payoutNonceOf(a.nonce)));

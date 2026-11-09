@@ -4,11 +4,11 @@
   "type": "module",
   "description": "Simulator tests and CASP signing helper for the conditional real-estate escrow contract",
   "scripts": {
-    "compile": "compact compile +0.31.1 --skip-zk conditional-real-estate-escrow-contingency-settlement.compact managed/escrow",
+    "compile": "compact compile +0.36.0 --skip-zk conditional-real-estate-escrow-contingency-settlement.compact managed/escrow",
     "test": "node test/check-kyc-module.mjs && node test/escrow.sim.mjs"
   },
   "dependencies": {
-    "@midnight-ntwrk/compact-runtime": "0.16.0"
+    "@midnight-ntwrk/compact-runtime": "0.21.0"
   },
   "engines": {
     "node": ">=22"

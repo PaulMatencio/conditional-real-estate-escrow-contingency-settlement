@@ -16,39 +16,45 @@ const unsupported = async (): Promise<never> => {
 };
 
 /**
- * PrivateStateProvider on our stores. The escrow has no on-chain private state (PS = undefined); the only secret
- * midnight-js keeps here is the contract maintenance-authority (signing) key, which goes to the encrypted vault.
+ * PrivateStateProvider on our stores (midnight-js 5 shape: per-contract private states via `forContract`). The escrow
+ * has no on-chain private state (PS = undefined); the only secret midnight-js keeps here is the contract
+ * maintenance-authority (signing) key, which goes to the encrypted vault.
  */
 export function persistentPrivateStateProvider(store: KeyValueStore, keys: SigningKeyStore): PrivateStateProvider<string, unknown> {
-  let address = 'default';
-  const sKey = (id: string) => `ps:${address}:${id}`;
   const memory = new Map<string, string>();
+  const forContract = (address: string) => {
+    const sKey = (id: string) => `ps:${address}:${id}`;
+    return {
+      contractAddress: address,
+      set: async (id: string, state: unknown) => store.set(sKey(id), JSON.stringify(state ?? null)),
+      get: async (id: string) => {
+        const raw = await store.get(sKey(id));
+        return raw === null ? null : (JSON.parse(raw) as unknown);
+      },
+      remove: async (id: string) => store.remove(sKey(id)),
+      clear: async () => {
+        for (const k of await store.keys(`ps:${address}:`)) await store.remove(k);
+      },
+      exportPrivateStates: unsupported,
+      importPrivateStates: unsupported
+    };
+  };
   return {
-    setContractAddress: (a: string) => {
-      address = a;
+    forContract,
+    clearAll: async () => {
+      for (const k of await store.keys('ps:')) await store.remove(k);
     },
-    set: async (id, state) => store.set(sKey(id), JSON.stringify(state ?? null)),
-    get: async (id) => {
-      const raw = await store.get(sKey(id));
-      return raw === null ? null : (JSON.parse(raw) as unknown);
-    },
-    remove: async (id) => store.remove(sKey(id)),
-    clear: async () => {
-      for (const k of await store.keys(`ps:${address}:`)) await store.remove(k);
-    },
-    setSigningKey: async (a, key) => {
+    setSigningKey: async (a: string, key: unknown) => {
       memory.set(a, key as string);
       if (signingKeyCapture.on) await keys.save(a, key as string);
     },
-    getSigningKey: async (a) => (await keys.load(a).catch(() => null)) ?? memory.get(a) ?? null,
-    removeSigningKey: async (a) => {
+    getSigningKey: async (a: string) => (await keys.load(a).catch(() => null)) ?? memory.get(a) ?? null,
+    removeSigningKey: async (a: string) => {
       memory.delete(a);
       await keys.remove(a).catch(() => {});
     },
     clearSigningKeys: async () => memory.clear(),
-    exportPrivateStates: unsupported,
-    importPrivateStates: unsupported,
     exportSigningKeys: unsupported,
     importSigningKeys: unsupported
-  } as PrivateStateProvider<string, unknown>;
+  } as unknown as PrivateStateProvider<string, unknown>;
 }

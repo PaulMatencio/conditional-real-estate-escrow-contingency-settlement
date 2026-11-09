@@ -5,7 +5,7 @@
  * assertion failure surfaces at the "build" step without spending proving time (FR-FUND-04).
  */
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
-import { Transaction, ZswapChainState } from '@midnight-ntwrk/ledger-v8';
+import { Transaction, ZswapChainState } from '@midnightntwrk/ledger-v9';
 import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway } from '@/application/partyPorts';
 import { AppError } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
@@ -15,6 +15,7 @@ import type { WirePrivateTerms } from '@/domain/terms';
 import { networkConfig } from '../config/network';
 import { contractArgs, witnessInputs } from '../contract/callArgs';
 import { allCircuitIds, makeCompiledContract } from '../contract/compiled';
+import { readContractState } from '../contract/chainState';
 import { maintenanceOf, toEscrowView, type LedgerInput } from '../contract/view';
 import type { PrivateInputs } from '../contract/witnesses';
 import type { AppProviders } from '../wallet/providers';
@@ -57,7 +58,7 @@ export class PartyGateway implements EscrowPartyGateway {
   }
 
   async readView(): Promise<EscrowView> {
-    const s = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    const s = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     return toEscrowView(this.contractAddress, s.data as unknown as LedgerInput, maintenanceOf(s));
   }
@@ -80,7 +81,10 @@ export class PartyGateway implements EscrowPartyGateway {
       const r = await fn(...contractArgs(circuit, args, ctx));
       const receipt: CallReceipt = { txId: String(r.public.txId), txHash: r.public.txHash, blockHeight: r.public.blockHeight, blockHash: r.public.blockHash };
       if (circuit === 'depositToEscrow' && material.terms && r.public.tx) {
-        receipt.vaultIndex = (await this.indexFromTx(r.public.tx as Transaction<never, never, never>, r.public.blockHash ?? null, material.terms).catch(() => null)) ?? undefined;
+        // midnight-js 5 returns the finalized transaction as an era-tagged handle; decode it with ledger 9.
+        const handle = r.public.tx as { serialize(): Uint8Array };
+        const tx = Transaction.deserialize('signature', 'proof', 'binding', handle.serialize()) as unknown as Transaction<never, never, never>;
+        receipt.vaultIndex = (await this.indexFromTx(tx, r.public.blockHash ?? null, material.terms).catch(() => null)) ?? undefined;
       }
       return receipt;
     } catch (e) {
@@ -117,7 +121,8 @@ export class PartyGateway implements EscrowPartyGateway {
     const cfg = blockHash ? { type: 'blockHash' as const, blockHash } : undefined;
     const both = await this.providers.publicDataProvider.queryZSwapAndContractState(this.contractAddress, cfg as never);
     if (!both) return null;
-    return both[0].firstFree - inserted + position;
+    const zswap = (both.zswapChainState as unknown as { deserialize(d: Record<string, unknown>): ZswapChainState }).deserialize({ v9: ZswapChainState });
+    return zswap.firstFree - inserted + position;
   }
 
   async locateVaultIndex(depositTxHash: string | null, terms: WirePrivateTerms): Promise<bigint | null> {

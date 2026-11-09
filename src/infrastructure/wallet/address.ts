@@ -12,7 +12,7 @@ export async function walletAddressToHex(input: string, networkId: string): Prom
   if (!/^mn_addr_/i.test(raw)) {
     throw new Error('Expected a Midnight unshielded address (mn_addr_…) or 64 hex characters. Shielded (mn_shield-addr_…) and DUST addresses cannot receive this token.');
   }
-  const { MidnightBech32m, UnshieldedAddress } = await import('@midnight-ntwrk/wallet-sdk-address-format');
+  const { MidnightBech32m, UnshieldedAddress } = await import('@midnightntwrk/wallet-sdk-address-format');
   try {
     const a = UnshieldedAddress.codec.decode(networkId, MidnightBech32m.parse(raw));
     return Buffer.from(a.data).toString('hex');
@@ -23,6 +23,6 @@ export async function walletAddressToHex(input: string, networkId: string): Prom
 
 /** 64-hex UserAddress bytes → `mn_addr_<network>1…`. */
 export async function hexToWalletAddress(hex: string, networkId: string): Promise<string> {
-  const { UnshieldedAddress } = await import('@midnight-ntwrk/wallet-sdk-address-format');
+  const { UnshieldedAddress } = await import('@midnightntwrk/wallet-sdk-address-format');
   return UnshieldedAddress.codec.encode(networkId, new UnshieldedAddress(Buffer.from(hex, 'hex'))).asString();
 }

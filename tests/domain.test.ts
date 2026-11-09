@@ -9,8 +9,10 @@ import { BUYER_KEY, K, SELLER_KEY, configuredEscrow, rid } from './helpers/fixtu
 const none = { terms: false, kycAttestation: false, vaultCoin: false };
 const all = { terms: true, kycAttestation: true, vaultCoin: true };
 
+// Vitest runs ES modules, so the async simulator can be built with top-level await.
+const { sim } = await configuredEscrow();
+
 describe('lifecycle table', () => {
-  const { sim } = configuredEscrow();
   const init = sim.view();
   it('offers acceptConfiguration to buyer and seller only while initializing', () => {
     expect(availableActions(init, 'buyer', 0n, none).find((a) => a.circuit === 'acceptConfiguration')?.enabled).toBe(true);

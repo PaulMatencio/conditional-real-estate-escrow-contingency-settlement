@@ -17,7 +17,7 @@ export interface ContractConfig {
   managedDir: string;
   sdkDir: string;
   testsDir: string;
-  /** compactc toolchain; must emit the runtime midnight-js expects (0.31.x ↔ runtime 0.16.0). */
+  /** compactc toolchain; must emit the runtime midnight-js expects (0.36.x ↔ runtime 0.21.0 ↔ ledger 9, midnight-js 5). */
   compilerVersion: string;
   /**
    * Circuits whose verifier keys go into the deploy transaction itself. The rest are registered in follow-up
