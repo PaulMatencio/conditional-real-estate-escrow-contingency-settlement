@@ -10,6 +10,7 @@ import type { Caller } from '@/domain/roles';
 import type { VaultRecord } from './partyPorts';
 import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway } from './partyPorts';
 import { assertTermsMatch, precheckAttestation, type TermsCrypto } from './termsService';
+import { withTxLog, type TxLogger } from './txLog';
 
 export interface PartyContext {
   gateway: EscrowPartyGateway;
@@ -17,6 +18,10 @@ export interface PartyContext {
   /** The caller's local vault record for this contract (terms, KYC bundles, vault index). */
   record: VaultRecord;
   secretKey?: Uint8Array;
+  /** Persistent transaction log: every call that reaches the gateway is recorded (pending → confirmed / failed). */
+  txLog?: TxLogger;
+  /** Network id recorded in the log (e.g. 'preview'; 'simulator' in Simulator Mode). */
+  network?: string;
 }
 
 /** Fee margin kept on top of the escrowed amount for the shielded balance check (FR-WALLET-06). */
@@ -108,7 +113,12 @@ export async function runPartyAction<C extends PartyCircuit>(ctx: PartyContext, 
   }
   const pf = await preflight(ctx, view, caller, circuit, args, now);
   if (!pf.ok) throw new AppError('PREFLIGHT', pf.problems.join(' · '));
-  const receipt = await ctx.gateway.call(circuit, args, materialFor(ctx, circuit, caller));
+  // Pre-flight passed: from here on a transaction is attempted, so it is logged whatever the outcome.
+  const receipt = await withTxLog(
+    ctx.txLog,
+    { mode: ctx.gateway.mode, network: ctx.network ?? ctx.gateway.mode, contractAddress: ctx.gateway.contractAddress, actor: caller, action: circuit },
+    () => ctx.gateway.call(circuit, args, materialFor(ctx, circuit, caller))
+  );
   const record: VaultRecord = { ...ctx.record, history: [...(ctx.record.history ?? []), { at: Date.now(), circuit, txHash: receipt.txHash, blockHeight: receipt.blockHeight, status: 'confirmed', role: caller }] };
   if (circuit === 'depositToEscrow' && record.terms) {
     let index = receipt.vaultIndex ?? null;

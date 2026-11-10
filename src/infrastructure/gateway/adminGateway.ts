@@ -17,6 +17,8 @@ import { contractConfig } from '../config/network';
 import { allCircuitIds, makeCompiledContract } from '../contract/compiled';
 import { InitAttribute, ledger } from '../contract/module';
 import { randomBytes } from '../crypto/identity';
+import { shortError, withTxLog, type TxLogStart } from '@/application/txLog';
+import { sharedTxLog } from '../storage/txLogStore';
 import type { AppProviders } from '../wallet/providers';
 
 type CallTx = Record<string, (...args: unknown[]) => Promise<{ public: { txId: string; txHash: string; blockHeight: number } }>>;
@@ -111,6 +113,10 @@ export class AdminGateway {
     // The deploy creates the contract's maintenance-authority key; it is only ever stored in the encrypted vault.
     if (!sharedVault().unlocked) throw new AppError('VALIDATION', 'Unlock the vault before deploying: the contract authority key created by the deploy is stored only in the encrypted vault.');
     signingKeyCapture.on = true;
+    // Persistent log: pending now, then confirmed with the new address (even if opening it afterwards fails) or failed.
+    const log = sharedTxLog();
+    const logId = log.begin({ mode: 'wallet', network: providers.config.networkId, contractAddress: null, actor: 'admin', action: 'deploy', circuits: [...(params.deployCircuits ?? contractConfig.deployCircuits)] });
+    let logged = false;
     try {
       const deployed = (await (deployContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(providers, {
         compiledContract,
@@ -124,6 +130,8 @@ export class AdminGateway {
         ]
       })) as Found;
       const d = deployed.deployTxData.public;
+      log.finish(logId, { status: 'confirmed', contractAddress: d.contractAddress, txId: String(d.txId), txHash: d.txHash, blockHeight: d.blockHeight });
+      logged = true;
       let gateway: AdminGateway;
       try {
         gateway = await AdminGateway.connect(providers, d.contractAddress, getSecretKey);
@@ -133,6 +141,7 @@ export class AdminGateway {
       }
       return { gateway, receipt: { txId: String(d.txId), txHash: d.txHash, blockHeight: d.blockHeight } };
     } catch (e) {
+      if (!logged) log.finish(logId, { status: 'failed', error: shortError(e) });
       if (e instanceof AppError) throw e;
       console.error('[deploy] failed', e);
       throw new AppError('CONTRACT_REJECTED', describeError(e), { cause: e });
@@ -201,7 +210,16 @@ export class AdminGateway {
    * no verifier key can ever be added, removed or replaced afterwards. Requires every circuit to be registered.
    * On success the now-useless authority key is deleted from the vault.
    */
-  async renounceAuthority(): Promise<TxReceipt> {
+  /** The log entry every transaction of this gateway starts with. */
+  private logStart(action: string, circuits?: string[]): TxLogStart {
+    return { mode: 'wallet', network: this.providers.config.networkId, contractAddress: this.contractAddress, actor: 'admin', action, circuits };
+  }
+
+  renounceAuthority(): Promise<TxReceipt> {
+    return withTxLog(sharedTxLog(), this.logStart('renounceAuthority'), () => this.renounceAuthorityTx());
+  }
+
+  private async renounceAuthorityTx(): Promise<TxReceipt> {
     const missing = await this.missingCircuits();
     if (missing.length) throw new AppError('VALIDATION', `Register every circuit first (missing: ${missing.join(', ')}). After renouncing, no circuit can ever be added.`);
     const state = await readContractState(this.providers.publicDataProvider, this.contractAddress);
@@ -265,7 +283,7 @@ export class AdminGateway {
     const fn = this.found.callTx[circuit];
     if (!fn) throw new AppError('VALIDATION', `Circuit “${circuit}” is not registered on-chain yet. Register the remaining circuits first.`);
     try {
-      return toReceipt(await fn(...args));
+      return await withTxLog(sharedTxLog(), this.logStart(circuit), async () => toReceipt(await fn(...args)));
     } catch (e) {
       console.error(`[${circuit}] failed`, e);
       throw new AppError('CONTRACT_REJECTED', describeError(e), { cause: e });
@@ -309,7 +327,7 @@ export class AdminGateway {
     if (unknown.length) throw new AppError('VALIDATION', `Unknown circuit(s): ${unknown.join(', ')}`);
     if (circuits.length === 0) return { txId: '', txHash: '(nothing to register)' };
     try {
-      return await this.withPendingRetry(circuits, () => this.submitBatch(circuits));
+      return await withTxLog(sharedTxLog(), this.logStart('registerCircuits', circuits), () => this.withPendingRetry(circuits, () => this.submitBatch(circuits)));
     } catch (e) {
       console.error(`[register ${circuits.join(', ')}] failed`, e);
       throw new AppError('CONTRACT_REJECTED', describeError(e), { cause: e });

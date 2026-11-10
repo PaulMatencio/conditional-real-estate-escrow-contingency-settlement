@@ -6,6 +6,7 @@
  */
 import * as rt from '@midnight-ntwrk/compact-runtime';
 import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway, ShieldedEffects } from '@/application/partyPorts';
+import { withTxLog, type TxLogger } from '@/application/txLog';
 import { AppError } from '@/domain/errors';
 import type { ConfigureTerms, DeployParams } from '@/domain/escrow';
 import type { EscrowView } from '@/domain/escrowView';
@@ -152,15 +153,24 @@ export class EscrowSimulator {
     }
   }
 
+  /** Persistent transaction log for the admin helpers below (party calls are logged by the party use-case). */
+  logger?: TxLogger;
+
+  private adminRun(circuit: string, args: unknown[], sk: Uint8Array) {
+    return withTxLog(this.logger, { mode: 'simulator', network: 'simulator', contractAddress: this.contractAddress, actor: 'admin', action: circuit }, () =>
+      this.run(circuit, args, { secretKey: () => sk })
+    );
+  }
+
   /** Admin helpers for Simulator Mode setup. */
   configure(sk: Uint8Array, terms: ConfigureTerms) {
-    return this.run('configure', maybeTermsArgs(terms), { secretKey: () => sk });
+    return this.adminRun('configure', maybeTermsArgs(terms), sk);
   }
   addKycIssuer(sk: Uint8Array, issuerId: string, publicKey: { x: string; y: string }) {
-    return this.run('addKycIssuer', [hex32ToBytes(issuerId), { x: BigInt(publicKey.x), y: BigInt(publicKey.y) }], { secretKey: () => sk });
+    return this.adminRun('addKycIssuer', [hex32ToBytes(issuerId), { x: BigInt(publicKey.x), y: BigInt(publicKey.y) }], sk);
   }
   finalize(sk: Uint8Array) {
-    return this.run('finalizeInitialization', [], { secretKey: () => sk });
+    return this.adminRun('finalizeInitialization', [], sk);
   }
 
   gateway(coinPublicKey: string | null = null): EscrowPartyGateway {

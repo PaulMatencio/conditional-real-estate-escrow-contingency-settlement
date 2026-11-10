@@ -29,6 +29,7 @@ The browser vault is the only place that holds an escrow's private material: rol
 | Local transaction history and confirmed terms backups | vault record |
 | Envelope key pair (X25519) and earlier envelope keys | vault identity record (`_identity`) |
 | Admin secret key and the keys it replaced (optional) | vault admin record (`_admin`) |
+| Transaction log: every transaction built in this browser, all escrows and roles, with its outcome | vault log record (`_txlog`) |
 | Loaded contract address | admin console |
 
 ### Encryption
@@ -53,6 +54,7 @@ AES-256-GCM with a key derived from the backup passphrase (PBKDF2-SHA-256, 310,0
 | Role keys, KYC attestations | added if missing; if different, the current one is kept and the difference reported |
 | Authority key | added if missing; if different, the current one is kept and the backup's goes to the key history; a key whose authority was renounced is never brought back |
 | Authority key history, documents, confirmed backups, transaction history | merged (union, no duplicates) |
+| Transaction log (`_txlog`) | merged by entry: the most recently updated copy of each entry wins; the restore report shows how many entries were added |
 | Envelope key | if this vault holds no escrows yet (new browser), the backup's key becomes current and the newly created one is kept as a previous key; otherwise the current key is kept and the backup's is stored as a previous key |
 | Admin secret key | restored only if this browser has none; otherwise the current key is kept and the backup's goes to the admin key history. Backups made before 2026-11-08 (key in `admin.secretKey`) are handled the same way |
 | Loaded contract address | set only if no contract is loaded |
@@ -71,6 +73,7 @@ In the browser's **IndexedDB**, database `escrow-vault`, object store `kv`, for 
 | `vault:rec:<contract address>` | one AES-GCM record per escrow |
 | `vault:rec:_identity` | envelope key pair |
 | `vault:rec:_admin` | admin secret key (since 2026-11-08) |
+| `vault:rec:_txlog` | transaction log (since 2026-11-09; at most 5,000 entries, oldest dropped first) |
 
 - One vault per browser profile **and** per origin: `localhost:3000` and `127.0.0.1:3000` have separate vaults.
 - Clearing site data, or a private window, removes it: keep a backup.

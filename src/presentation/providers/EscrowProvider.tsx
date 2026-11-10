@@ -22,6 +22,8 @@ import { PartyGateway } from '@/infrastructure/gateway/partyGateway';
 import { EscrowSimulator } from '@/infrastructure/simulator/escrowSimulator';
 import { migratePlaintextAdminKey, migratePlaintextAuthorityKeys, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
+import { sharedTxLog } from '@/infrastructure/storage/txLogStore';
+import { networkConfig } from '@/infrastructure/config/network';
 import { createWalletProviders, type AppProviders } from '@/infrastructure/wallet/providers';
 import { activeSink } from '@/application/deployProgress';
 import { useApp } from './AppProvider';
@@ -291,7 +293,12 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const gw = await gateway();
         const keyRole = role ?? (caller === 'anyone' ? null : caller);
         const hex = keyRole ? (record.roleKeys?.[keyRole] ?? null) : null;
-        const out = await runPartyAction({ gateway: gw, crypto: termsCrypto, record, secretKey: hex ? secretKeyFromHex(hex) : undefined }, caller, circuit, args);
+        const out = await runPartyAction(
+          { gateway: gw, crypto: termsCrypto, record, secretKey: hex ? secretKeyFromHex(hex) : undefined, txLog: sharedTxLog(), network: gw.mode === 'wallet' ? networkConfig.networkId : 'simulator' },
+          caller,
+          circuit,
+          args
+        );
         deployTracker.done('validate');
         if (vault.unlocked && activeAddress) {
           await vault.save(activeAddress, out.record);
@@ -339,6 +346,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const t0 = Math.floor(Date.now() / 1000);
         const color = bytesToHex(generateSecretKey());
         const s = await EscrowSimulator.create({ adminRoleId: id('admin'), buyerRoleId: id('buyer'), sellerRoleId: id('seller'), tokenColor: color, ticker: 'EURe' }, { time: t0 });
+        s.logger = sharedTxLog();
         const wallet = session ? await createWalletProviders(session, prefs).then((p) => p.walletProvider.getCoinPublicKey() as unknown as string).catch(() => null) : null;
         const pkg = {
           ...createTermsPackage(termsCrypto, { amount: opts.amount ?? '250000', buyerPayout: wallet ?? bytesToHex(generateSecretKey()), sellerPayout: bytesToHex(generateSecretKey()) }),

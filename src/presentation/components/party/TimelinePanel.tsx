@@ -15,7 +15,6 @@ export function TimelinePanel() {
   if (!view) return null;
   const d = nextDeadline(view);
   const left = d ? Number(d.at) - Number(now) : null;
-  const history = [...(record.history ?? [])].reverse();
   return (
     <Card title={t('audit.title')} icon={<History size={16} aria-hidden />}>
       {d && left !== null && left < 3 * 86400 && (
@@ -36,27 +35,7 @@ export function TimelinePanel() {
           </li>
         ))}
       </ol>
-      <h3 className="label mt-3">{t('audit.mine')}</h3>
-      {history.length === 0 ? (
-        <p className="text-sm text-slate-500">—</p>
-      ) : (
-        <ol className="space-y-1 text-sm">
-          {history.map((h, i) => (
-            <li key={i} className="flex flex-wrap gap-2 text-slate-300">
-              <span className="text-slate-500">{new Date(h.at).toLocaleString()}</span>
-              <span className="mono">{h.circuit}</span>
-              {h.role && <span className="text-slate-500">({h.role})</span>}
-              {mode === 'wallet' && h.txHash ? (
-                <a className="mono text-accent-soft underline" href={explorerTxUrl(h.txHash)} target="_blank" rel="noopener noreferrer">
-                  {shortHex(h.txHash)}
-                </a>
-              ) : (
-                <span className="mono text-slate-500">{h.txHash}</span>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
+      <p className="mt-3 text-xs text-slate-500">{t('audit.mineMoved')}</p>
     </Card>
   );
 }

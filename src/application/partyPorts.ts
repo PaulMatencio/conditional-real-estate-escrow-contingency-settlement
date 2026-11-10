@@ -132,6 +132,8 @@ export interface VaultRecord {
   adminKeyHistory?: { key: string; replacedAt: number }[];
   /** Earlier envelope key pairs (e.g. restored from a backup); still tried when opening envelopes. */
   identityHistory?: { publicKey: string; privateKeyJwk: JsonWebKey }[];
+  /** TXLOG_RECORD only: every transaction this browser built (see application/txLog.ts). */
+  txLog?: import('./txLog').TxLogEntry[];
   /** FR-AUDIT-03: local transaction history. */
   history?: { at: number; circuit: string; txHash: string; blockHeight?: number; status: string; role?: string }[];
 }
@@ -140,6 +142,8 @@ export interface VaultRecord {
 export const IDENTITY_RECORD = '_identity';
 /** Vault record id that holds the admin console's secret key (one per browser, not per contract). */
 export const ADMIN_RECORD = '_admin';
+/** Vault record id that holds the persistent transaction log (all escrows, all roles). */
+export const TXLOG_RECORD = '_txlog';
 
 export interface Vault {
   readonly unlocked: boolean;

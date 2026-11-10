@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Archive, Building2, FileLock2, KeyRound, ListChecks, Rocket } from 'lucide-react';
+import { Archive, Building2, FileLock2, KeyRound, ListChecks, Rocket, ScrollText } from 'lucide-react';
 import { EscrowStatus } from '@/infrastructure/contract/module';
 import { contractConfig } from '@/infrastructure/config/network';
 import { useApp } from '../providers/AppProvider';
@@ -12,10 +12,11 @@ import { TermsKycTab } from './admin/TermsKycTab';
 import { AuthorityCard } from './admin/AuthorityCard';
 import { VaultTab } from './admin/VaultTab';
 import { DustCard } from './DustCard';
+import { TxLogPanel } from './TxLogPanel';
 import { VaultGate } from './party/PartySetup';
 import { useEscrow } from '../providers/EscrowProvider';
 
-type Tab = 'deploy' | 'contract' | 'initialize' | 'terms' | 'keys' | 'vault';
+type Tab = 'deploy' | 'contract' | 'initialize' | 'terms' | 'keys' | 'vault' | 'log';
 
 const TABS: { id: Tab; icon: typeof Rocket }[] = [
   { id: 'deploy', icon: Rocket },
@@ -23,7 +24,8 @@ const TABS: { id: Tab; icon: typeof Rocket }[] = [
   { id: 'initialize', icon: ListChecks },
   { id: 'terms', icon: FileLock2 },
   { id: 'keys', icon: KeyRound },
-  { id: 'vault', icon: Archive }
+  { id: 'vault', icon: Archive },
+  { id: 'log', icon: ScrollText }
 ];
 
 export function AdminApp() {
@@ -55,6 +57,7 @@ export function AdminApp() {
       {tab === 'terms' && <TermsKycTab />}
       {tab === 'keys' && <KeysTab />}
       {tab === 'vault' && <VaultTab />}
+      {tab === 'log' && <TxLogPanel />}
     </main>
   );
 }

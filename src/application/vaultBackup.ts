@@ -7,7 +7,8 @@
  * difference reported (authority keys and envelope identities are kept in their history so nothing is lost).
  */
 import type { VaultRecord } from './partyPorts';
-import { ADMIN_RECORD, IDENTITY_RECORD } from './partyPorts';
+import { ADMIN_RECORD, IDENTITY_RECORD, TXLOG_RECORD } from './partyPorts';
+import { mergeTxLog } from './txLog';
 
 export const BACKUP_FORMAT = 'EscrowVaultBackupV1';
 
@@ -29,13 +30,15 @@ export interface BackupSummary {
   identity: boolean;
   adminKey: boolean;
   adminContract?: string;
+  /** Entries in the transaction log. */
+  txLog: number;
 }
 
 export function summarize(b: VaultBackup): BackupSummary {
   return {
     createdAt: b.createdAt,
     contracts: Object.entries(b.records)
-      .filter(([id]) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD)
+      .filter(([id]) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD && id !== TXLOG_RECORD)
       .map(([address, r]) => ({
         address,
         terms: !!r.terms,
@@ -47,8 +50,16 @@ export function summarize(b: VaultBackup): BackupSummary {
       })),
     identity: !!b.records[IDENTITY_RECORD]?.identity,
     adminKey: !!b.records[ADMIN_RECORD]?.adminKey || !!b.admin?.secretKey,
-    adminContract: b.admin?.contractAddress
+    adminContract: b.admin?.contractAddress,
+    txLog: b.records[TXLOG_RECORD]?.txLog?.length ?? 0
   };
+}
+
+/** The transaction log: union of both logs (an entry's most recent update wins). Returns how many entries were new. */
+export function mergeTxLogRecord(current: VaultRecord, incoming: VaultRecord): { record: VaultRecord; added: number } {
+  const before = new Set((current.txLog ?? []).map((e) => e.id));
+  const txLog = mergeTxLog(current.txLog, incoming.txLog);
+  return { record: { ...current, txLog }, added: txLog.filter((e) => !before.has(e.id)).length };
 }
 
 const unionBy = <T,>(a: T[] | undefined, b: T[] | undefined, key: (x: T) => string): T[] | undefined => {
@@ -154,4 +165,6 @@ export interface RestoreReport {
   conflicts: string[];
   identity: string | null;
   admin: string | null;
+  /** Transaction-log entries added from the backup. */
+  txLogAdded: number;
 }

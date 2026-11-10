@@ -3,8 +3,8 @@
  * The file is AES-GCM encrypted with a backup passphrase (PBKDF2-SHA-256); it holds role keys, private terms,
  * attestations, authority keys and the envelope identity, so it must be kept as carefully as the vault itself.
  */
-import { ADMIN_RECORD, IDENTITY_RECORD, type Vault, type VaultRecord } from '@/application/partyPorts';
-import { BACKUP_FORMAT, isVaultBackup, mergeAdmin, mergeIdentity, mergeRecord, type RestoreReport, type VaultBackup } from '@/application/vaultBackup';
+import { ADMIN_RECORD, IDENTITY_RECORD, TXLOG_RECORD, type Vault, type VaultRecord } from '@/application/partyPorts';
+import { BACKUP_FORMAT, isVaultBackup, mergeAdmin, mergeIdentity, mergeRecord, mergeTxLogRecord, type RestoreReport, type VaultBackup } from '@/application/vaultBackup';
 import { isSealedJson, openWithPassphrase, sealWithPassphrase, type SealedJson } from '../crypto/aead';
 
 export const MIN_BACKUP_PASSPHRASE = 12;
@@ -36,7 +36,7 @@ export async function openBackup(file: unknown, passphrase: string): Promise<Vau
 export async function restoreVault(vault: Vault, backup: VaultBackup): Promise<RestoreReport> {
   if (!vault.unlocked) throw new Error('Unlock the vault first.');
   const existing = new Set(await vault.contracts());
-  const report: RestoreReport = { contractsAdded: [], contractsMerged: [], added: [], conflicts: [], identity: null, admin: null };
+  const report: RestoreReport = { contractsAdded: [], contractsMerged: [], added: [], conflicts: [], identity: null, admin: null, txLogAdded: 0 };
   for (const [id, incoming] of Object.entries(backup.records)) {
     if (id === IDENTITY_RECORD || id === ADMIN_RECORD) continue;
     if (!/^[0-9a-f]{64}$/.test(id)) continue; // only escrow records; ignore anything unexpected
@@ -54,7 +54,7 @@ export async function restoreVault(vault: Vault, backup: VaultBackup): Promise<R
   }
   const incomingId = backup.records[IDENTITY_RECORD];
   if (incomingId) {
-    const hadEscrows = [...existing].some((id) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD);
+    const hadEscrows = [...existing].some((id) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD && id !== TXLOG_RECORD);
     const { record, note } = mergeIdentity(await vault.load(IDENTITY_RECORD), incomingId, hadEscrows);
     await vault.save(IDENTITY_RECORD, record);
     report.identity = note;
@@ -63,6 +63,11 @@ export async function restoreVault(vault: Vault, backup: VaultBackup): Promise<R
     const { record, note } = mergeAdmin(await vault.load(ADMIN_RECORD), backup);
     await vault.save(ADMIN_RECORD, record);
     report.admin = note;
+  }
+  if (backup.records[TXLOG_RECORD]?.txLog?.length) {
+    const { record, added } = mergeTxLogRecord(await vault.load(TXLOG_RECORD), backup.records[TXLOG_RECORD]);
+    await vault.save(TXLOG_RECORD, record);
+    report.txLogAdded = added;
   }
   return report;
 }

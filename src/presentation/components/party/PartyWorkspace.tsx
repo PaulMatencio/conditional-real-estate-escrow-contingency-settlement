@@ -14,6 +14,7 @@ import { ModeBar, PayoutKeyCard, RoleKeyCard, VaultGate } from './PartySetup';
 import { StatusOverview } from './StatusOverview';
 import { TermsPanel } from './TermsPanel';
 import { TimelinePanel } from './TimelinePanel';
+import { TxLogPanel } from '../TxLogPanel';
 
 /**
  * One page per role (plan.md, primary goal 2). Same shell everywhere — mode, vault, role key, status, actions,
@@ -21,7 +22,7 @@ import { TimelinePanel } from './TimelinePanel';
  */
 export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'admin'> }) {
   const { t } = useT();
-  const { view, now, error, setError, vaultUnlocked } = useEscrow();
+  const { view, now, error, setError, vaultUnlocked, contractAddress } = useEscrow();
   const { progress } = useApp();
   const [role, setRole] = useState<PartyRole>(initial);
 
@@ -60,6 +61,7 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           <TimelinePanel />
         </div>
       </div>
+      {vaultUnlocked && <TxLogPanel contractAddress={contractAddress} />}
     </main>
   );
 }

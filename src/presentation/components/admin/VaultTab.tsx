@@ -28,7 +28,7 @@ function Summary({ s }: { s: BackupSummary }) {
   return (
     <div className="space-y-2 text-sm">
       <p className="text-slate-400">
-        {t('vaultBackup.escrows')}: <strong className="text-white">{s.contracts.length}</strong> · {t('vaultBackup.identity')}: {s.identity ? '✓' : '—'} · {t('vaultBackup.adminKey')}: {s.adminKey ? '✓' : '—'}
+        {t('vaultBackup.escrows')}: <strong className="text-white">{s.contracts.length}</strong> · {t('vaultBackup.identity')}: {s.identity ? '✓' : '—'} · {t('vaultBackup.adminKey')}: {s.adminKey ? '✓' : '—'} · {t('txlog.entries')}: <strong className="text-white">{s.txLog}</strong>
       </p>
       <ul className="space-y-1">
         {s.contracts.map((c) => (
@@ -204,7 +204,7 @@ export function VaultTab() {
                 <Alert tone="ok">
                   {t('vaultBackup.restored')}: {report.contractsAdded.length} {t('vaultBackup.new')}, {report.contractsMerged.length} {t('vaultBackup.merged')}
                 </Alert>
-                {[...report.added, ...(report.identity ? [report.identity] : []), ...(report.admin ? [report.admin] : [])].map((a) => (
+                {[...report.added, ...(report.identity ? [report.identity] : []), ...(report.admin ? [report.admin] : []), ...(report.txLogAdded ? [`${t('txlog.entries')}: +${report.txLogAdded}`] : [])].map((a) => (
                   <p key={a} className="text-slate-300">+ {a}</p>
                 ))}
                 {report.conflicts.map((c) => (
