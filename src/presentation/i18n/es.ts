@@ -489,5 +489,7 @@ export const es: Partial<Record<MessageKey, string>> = {
   'adminTerms.restore': 'Restaurar el paquete desde una copia',
   'adminTerms.restored': 'Paquete de condiciones restaurado y conforme a los compromisos en la cadena. Ya puede cifrarlo para cada destinatario.',
   'adminTerms.missingPkg': 'Las condiciones ya están comprometidas en la cadena, pero esta bóveda no contiene el paquete. Restáurelo desde su copia más abajo. Generar un paquete nuevo obligaría a configurar de nuevo, y ambas partes tendrían que aceptar otra vez.',
-  'adminTerms.restoredUnchecked': 'Paquete de condiciones restaurado, pero no se pudo leer el contrato en el indexador: todavía no se ha comprobado con los compromisos en la cadena. Recargue la pestaña y revise las insignias de coincidencia antes de distribuir.'
+  'adminTerms.restoredUnchecked': 'Paquete de condiciones restaurado, pero no se pudo leer el contrato en el indexador: todavía no se ha comprobado con los compromisos en la cadena. Recargue la pestaña y revise las insignias de coincidencia antes de distribuir.',
+  'adminTerms.acceptance': 'Aceptación en la cadena, versión de configuración',
+  'fund.trackHint': '«Localizar el índice de la bóveda» encuentra solo el depósito en la cadena pública: no hace falta hash, aunque haya depositado otra persona. Pegue un hash de transacción de depósito o un índice solo si falla.'
 };

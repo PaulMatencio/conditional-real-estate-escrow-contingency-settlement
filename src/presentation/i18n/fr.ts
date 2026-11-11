@@ -489,5 +489,7 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'adminTerms.restore': 'Restaurer le paquet depuis une sauvegarde',
   'adminTerms.restored': 'Paquet de conditions restauré, conforme aux engagements sur la chaîne. Vous pouvez maintenant le chiffrer pour chaque destinataire.',
   'adminTerms.missingPkg': 'Les conditions sont déjà engagées sur la chaîne, mais ce coffre ne contient pas le paquet. Restaurez-le depuis votre sauvegarde ci-dessous. Générer un nouveau paquet obligerait à reconfigurer, et les deux parties devraient accepter à nouveau.',
-  'adminTerms.restoredUnchecked': 'Paquet de conditions restauré, mais le contrat n\'a pas pu être lu depuis l\'indexeur : il n\'a pas encore été vérifié par rapport aux engagements sur la chaîne. Rechargez l\'onglet et vérifiez les badges de correspondance avant de distribuer.'
+  'adminTerms.restoredUnchecked': 'Paquet de conditions restauré, mais le contrat n\'a pas pu être lu depuis l\'indexeur : il n\'a pas encore été vérifié par rapport aux engagements sur la chaîne. Rechargez l\'onglet et vérifiez les badges de correspondance avant de distribuer.',
+  'adminTerms.acceptance': 'Acceptation sur la chaîne, version de configuration',
+  'fund.trackHint': '« Localiser l\'index du coffre » retrouve seul le dépôt sur la chaîne publique : aucun hash nécessaire, même si quelqu\'un d\'autre a déposé. Collez un hash de transaction de dépôt ou un index seulement en cas d\'échec.'
 };

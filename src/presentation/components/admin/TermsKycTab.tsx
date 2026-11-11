@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Building, FileLock2, Send } from 'lucide-react';
+import { Building, FileLock2, RefreshCw, Send } from 'lucide-react';
 import type { CaspIssuerKey } from '@/application/partyPorts';
 import { finalizeBlockers } from '@/application/partyService';
 import { checkTermsAgainstLedger, createTermsPackage } from '@/application/termsService';
@@ -55,6 +55,12 @@ export function TermsKycTab() {
     }
   }, [addr]);
   useEffect(() => void reload(), [reload, app.state]);
+  // The parties accept from their own pages: poll the chain so acceptances (and other changes) show up here.
+  useEffect(() => {
+    if (!addr) return;
+    const id = setInterval(() => void reload(), 15_000);
+    return () => clearInterval(id);
+  }, [addr, reload]);
   useEffect(() => {
     void esc.casp.issuerKeys().then((k) => setKeys(k.keys), () => setKeys([]));
   }, [esc.casp]);
@@ -240,7 +246,21 @@ export function TermsKycTab() {
       </Card>
 
       {view?.status === 'Initializing' && (
-        <Card title={t('init.finalize')}>
+        <Card
+          title={t('init.finalize')}
+          actions={
+            <button type="button" className="btn-ghost !px-2 !py-1 text-xs normal-case tracking-normal" onClick={() => void reload()}>
+              <RefreshCw size={12} aria-hidden /> {t('common.refresh')}
+            </button>
+          }
+        >
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm" aria-live="polite">
+            <span className="text-slate-400">
+              {t('adminTerms.acceptance')} (v{String(view.configVersion)}):
+            </span>
+            <Badge tone={view.buyerAccepted ? 'ok' : 'muted'}>buyer {view.buyerAccepted ? '✓' : '—'}</Badge>
+            <Badge tone={view.sellerAccepted ? 'ok' : 'muted'}>seller {view.sellerAccepted ? '✓' : '—'}</Badge>
+          </div>
           {blockers.length ? blockers.map((b) => <Alert key={b} tone="warn">{b}</Alert>) : <Alert tone="ok">{t('adminTerms.ready')}</Alert>}
           <button type="button" className="btn-danger mt-3" disabled={busy || blockers.length > 0} onClick={() => void app.finalize()}>
             {t('init.finalize')}

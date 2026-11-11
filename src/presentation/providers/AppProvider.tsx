@@ -145,6 +145,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // Other parties change the contract from their own pages (acceptances, deposit…): re-read it quietly in the
+  // background so the admin console does not show a stale status. Skipped while an admin transaction is running.
+  useEffect(() => {
+    if (!contractAddress || !session) return;
+    const id = setInterval(() => {
+      if (deployTracker.snapshot?.status === 'running') return;
+      void providers()
+        .then((p) => AdminGateway.readState(p, contractAddress))
+        .then(setState, () => undefined);
+    }, 20_000);
+    return () => clearInterval(id);
+  }, [contractAddress, session, providers]);
+
   const adoptAddress = useCallback(
     async (address: string) => {
       gatewayRef.current = null;

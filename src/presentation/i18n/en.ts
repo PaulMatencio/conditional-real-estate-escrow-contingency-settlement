@@ -541,7 +541,9 @@ export const en = {
   'adminTerms.restore': 'Restore the package from a backup',
   'adminTerms.restored': 'Terms package restored and matching the on-chain commitments. You can now encrypt it for each recipient.',
   'adminTerms.missingPkg': 'The terms are already committed on-chain, but this vault does not hold the package. Restore it from your backup below. Generating a new package would mean configuring again, and both parties would have to accept again.',
-  'adminTerms.restoredUnchecked': 'Terms package restored, but the contract could not be read from the indexer, so it was not checked against the on-chain commitments yet. Reload the tab and check the match badges before distributing.'
+  'adminTerms.restoredUnchecked': 'Terms package restored, but the contract could not be read from the indexer, so it was not checked against the on-chain commitments yet. Reload the tab and check the match badges before distributing.',
+  'adminTerms.acceptance': 'Acceptance on-chain, configuration version',
+  'fund.trackHint': 'Locate vault index finds the deposit on the public chain by itself: no hash needed, even if someone else deposited. Paste a deposit transaction hash or an index only if that fails.'
 } as const;
 
 export type MessageKey = keyof typeof en;

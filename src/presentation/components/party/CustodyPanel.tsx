@@ -12,11 +12,9 @@ import { downloadJson } from './helpers';
 /** FR-FUND-01/03, FR-WALLET-05/06: the deterministic vault coin, the shielded balance check and vault tracking. */
 export function FundingPanel() {
   const { t } = useT();
-  const { record, view, gateway, trackVaultIndex, updateRecord, mode } = useEscrow();
+  const { record, view, gateway, mode } = useEscrow();
   const [balance, setBalance] = useState<bigint | null | undefined>(undefined);
   const [walletKey, setWalletKey] = useState<string | null>(null);
-  const [tx, setTx] = useState('');
-  const [manual, setManual] = useState('');
   const pkg = record.terms;
 
   useEffect(() => {
@@ -52,13 +50,33 @@ export function FundingPanel() {
       )}
 
       <h3 className="label mt-4">{t('fund.tracking')}</h3>
+      <VaultTracking />
+      <p className="mt-2 text-xs text-slate-500">{t('fund.v2')}</p>
+    </Card>
+  );
+}
+
+/**
+ * FR-FUND-03: the vault coin's position (index), which every payout or refund needs. Found automatically from the
+ * deposit transaction (read from the chain when this browser did not deposit); a hash or the index can also be given.
+ */
+function VaultTracking() {
+  const { t } = useT();
+  const { record, trackVaultIndex, updateRecord } = useEscrow();
+  const [tx, setTx] = useState('');
+  const [manual, setManual] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pkg = record.terms;
+  if (!pkg) return null;
+  return (
+    <>
       <p className="mb-2 text-sm text-slate-300">
         {t('terms.vaultIndex')}: <strong>{pkg.vaultIndex ?? '—'}</strong> {pkg.depositTxHash && <span className="mono text-slate-500">tx {shortHex(pkg.depositTxHash)}</span>}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="flex gap-2">
           <input className="input mono" placeholder={t('fund.depositTx')} aria-label={t('fund.depositTx')} value={tx} onChange={(e) => setTx(e.target.value)} />
-          <button type="button" className="btn-ghost" onClick={() => void trackVaultIndex(tx.trim() || undefined)}>
+          <button type="button" className="btn-ghost" disabled={busy} onClick={() => (setBusy(true), void trackVaultIndex(tx.trim() || undefined).finally(() => setBusy(false)))}>
             {t('fund.track')}
           </button>
         </div>
@@ -74,7 +92,19 @@ export function FundingPanel() {
           </button>
         </div>
       </div>
-      <p className="mt-2 text-xs text-slate-500">{t('fund.v2')}</p>
+      <p className="mt-2 text-xs text-slate-500">{t('fund.trackHint')}</p>
+    </>
+  );
+}
+
+/** Seller and resolver: the vault tracking on its own, from the deposit onwards (they spend the vault coin to pay out). */
+export function VaultTrackingCard() {
+  const { t } = useT();
+  const { record, view } = useEscrow();
+  if (!view || !record.terms || ['Initializing', 'Created', 'Cancelled'].includes(view.status)) return null;
+  return (
+    <Card title={t('fund.tracking')} icon={<Coins size={16} aria-hidden />}>
+      <VaultTracking />
     </Card>
   );
 }

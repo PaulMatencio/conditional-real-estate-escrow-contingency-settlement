@@ -21,6 +21,17 @@ import type { PrivateInputs } from '../contract/witnesses';
 import type { AppProviders } from '../wallet/providers';
 import type { WalletSession } from '../wallet/connector';
 import { describeError, AdminGateway } from './adminGateway';
+import { IndexerChainHistory } from '../indexer/chainHistorySource';
+
+/**
+ * The escrow's successful deposit transaction, read from the public chain history. Lets a party who did not deposit
+ * (seller, resolver, or the buyer in another browser) find the vault coin without the depositor's help.
+ */
+export async function findDepositTxHash(contractAddress: string): Promise<string | null> {
+  const { actions } = await new IndexerChainHistory(networkConfig.indexer, networkConfig.indexerWS, 60_000).contractActions(contractAddress);
+  const deposit = [...actions].reverse().find((a) => a.kind === 'call' && a.entryPoint === 'depositToEscrow' && (a.result === 'SUCCESS' || a.result === null));
+  return deposit?.txHash ?? null;
+}
 
 type CallTx = Record<string, (...args: unknown[]) => Promise<{ public: { txId: string; txHash: string; blockHeight: number; blockHash?: string; tx?: unknown } }>>;
 interface Found {
@@ -126,8 +137,9 @@ export class PartyGateway implements EscrowPartyGateway {
   }
 
   async locateVaultIndex(depositTxHash: string | null, terms: WirePrivateTerms): Promise<bigint | null> {
-    if (!depositTxHash) return null;
-    const found = await fetchTransaction(depositTxHash);
+    const hash = depositTxHash ?? (await findDepositTxHash(this.contractAddress).catch(() => null));
+    if (!hash) return null;
+    const found = await fetchTransaction(hash);
     if (!found) return null;
     const tx = Transaction.deserialize('signature', 'proof', 'binding', hexToBytes(found.raw)) as unknown as Transaction<never, never, never>;
     return this.indexFromTx(tx, found.blockHash, terms);

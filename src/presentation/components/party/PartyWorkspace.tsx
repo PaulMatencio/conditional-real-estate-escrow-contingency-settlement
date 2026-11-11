@@ -8,7 +8,7 @@ import { ProgressPanel } from '../ProgressPanel';
 import { useApp } from '../../providers/AppProvider';
 import { ActionsPanel } from './ActionsPanel';
 import { AttestorPanel } from './AttestorPanel';
-import { FundingPanel, SettlementPanel } from './CustodyPanel';
+import { FundingPanel, SettlementPanel, VaultTrackingCard } from './CustodyPanel';
 import { KycPanel } from './KycPanel';
 import { ModeBar, PayoutKeyCard, RoleKeyCard, VaultGate } from './PartySetup';
 import { StatusOverview } from './StatusOverview';
@@ -54,6 +54,7 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {vaultUnlocked && (role === 'buyer' || role === 'seller' || role === 'resolver') && <TermsPanel />}
           {view && vaultUnlocked && (role === 'buyer' || role === 'seller') && <KycPanel party={role} />}
           {view && vaultUnlocked && role === 'buyer' && view.status !== 'Initializing' && <FundingPanel />}
+          {view && vaultUnlocked && (role === 'seller' || role === 'resolver') && <VaultTrackingCard />}
           {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <SettlementPanel party={role} />}
         </div>
         <div className="space-y-4">
