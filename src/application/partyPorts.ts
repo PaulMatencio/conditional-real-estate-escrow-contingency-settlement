@@ -132,6 +132,11 @@ export interface VaultRecord {
   adminKeyHistory?: { key: string; replacedAt: number }[];
   /** Earlier envelope key pairs (e.g. restored from a backup); still tried when opening envelopes. */
   identityHistory?: { publicKey: string; privateKeyJwk: JsonWebKey }[];
+  /**
+   * Custodian copy (e.g. the notary's escrowed backup) of this escrow's private terms package, kept apart from the
+   * fields a party uses, plus what the custodian handed out from it.
+   */
+  custody?: { terms: TermsPackage; receivedAt: number; fileName?: string; handedOut?: { at: number; to: string; kind: 'envelope' | 'passphrase' }[] };
   /** TXLOG_RECORD only: every transaction this browser built (see application/txLog.ts). */
   txLog?: import('./txLog').TxLogEntry[];
   /** FR-AUDIT-03: local transaction history. */

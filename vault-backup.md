@@ -27,6 +27,7 @@ The browser vault is the only place that holds an escrow's private material: rol
 | Document salts and report hashes (attestors) | vault record |
 | Contract maintenance-authority key and its history; renounce date | vault record |
 | Local transaction history and confirmed terms backups | vault record |
+| Custodian copy of the terms package (notary portal) and what was handed out from it | vault record (`custody`) |
 | Envelope key pair (X25519) and earlier envelope keys | vault identity record (`_identity`) |
 | Admin secret key and the keys it replaced (optional) | vault admin record (`_admin`) |
 | Transaction log: every transaction built in this browser, all escrows and roles, with its outcome | vault log record (`_txlog`) |
@@ -62,6 +63,17 @@ AES-256-GCM with a key derived from the backup passphrase (PBKDF2-SHA-256, 310,0
 Previous envelope keys are still tried when importing an envelope, so terms packages encrypted to an older key still open.
 
 ---
+
+### Moving to another address (e.g. `localhost:3000` → `admin.localhost:3000`)
+
+Each address has its own browser storage, so a new address starts with **no vault**. Don't create an empty one: restore it.
+
+1. On the **old** address, Vault tab → **Back up the vault** (include the admin secret key) → download the file.
+2. Open the **new** address. The "Create vault" card shows *Moved from another address? … Restore a vault from a backup*; click it (or open the Vault tab).
+3. **Choose backup file**, type the **backup passphrase**, **Decrypt and preview**: check the escrows, keys and log it contains.
+4. Choose the **new vault passphrase** (twice; it can differ from the old one) → **Create the vault and restore**.
+
+The vault is created and the backup merged in one step: escrows, role keys, terms packages, KYC attestations, authority keys, the **envelope key** (the backup's replaces the one generated for the empty vault, so envelopes sent to it still open), the admin secret key and the transaction log. The old address keeps its own copy until you erase it.
 
 ## 3. Where the vault is stored
 

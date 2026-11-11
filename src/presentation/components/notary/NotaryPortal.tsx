@@ -16,6 +16,7 @@ import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
 import { StatusOverview } from '../party/StatusOverview';
+import { CustodianCard } from './CustodianCard';
 import { FilePick, downloadJson, readFileBytes, readJsonFile } from '../party/helpers';
 
 type Verdict = { label: string; ok: boolean; detail: string };
@@ -53,6 +54,14 @@ export function NotaryPortal({ address }: { address?: string }) {
 
   const now = BigInt(sim && view && sim.contractAddress === view.contractAddress ? sim.time : Math.floor(Date.now() / 1000));
   const add = (v: Verdict) => setVerdicts((x) => [v, ...x]);
+
+  /** Verifies an opening (from a file or from the custodian copy) and, if it matches, adds it to the certificate. */
+  const acceptOpening = (o: Opening, label: string) => {
+    if (!view) return;
+    const r = verifyOpening(termsCrypto, o, view);
+    if (r.ok) setOpenings((x) => [...x.filter((y) => y.kind !== o.kind), o]);
+    add({ label, ...r });
+  };
 
   const onOpening = async (f: File) => {
     if (!view) return;
@@ -144,6 +153,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                 ))}
               </ul>
             </Card>
+            <CustodianCard view={view} onOpening={(o) => acceptOpening(o, `${t('notary.opening')} ${o.kind} (${t('custody.badge')})`)} />
             <Card title={t('notary.certificate')} className="print:hidden">
               <p className="mb-3 text-sm text-slate-400">{t('notary.certificateHint')}</p>
               <div className="flex flex-wrap gap-2">

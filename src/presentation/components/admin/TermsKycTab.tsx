@@ -7,7 +7,8 @@ import { checkTermsAgainstLedger, createTermsPackage } from '@/application/terms
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { isHex32, shortHex } from '@/domain/hex';
-import { sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
+import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
+import { isTermsPackage, type TermsPackage } from '@/domain/terms';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useApp } from '../../providers/AppProvider';
@@ -15,7 +16,7 @@ import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { VaultGate } from '../party/PartySetup';
-import { downloadJson } from '../party/helpers';
+import { FilePick, downloadJson, readJsonFile } from '../party/helpers';
 
 const RECIPIENTS = ['buyer', 'seller', 'resolver', 'custodian'] as const;
 
@@ -32,6 +33,7 @@ export function TermsKycTab() {
   const [form, setForm] = useState({ amount: '', buyer: '', seller: '' });
   const [recip, setRecip] = useState<Record<(typeof RECIPIENTS)[number], string>>({ buyer: '', seller: '', resolver: '', custodian: '' });
   const [pass, setPass] = useState('');
+  const [restorePass, setRestorePass] = useState('');
   const [keys, setKeys] = useState<CaspIssuerKey[]>([]);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
   const addr = app.contractAddress;
@@ -71,12 +73,61 @@ export function TermsKycTab() {
     }
   };
 
+  /**
+   * Brings the package back into this vault from the admin's passphrase backup (terms-backup-….json), from an envelope
+   * addressed to this browser, or from a plain package. It must open the commitments already on-chain: a package that
+   * does not would mean configuring again (and both parties accepting again).
+   */
+  const restorePackage = async (f: File) => {
+    setMsg(null);
+    try {
+      const raw = await readJsonFile(f);
+      let p: unknown = raw;
+      if (isEnvelope(raw)) {
+        const me = esc.identities.find((k) => k.publicKey === raw.recipient);
+        if (!me) throw new Error(t('custody.notForMe'));
+        p = await openEnvelope(raw, me);
+      } else if (isSealedJson(raw)) {
+        if (!restorePass) throw new Error(t('terms.needPass'));
+        p = await openWithPassphrase(raw, restorePass);
+      }
+      if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
+      if (p.contractAddress && p.contractAddress !== addr) throw new Error(t('terms.otherContract'));
+      const bound: TermsPackage = { ...p, contractAddress: addr, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };
+      if (view) {
+        const c = checkTermsAgainstLedger(termsCrypto, bound, view);
+        if (!c.ok && c.amount !== 'unset') throw new Error(`TERMS_COMMITMENT_MISMATCH — ${t('terms.mismatch')}`);
+      }
+      // The backup the admin just used counts as a confirmed backup (finalize needs one).
+      await esc.updateRecord((r) => ({ ...r, terms: bound, backups: r.backups?.length ? r.backups : [{ at: Date.now(), kind: 'file', note: f.name }] }));
+      setRestorePass('');
+      setMsg(view ? { tone: 'ok', text: t('adminTerms.restored') } : { tone: 'warn', text: t('adminTerms.restoredUnchecked') });
+    } catch (e) {
+      setMsg({ tone: 'bad', text: (e as Error).message });
+    }
+  };
+  const committedButMissing = !pkg && !!view?.commitments.amount;
+
   return (
     <div className="space-y-4">
       <VaultGate />
       {msg && <Alert tone={msg.tone} onClose={() => setMsg(null)}>{msg.text}</Alert>}
       <Card title={t('adminTerms.title')} icon={<FileLock2 size={16} aria-hidden />}>
         <p className="mb-3 text-sm text-slate-400">{t('adminTerms.hint')}</p>
+        {!pkg && esc.vaultUnlocked && (
+          <div className="mb-4 rounded-xl border border-midnight-700 p-3">
+            {committedButMissing && (
+              <div className="mb-2">
+                <Alert tone="warn">{t('adminTerms.missingPkg')}</Alert>
+              </div>
+            )}
+            <p className="mb-2 text-sm text-slate-300">{t('adminTerms.restoreHint')}</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <input type="password" className="input !w-56" placeholder={t('terms.passOptional')} aria-label={t('terms.passOptional')} value={restorePass} onChange={(e) => setRestorePass(e.target.value)} />
+              <FilePick label={t('adminTerms.restore')} accept="application/json,.json" onFile={(f) => void restorePackage(f)} />
+            </div>
+          </div>
+        )}
         <div className="grid gap-x-4 sm:grid-cols-3">
           <Field label={`${t('terms.amount')} (${view?.escrowTicker ?? ''})`} htmlFor="t-amount">
             <input id="t-amount" className="input" inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
@@ -118,7 +169,7 @@ export function TermsKycTab() {
         <Card title={t('adminTerms.distribute')} icon={<Send size={16} aria-hidden />}>
           <p className="mb-3 text-sm text-slate-400">{t('adminTerms.distributeHint')}</p>
           {RECIPIENTS.map((r) => (
-            <Field key={r} label={`${r} — ${t('terms.myEnvelopeKey')}`} htmlFor={`env-${r}`}>
+            <Field key={r} label={t('adminTerms.envKey').replace('{who}', r)} hint={t(r === 'custodian' ? 'adminTerms.envFromCustodian' : 'adminTerms.envFromParty').replace('{who}', r)} htmlFor={`env-${r}`}>
               <div className="flex gap-2">
                 <input id={`env-${r}`} className="input mono" value={recip[r]} onChange={(e) => setRecip({ ...recip, [r]: e.target.value })} spellCheck={false} />
                 <button

@@ -53,7 +53,7 @@ describe('log helpers', () => {
 
   it('exports CSV with quoting', () => {
     const csv = toCsv([entry('a', 0, { status: 'failed', error: 'Wallet said "no", twice' })], 's1');
-    expect(csv.split('\r\n')[0]).toBe('at,updatedAt,status,mode,network,actor,action,circuits,contractAddress,txId,txHash,blockHeight,error');
+    expect(csv.split('\r\n')[0]).toBe('at,updatedAt,status,source,mode,network,actor,action,circuits,contractAddress,txId,txHash,blockHeight,fee,error');
     expect(csv).toContain('1970-01-01T00:00:00.000Z');
     expect(csv).toContain('"Wallet said ""no"", twice"');
   });

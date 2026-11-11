@@ -26,7 +26,7 @@ export const isVaultBackup = (x: unknown): x is VaultBackup =>
 
 export interface BackupSummary {
   createdAt: string;
-  contracts: { address: string; terms: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
+  contracts: { address: string; terms: boolean; custody: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
   identity: boolean;
   adminKey: boolean;
   adminContract?: string;
@@ -42,6 +42,7 @@ export function summarize(b: VaultBackup): BackupSummary {
       .map(([address, r]) => ({
         address,
         terms: !!r.terms,
+        custody: !!r.custody,
         roleKeys: Object.keys(r.roleKeys ?? {}),
         kyc: Object.keys(r.kyc ?? {}),
         authorityKey: !!r.authorityKey,
@@ -108,6 +109,12 @@ export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: 
   }
   out.authorityKeyHistory = unionBy(out.authorityKeyHistory, incoming.authorityKeyHistory, (h) => h.key);
   if (incoming.authorityRenouncedAt && !current.authorityRenouncedAt) out.authorityRenouncedAt = incoming.authorityRenouncedAt;
+
+  if (incoming.custody) {
+    if (!current.custody) (out.custody = incoming.custody), added.push('custodian copy of the terms');
+    else if (!same(current.custody.terms.terms, incoming.custody.terms.terms)) conflicts.push('custodian copy differs (kept the current one)');
+    else out.custody = { ...current.custody, handedOut: unionBy(current.custody.handedOut, incoming.custody.handedOut, (h) => `${h.at}:${h.to}`) };
+  }
 
   out.roleKeyHistory = unionBy(current.roleKeyHistory, incoming.roleKeyHistory, (h) => `${h.role}:${h.key}`);
   out.backups = unionBy(current.backups, incoming.backups, (b) => `${b.at}:${b.kind}`);

@@ -45,6 +45,9 @@ function contentSecurityPolicy() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Testing several parties in one browser: each http://<name>.localhost:3000 is its own origin, so its own vault
+  // (and still a secure context, unlike a LAN IP). Lets the dev server serve its assets to those names.
+  allowedDevOrigins: ['*.localhost'],
   poweredByHeader: false,
   // Midnight runtime packages ship WASM; enable async WebAssembly for the client bundle.
   webpack: (config, { isServer }) => {

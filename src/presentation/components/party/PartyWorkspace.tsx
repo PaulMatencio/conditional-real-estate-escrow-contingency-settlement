@@ -22,7 +22,7 @@ import { TxLogPanel } from '../TxLogPanel';
  */
 export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'admin'> }) {
   const { t } = useT();
-  const { view, now, error, setError, vaultUnlocked, contractAddress } = useEscrow();
+  const { view, now, error, setError, vaultUnlocked, contractAddress, mode } = useEscrow();
   const { progress } = useApp();
   const [role, setRole] = useState<PartyRole>(initial);
 
@@ -61,7 +61,7 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           <TimelinePanel />
         </div>
       </div>
-      {vaultUnlocked && <TxLogPanel contractAddress={contractAddress} />}
+      {vaultUnlocked && <TxLogPanel contractAddress={contractAddress} importAddress={mode === 'wallet' ? contractAddress : null} />}
     </main>
   );
 }

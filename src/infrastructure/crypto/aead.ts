@@ -6,7 +6,24 @@
  */
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-const subtle = () => globalThis.crypto.subtle;
+/**
+ * Browsers expose WebCrypto (crypto.subtle) only in a secure context: https, http://localhost, http://127.0.0.1 and
+ * http://*.localhost. A LAN address such as http://192.168.x.x:3000 is not one, so explain instead of crashing.
+ */
+export function insecureContextMessage(): string | null {
+  if (globalThis.crypto?.subtle) return null;
+  const where = typeof location !== 'undefined' ? location.origin : 'this address';
+  return (
+    `The vault needs the browser's Web Crypto API, which is only available on secure pages: ${where} is not one. ` +
+    'Open the dApp at http://localhost:3000, http://127.0.0.1:3000 or a *.localhost name (e.g. http://buyer.localhost:3000; each name gets its own vault), or serve it over https.'
+  );
+}
+
+const subtle = (): SubtleCrypto => {
+  const msg = insecureContextMessage();
+  if (msg) throw new Error(msg);
+  return globalThis.crypto.subtle;
+};
 const rand = (n: number) => globalThis.crypto.getRandomValues(new Uint8Array(n));
 
 export const b64 = (b: Uint8Array): string => {

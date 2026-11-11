@@ -8,6 +8,7 @@ import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { AttestationBundle, TermsCommitments, WireAttestation, WirePrivateTerms } from '@/domain/terms';
 import { pureCircuits, type KycAttestation, type PrivateTerms, type SchnorrSignature } from '../contract/module';
 import { randomBytes } from './identity';
+import { insecureContextMessage } from './aead';
 
 export const newSalt = (): string => bytesToHex(randomBytes(32));
 
@@ -112,6 +113,8 @@ const DOC_DOMAIN = (() => {
 const VEC3_BYTES32 = new rt.CompactTypeVector(3, new rt.CompactTypeBytes(32));
 
 export async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  const insecure = insecureContextMessage();
+  if (insecure) throw new Error(insecure);
   return new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes as BufferSource));
 }
 

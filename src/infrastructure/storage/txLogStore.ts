@@ -76,6 +76,34 @@ export class VaultTxLog implements TxLogger {
     });
   }
 
+  /**
+   * Applies a pure transformation of the whole log (e.g. a chain import) and saves the entries it changed in one
+   * write. Needs the vault unlocked, so the transformation sees the full persisted log.
+   */
+  async transform<R>(fn: (entries: readonly TxLogEntry[]) => { entries: TxLogEntry[] } & R): Promise<R> {
+    if (!this.vault().unlocked) throw new Error('Unlock the vault first: the transaction log is stored there, encrypted.');
+    await this.reload();
+    let result!: R;
+    let failure: unknown = null;
+    await this.enqueue(async () => {
+      try {
+        const before = new Map(this.entries.map((e) => [e.id, e]));
+        const out = fn(this.entries);
+        for (const e of out.entries) if (before.get(e.id) !== e) this.dirty.set(e.id, e);
+        this.entries = out.entries;
+        this.emit();
+        await this.save(this.vault());
+        const { entries: _ignored, ...rest } = out;
+        void _ignored;
+        result = rest as unknown as R;
+      } catch (e) {
+        failure = e;
+      }
+    });
+    if (failure) throw failure;
+    return result;
+  }
+
   /** Resolves once every queued write has been attempted (tests, before export). */
   idle(): Promise<void> {
     return this.chain;

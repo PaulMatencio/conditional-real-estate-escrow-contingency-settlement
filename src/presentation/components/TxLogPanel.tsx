@@ -1,13 +1,16 @@
 'use client';
-import { useMemo, useState, useSyncExternalStore } from 'react';
-import { ScrollText } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { CloudDownload, ScrollText } from 'lucide-react';
+import { importChainHistory } from '@/application/chainHistory';
 import { displayStatus, toCsv, type TxLogEntry } from '@/application/txLog';
 import { shortHex } from '@/domain/hex';
-import { explorerTxUrl } from '@/infrastructure/config/network';
+import { explorerTxUrl, networkConfig } from '@/infrastructure/config/network';
+import { IndexerChainHistory } from '@/infrastructure/indexer/chainHistorySource';
 import { sharedTxLog } from '@/infrastructure/storage/txLogStore';
+import { formatDust } from '@/infrastructure/wallet/dust';
 import { sharedVault } from '@/infrastructure/storage/vaultInstance';
 import { useT } from '../i18n';
-import { Badge, Card } from './ui';
+import { Alert, Badge, Card, Spinner } from './ui';
 
 const PAGE = 50;
 const isHash = (h?: string) => !!h && /^[0-9a-f]{64}$/i.test(h);
@@ -25,12 +28,43 @@ function download(name: string, text: string, type: string) {
 /**
  * The persistent transaction log (encrypted in the vault): every transaction built in this browser, newest first,
  * with its outcome. `contractAddress` scopes it to one escrow (party pages); the admin Log tab shows everything.
+ * `importAddress` (a deployed escrow) enables "Import history from chain".
  */
-export function TxLogPanel({ contractAddress, embedded = false }: { contractAddress?: string | null; embedded?: boolean }) {
+export function TxLogPanel({ contractAddress, importAddress, embedded = false }: { contractAddress?: string | null; importAddress?: string | null; embedded?: boolean }) {
   const { t } = useT();
   const log = sharedTxLog();
+  const [importing, setImporting] = useState<number | null>(null);
+  const [importMsg, setImportMsg] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const importFromChain = async () => {
+    if (!importAddress) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setImporting(0);
+    setImportMsg(null);
+    try {
+      const source = new IndexerChainHistory(networkConfig.indexer, networkConfig.indexerWS);
+      const { actions, complete } = await source.contractActions(importAddress, { signal: ac.signal, onProgress: (n) => setImporting(n) });
+      const r = await log.transform((current) => importChainHistory(current, actions, { contractAddress: importAddress, network: networkConfig.networkId }));
+      const text = t('txlog.importDone')
+        .replace('{found}', String(actions.length))
+        .replace('{added}', String(r.added))
+        .replace('{matched}', String(r.matched));
+      setImportMsg({ tone: complete ? 'ok' : 'warn', text: complete ? text : `${text} ${t('txlog.importPartial')}` });
+    } catch (e) {
+      setImportMsg({ tone: (e as Error).name === 'AbortError' ? 'warn' : 'bad', text: (e as Error).name === 'AbortError' ? t('txlog.importCancelled') : `${t('txlog.importFailed')} ${(e as Error).message}` });
+    } finally {
+      setImporting(null);
+      abortRef.current = null;
+    }
+  };
   const entries = useSyncExternalStore(log.subscribe, log.getSnapshot, () => EMPTY);
   const [scope, setScope] = useState<'contract' | 'all'>(contractAddress ? 'contract' : 'all');
+  // An escrow loaded after the panel appeared: show its transactions.
+  useEffect(() => {
+    if (contractAddress) setScope('contract');
+  }, [contractAddress]);
   const [mode, setMode] = useState<'any' | 'wallet' | 'simulator'>('any');
   const [shown, setShown] = useState(PAGE);
 
@@ -48,6 +82,35 @@ export function TxLogPanel({ contractAddress, embedded = false }: { contractAddr
     <>
       <p className="mb-3 text-sm text-slate-400">{t('txlog.hint')}</p>
       {!sharedVault().unlocked && <p className="mb-3 text-sm text-warn">{t('txlog.locked')}</p>}
+      {importAddress && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+          {importing === null ? (
+            <button type="button" className="btn-ghost" disabled={!sharedVault().unlocked} onClick={() => void importFromChain()} title={t('txlog.importHint')}>
+              <CloudDownload size={16} aria-hidden /> {t('txlog.import')}
+            </button>
+          ) : (
+            <>
+              <Spinner />
+              <span aria-live="polite">
+                {t('txlog.importing')} {importing}
+              </span>
+              <button type="button" className="btn-ghost" onClick={() => abortRef.current?.abort()}>
+                {t('keys.replaceCancel')}
+              </button>
+            </>
+          )}
+          <span className="text-xs text-slate-500">
+            {t('txlog.importFor')} <span className="mono">{shortHex(importAddress)}</span>
+          </span>
+        </div>
+      )}
+      {importMsg && (
+        <div className="mb-3">
+          <Alert tone={importMsg.tone} onClose={() => setImportMsg(null)}>
+            {importMsg.text}
+          </Alert>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         {contractAddress && (
           <select className="input !w-auto" aria-label={t('txlog.scope')} value={scope} onChange={(e) => setScope(e.target.value as 'contract' | 'all')}>
@@ -132,8 +195,20 @@ function Row({ e, session, showContract }: { e: TxLogEntry; session: string; sho
             <Badge tone="muted">{t('party.mode.simulator')}</Badge>
           </span>
         )}
+        {e.source === 'chain' && (
+          <span className="ml-1">
+            <Badge tone="muted">{t('txlog.fromChain')}</Badge>
+          </span>
+        )}
+        {e.source === 'both' && (
+          <span className="ml-1">
+            <Badge tone="ok">{t('txlog.onChain')}</Badge>
+          </span>
+        )}
       </td>
-      <td className="py-1.5 pr-3">{e.actor}</td>
+      <td className="py-1.5 pr-3" title={e.actor.includes('|') || e.actor === 'unknown' ? t('txlog.actorInferred') : undefined}>
+        {e.actor.includes('|') ? e.actor.split('|').join(' / ') + ' ?' : e.actor}
+      </td>
       {showContract && <td className="mono py-1.5 pr-3 text-slate-400">{e.contractAddress ? shortHex(e.contractAddress) : '—'}</td>}
       <td className="py-1.5 pr-3">
         <Badge tone={tone}>{t(`txlog.st.${st}`)}</Badge>
@@ -152,6 +227,7 @@ function Row({ e, session, showContract }: { e: TxLogEntry; session: string; sho
           <span className="mono text-xs text-slate-500">{e.txHash ?? '—'}</span>
         )}
         {e.blockHeight !== undefined && <div className="text-xs text-slate-500">#{e.blockHeight}</div>}
+        {e.fee && /^\d+$/.test(e.fee) && <div className="text-xs text-slate-500">{formatDust(BigInt(e.fee))}</div>}
       </td>
     </tr>
   );

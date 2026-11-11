@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ArchiveRestore, DownloadCloud } from 'lucide-react';
+import { ArchiveRestore, DownloadCloud, FolderInput } from 'lucide-react';
 import { summarize, type BackupSummary, type RestoreReport, type VaultBackup } from '@/application/vaultBackup';
 import { shortHex } from '@/domain/hex';
 import { MIN_BACKUP_PASSPHRASE, exportVault, openBackup, restoreVault, sealBackup } from '@/infrastructure/storage/vaultBackupStore';
@@ -9,7 +9,6 @@ import { useApp } from '../../providers/AppProvider';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Spinner } from '../ui';
-import { VaultGate } from '../party/PartySetup';
 import { FilePick, downloadJson, readJsonFile } from '../party/helpers';
 
 const LAST_BACKUP = 'escrow:vault:lastBackupAt';
@@ -35,6 +34,7 @@ function Summary({ s }: { s: BackupSummary }) {
           <li key={c.address} className="flex flex-wrap items-center gap-1.5">
             <span className="mono text-slate-300">{shortHex(c.address)}</span>
             {c.terms && <Badge tone="accent">{t('vaultBackup.terms')}</Badge>}
+            {c.custody && <Badge tone="accent">{t('custody.badge')}</Badge>}
             {c.roleKeys.map((r) => (
               <Badge key={r} tone="muted">{r}</Badge>
             ))}
@@ -51,13 +51,125 @@ function Summary({ s }: { s: BackupSummary }) {
 }
 
 /**
+ * No vault on this address yet (e.g. the dApp moved from localhost:3000 to admin.localhost:3000: every address has its
+ * own browser storage). Instead of starting empty, create the vault FROM a backup: decrypt and preview it first, then
+ * choose the new vault's passphrase; the vault is created and the backup merged into it in one step. The backup's
+ * envelope key replaces the one generated for the empty vault, so terms envelopes sent to it still open.
+ */
+function RestoreIntoNewVault() {
+  const { t } = useT();
+  const { contractAddress, loadContract } = useApp();
+  const { unlockVault, reloadVault } = useEscrow();
+  const [file, setFile] = useState<{ name: string; data: unknown } | null>(null);
+  const [bpass, setBpass] = useState('');
+  const [opened, setOpened] = useState<VaultBackup | null>(null);
+  const [vpass, setVpass] = useState('');
+  const [vpass2, setVpass2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
+
+  const decrypt = async () => {
+    setMsg(null);
+    if (!file) return;
+    setBusy(true);
+    try {
+      setOpened(await openBackup(file.data, bpass));
+    } catch (e) {
+      setOpened(null);
+      setMsg({ tone: 'bad', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAndRestore = async () => {
+    setMsg(null);
+    if (!opened) return;
+    if (vpass.length < 8) return setMsg({ tone: 'bad', text: t('vault.tooShort') });
+    if (vpass !== vpass2) return setMsg({ tone: 'bad', text: t('vaultBackup.passMismatch') });
+    setBusy(true);
+    try {
+      const problem = await unlockVault(vpass); // creates the (empty) vault on this address
+      if (problem) throw new Error(problem);
+      await restoreVault(sharedVault(), opened);
+      if (!contractAddress && opened.admin?.contractAddress) await loadContract(opened.admin.contractAddress);
+      await reloadVault(); // re-reads the restored envelope key and admin key
+      setOpened(null);
+      setFile(null);
+      setBpass('');
+      setVpass('');
+      setVpass2('');
+    } catch (e) {
+      setMsg({ tone: 'bad', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title={t('vaultBackup.newTitle')} icon={<FolderInput size={16} aria-hidden />}>
+      <p className="mb-3 text-sm text-slate-400">
+        {t('vaultBackup.newHint').replace('{origin}', typeof location !== 'undefined' ? location.origin : '')}
+      </p>
+      {msg && (
+        <div className="mb-3">
+          <Alert tone={msg.tone} onClose={() => setMsg(null)}>
+            {msg.text}
+          </Alert>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <FilePick
+          label={t('vaultBackup.choose')}
+          accept="application/json,.json"
+          onFile={(f) =>
+            void readJsonFile(f).then(
+              (data) => (setFile({ name: f.name, data }), setOpened(null), setMsg(null)),
+              () => setMsg({ tone: 'bad', text: t('vaultBackup.badFile') })
+            )
+          }
+        />
+        {file && <span className="text-sm text-slate-300">{file.name}</span>}
+      </div>
+      {file && !opened && (
+        <div className="mt-3 flex gap-2">
+          <input type="password" className="input" placeholder={t('vaultBackup.pass')} aria-label={t('vaultBackup.pass')} value={bpass} onChange={(e) => setBpass(e.target.value)} />
+          <button type="button" className="btn-ghost" disabled={busy || !bpass} onClick={() => void decrypt()}>
+            {busy ? <Spinner /> : null} {t('vaultBackup.decrypt')}
+          </button>
+        </div>
+      )}
+      {opened && (
+        <div className="mt-3 space-y-3">
+          <p className="text-sm text-slate-300">
+            {t('vaultBackup.createdAt')}: {new Date(opened.createdAt).toLocaleString()}
+          </p>
+          <Summary s={summarize(opened)} />
+          <div className="grid gap-x-4 sm:grid-cols-2">
+            <Field label={t('vaultBackup.newPass')} htmlFor="nv-pass" hint={t('vaultBackup.newPassHint')}>
+              <input id="nv-pass" type="password" className="input" value={vpass} onChange={(e) => setVpass(e.target.value)} autoComplete="new-password" />
+            </Field>
+            <Field label={t('vaultBackup.newPass2')} htmlFor="nv-pass2">
+              <input id="nv-pass2" type="password" className="input" value={vpass2} onChange={(e) => setVpass2(e.target.value)} autoComplete="new-password" />
+            </Field>
+          </div>
+          <button type="button" className="btn-primary" disabled={busy || !vpass || !vpass2} onClick={() => void createAndRestore()}>
+            {busy ? <Spinner /> : <ArchiveRestore size={16} aria-hidden />} {t('vaultBackup.newRestore')}
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
  * Vault backup / restore (admin page). Backup: every vault record (all escrows, the envelope identity) and optionally
  * the admin secret key, sealed with a separate backup passphrase. Restore: decrypt, preview, then merge — never deletes.
  */
 export function VaultTab() {
   const { t } = useT();
   const { adminKey, contractAddress, loadContract } = useApp();
-  const { vaultUnlocked, reloadVault } = useEscrow();
+  const { vaultUnlocked, vaultExists, reloadVault } = useEscrow();
   const [current, setCurrent] = useState<BackupSummary | null>(null);
   const [includeAdmin, setIncludeAdmin] = useState(true);
   const [pass, setPass] = useState('');
@@ -138,7 +250,9 @@ export function VaultTab() {
 
   return (
     <div className="space-y-4">
-      <VaultGate />
+      {/* The vault is created / unlocked with the card at the top of the admin page; here only when none exists yet. */}
+      {vaultExists === false && <RestoreIntoNewVault />}
+      {vaultExists && !vaultUnlocked && <Alert tone="warn">{t('vaultBackup.unlockFirst')}</Alert>}
       {msg && <Alert tone={msg.tone} onClose={() => setMsg(null)}>{msg.text}</Alert>}
       {vaultUnlocked && (
         <>

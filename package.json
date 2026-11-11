@@ -31,6 +31,7 @@
     "@midnightntwrk/onchain-runtime-v4": "4.0.0",
     "@midnightntwrk/wallet-sdk-address-format": "4.0.0",
     "clsx": "^2.1.1",
+    "graphql-ws": "6.4.1",
     "lucide-react": "^0.475.0",
     "next": "^15.2.0",
     "react": "^19.0.0",

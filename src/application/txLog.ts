@@ -31,6 +31,10 @@ export interface TxLogEntry {
   txHash?: string;
   blockHeight?: number;
   error?: string;
+  /** Where the entry comes from: built in this browser (default), imported from the chain, or both (matched). */
+  source?: 'local' | 'chain' | 'both';
+  /** Fee paid, as reported by the indexer (chain imports). */
+  fee?: string;
 }
 
 export type TxLogStart = Pick<TxLogEntry, 'mode' | 'network' | 'contractAddress' | 'actor' | 'action' | 'circuits'>;
@@ -103,7 +107,7 @@ export async function withTxLog<T extends { txId?: string; txHash?: string; bloc
   }
 }
 
-const CSV_COLUMNS = ['at', 'updatedAt', 'status', 'mode', 'network', 'actor', 'action', 'circuits', 'contractAddress', 'txId', 'txHash', 'blockHeight', 'error'] as const;
+const CSV_COLUMNS = ['at', 'updatedAt', 'status', 'source', 'mode', 'network', 'actor', 'action', 'circuits', 'contractAddress', 'txId', 'txHash', 'blockHeight', 'fee', 'error'] as const;
 
 /** RFC 4180 CSV (ISO dates), for a spreadsheet or an auditor. */
 export function toCsv(entries: readonly TxLogEntry[], currentSession: string): string {
@@ -116,6 +120,7 @@ export function toCsv(entries: readonly TxLogEntry[], currentSession: string): s
       if (c === 'at' || c === 'updatedAt') return cell(new Date(e[c]).toISOString());
       if (c === 'status') return cell(displayStatus(e, currentSession));
       if (c === 'circuits') return cell(e.circuits?.join(' '));
+      if (c === 'source') return cell(e.source ?? 'local');
       return cell(e[c]);
     }).join(',')
   );

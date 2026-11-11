@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { FlaskConical, KeyRound, Lock, Radio, Unlock, WalletCards } from 'lucide-react';
 import { isHex32, bytesToHex } from '@/domain/hex';
 import { ROLE_SLUG, rolesOf, type PartyRole } from '@/domain/roles';
@@ -11,6 +11,7 @@ import { useT } from '../../i18n';
 import type { MessageKey } from '../../i18n/en';
 import { Alert, Badge, Card, Field, Mono, Spinner } from '../ui';
 import { TypedConfirmDialog, fmtTime } from './helpers';
+import { insecureContextMessage } from '@/infrastructure/crypto/aead';
 
 /** FR-WALLET-04: Wallet Mode ⇄ Simulator Mode, the escrow address and the simulator controls. */
 export function ModeBar() {
@@ -96,9 +97,14 @@ export function ModeBar() {
 }
 
 /** Unlock (or create) the encrypted vault that holds role keys, terms and attestations (NFR-06). */
-export function VaultGate() {
+/** `whenMissing`: shown under the form when this address has no vault yet (e.g. the admin's "restore from a backup"). */
+export function VaultGate({ whenMissing }: { whenMissing?: ReactNode } = {}) {
   const { t } = useT();
   const { vaultExists, vaultUnlocked, unlockVault, lockVault } = useEscrow();
+  // Not https / localhost: the browser hides WebCrypto, so no vault can be created or opened here. Checked after
+  // mount (the server always has WebCrypto, so computing it while rendering would mismatch on hydration).
+  const [insecure, setInsecure] = useState(false);
+  useEffect(() => setInsecure(insecureContextMessage() !== null), []);
   const [pass, setPass] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -126,6 +132,12 @@ export function VaultGate() {
   return (
     <Card title={vaultExists ? t('vault.unlock') : t('vault.create')} icon={<Lock size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('vault.hint')}</p>
+      {vaultExists === false && whenMissing && <div className="mb-3">{whenMissing}</div>}
+      {insecure && (
+        <div className="mb-3">
+          <Alert tone="bad">{t('vault.insecure').replace('{origin}', typeof location !== 'undefined' ? location.origin : '')}</Alert>
+        </div>
+      )}
       <form
         className="flex gap-2"
         onSubmit={(e) => {

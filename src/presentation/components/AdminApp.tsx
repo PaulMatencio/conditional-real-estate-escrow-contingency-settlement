@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Archive, Building2, FileLock2, KeyRound, ListChecks, Rocket, ScrollText } from 'lucide-react';
 import { EscrowStatus } from '@/infrastructure/contract/module';
 import { contractConfig } from '@/infrastructure/config/network';
@@ -30,9 +30,26 @@ const TABS: { id: Tab; icon: typeof Rocket }[] = [
 
 export function AdminApp() {
   const { t } = useT();
-  const { connector, error, clearError, progress } = useApp();
+  const { connector, error, clearError, progress, contractAddress } = useApp();
   const [tab, setTab] = useState<Tab>('deploy');
+  // Tabs stay mounted once opened (hidden when inactive), so what was typed in a tab is still there when you come back.
+  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set<Tab>(['deploy']));
+  const open = (id: Tab) => {
+    setTab(id);
+    setVisited((v) => (v.has(id) ? v : new Set(v).add(id)));
+  };
+  // Typed secrets (key imports, passphrases) must not outlive the vault session: locking the vault clears every tab.
+  const { vaultUnlocked } = useEscrow();
   const connected = connector.status === 'connected';
+  const PANELS: Record<Tab, () => ReactNode> = {
+    deploy: () => <DeployTab />,
+    contract: () => <ContractTab />,
+    initialize: () => <InitializeTab />,
+    terms: () => <TermsKycTab />,
+    keys: () => <KeysTab />,
+    vault: () => <VaultTab />,
+    log: () => <TxLogPanel importAddress={contractAddress} />
+  };
 
   return (
     <main id="main" className="mx-auto max-w-6xl space-y-4 px-4 py-6">
@@ -40,24 +57,33 @@ export function AdminApp() {
         <h1 className="text-2xl font-semibold text-white">{t('admin.title')}</h1>
         <p className="text-sm text-slate-400">{t('admin.subtitle')}</p>
       </div>
-      <VaultGate />
+      <VaultGate
+        whenMissing={
+          <Alert tone="warn">
+            {t('vaultBackup.movedHint')}{' '}
+            <button type="button" className="btn-ghost !py-1" onClick={() => open('vault')}>
+              {t('vaultBackup.newTitle')}
+            </button>
+          </Alert>
+        }
+      />
       {!connected && <Alert tone="warn">{t('admin.needWallet')}</Alert>}
       {error && <Alert tone="bad" onClose={clearError}>{error}</Alert>}
       <div role="tablist" aria-label={t('admin.title')} className="flex flex-wrap gap-2">
         {TABS.map(({ id, icon: Icon }) => (
-          <button key={id} role="tab" aria-selected={tab === id} type="button" className={tab === id ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab(id)}>
+          <button key={id} id={`admin-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`admin-panel-${id}`} type="button" className={tab === id ? 'btn-primary' : 'btn-ghost'} onClick={() => open(id)}>
             <Icon size={16} aria-hidden /> {t(`admin.tab.${id}`)}
           </button>
         ))}
       </div>
       {progress && <ProgressPanel progress={progress} />}
-      {tab === 'deploy' && <DeployTab />}
-      {tab === 'contract' && <ContractTab />}
-      {tab === 'initialize' && <InitializeTab />}
-      {tab === 'terms' && <TermsKycTab />}
-      {tab === 'keys' && <KeysTab />}
-      {tab === 'vault' && <VaultTab />}
-      {tab === 'log' && <TxLogPanel />}
+      <div key={vaultUnlocked ? 'unlocked' : 'locked'}>
+        {TABS.filter(({ id }) => visited.has(id)).map(({ id }) => (
+          <div key={id} id={`admin-panel-${id}`} role="tabpanel" aria-labelledby={`admin-tab-${id}`} hidden={tab !== id} className="space-y-4">
+            {PANELS[id]()}
+          </div>
+        ))}
+      </div>
     </main>
   );
 }
