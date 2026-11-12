@@ -9,13 +9,29 @@ import { isSealedJson, openWithPassphrase, sealWithPassphrase, type SealedJson }
 
 export const MIN_BACKUP_PASSPHRASE = 12;
 
-/** Every vault record. `includeAdminKey: false` leaves out the admin secret key record. */
-export async function exportVault(vault: Vault, opts: { includeAdminKey?: boolean; contractAddress?: string } = {}): Promise<VaultBackup> {
+/**
+ * Who a backup or restore is for. 'admin' (admin page): everything. 'party' (party and notary pages): never the admin
+ * secret key nor contract maintenance-authority keys — those belong on the admin page only, and a party's backup file
+ * should not be able to change the contract's rules if it leaks.
+ */
+export type BackupScope = 'admin' | 'party';
+
+/** Removes the contract authority key (and its history) from an escrow record. */
+function withoutAuthorityKeys(r: VaultRecord): VaultRecord {
+  const { authorityKey: _k, authorityKeyHistory: _h, ...rest } = r;
+  return rest;
+}
+const holdsAuthorityKey = (r: VaultRecord) => !!r.authorityKey || !!r.authorityKeyHistory?.length;
+
+/** Every vault record. `includeAdminKey: false` leaves out the admin secret key record; scope 'party' also drops authority keys. */
+export async function exportVault(vault: Vault, opts: { includeAdminKey?: boolean; contractAddress?: string; scope?: BackupScope } = {}): Promise<VaultBackup> {
   if (!vault.unlocked) throw new Error('Unlock the vault first.');
+  const party = opts.scope === 'party';
   const records: Record<string, VaultRecord> = {};
   for (const id of await vault.contracts()) {
-    if (id === ADMIN_RECORD && opts.includeAdminKey === false) continue;
-    records[id] = await vault.load(id);
+    if (id === ADMIN_RECORD && (party || opts.includeAdminKey === false)) continue;
+    const r = await vault.load(id);
+    records[id] = party ? withoutAuthorityKeys(r) : r;
   }
   return { format: BACKUP_FORMAT, createdAt: new Date().toISOString(), records, admin: opts.contractAddress ? { contractAddress: opts.contractAddress } : undefined };
 }
@@ -33,8 +49,20 @@ export async function openBackup(file: unknown, passphrase: string): Promise<Vau
 }
 
 /** Merges a backup into the unlocked vault (records re-encrypted with the current vault key). Never deletes. */
-export async function restoreVault(vault: Vault, backup: VaultBackup): Promise<RestoreReport> {
+export async function restoreVault(vault: Vault, backup: VaultBackup, opts: { scope?: BackupScope } = {}): Promise<RestoreReport> {
   if (!vault.unlocked) throw new Error('Unlock the vault first.');
+  if (opts.scope === 'party') {
+    // Party / notary page: admin material in the file is left out (and reported), everything else is merged as usual.
+    const records: Record<string, VaultRecord> = {};
+    let skipped = !!backup.records[ADMIN_RECORD] || !!backup.admin?.secretKey;
+    for (const [id, r] of Object.entries(backup.records)) {
+      if (id === ADMIN_RECORD) continue;
+      if (holdsAuthorityKey(r)) skipped = true;
+      records[id] = withoutAuthorityKeys(r);
+    }
+    const report = await restoreVault(vault, { ...backup, records, admin: undefined });
+    return { ...report, adminSkipped: skipped };
+  }
   const existing = new Set(await vault.contracts());
   const report: RestoreReport = { contractsAdded: [], contractsMerged: [], added: [], conflicts: [], identity: null, admin: null, txLogAdded: 0 };
   for (const [id, incoming] of Object.entries(backup.records)) {

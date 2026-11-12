@@ -15,6 +15,7 @@ import { StatusOverview } from './StatusOverview';
 import { TermsPanel } from './TermsPanel';
 import { TimelinePanel } from './TimelinePanel';
 import { TxLogPanel } from '../TxLogPanel';
+import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 
 /**
  * One page per role (plan.md, primary goal 2). Same shell everywhere — mode, vault, role key, status, actions,
@@ -22,7 +23,7 @@ import { TxLogPanel } from '../TxLogPanel';
  */
 export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'admin'> }) {
   const { t } = useT();
-  const { view, now, error, setError, vaultUnlocked, contractAddress, mode } = useEscrow();
+  const { view, now, error, setError, vaultUnlocked, contractAddress, setContractAddress, mode } = useEscrow();
   const { progress } = useApp();
   const [role, setRole] = useState<PartyRole>(initial);
 
@@ -34,7 +35,15 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           <p className="text-sm text-slate-400">{t(`page.${initial}.subtitle` as MessageKey)}</p>
         </div>
       </div>
-      <VaultGate />
+      <VaultGate whenMissing={<Alert tone="warn">{t('vaultBackup.orRestore')}</Alert>} />
+      <VaultBackupSection
+        contractAddress={contractAddress}
+        onRestored={async (b) => {
+          // A backup of a single escrow on a page with none loaded: open it.
+          const ids = backupEscrows(b);
+          if (!contractAddress && ids.length === 1) await setContractAddress(ids[0]);
+        }}
+      />
       <ModeBar />
       {error && (
         <Alert tone="bad" onClose={() => setError(null)}>

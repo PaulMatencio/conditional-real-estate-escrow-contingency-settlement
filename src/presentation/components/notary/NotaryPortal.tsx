@@ -17,6 +17,7 @@ import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
 import { StatusOverview } from '../party/StatusOverview';
 import { CustodianCard } from './CustodianCard';
+import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 import { FilePick, downloadJson, readFileBytes, readJsonFile } from '../party/helpers';
 
 type Verdict = { label: string; ok: boolean; detail: string };
@@ -173,6 +174,14 @@ export function NotaryPortal({ address }: { address?: string }) {
           <StatusOverview view={view} now={now} />
         </div>
       )}
+      <VaultBackupSection
+        contractAddress={address ?? null}
+        onRestored={async (b) => {
+          // Custodian restoring on a fresh address: open the escrow whose terms it holds, if there is just one.
+          const ids = backupEscrows(b).filter((id) => !!b.records[id].custody);
+          if (!address && ids.length === 1) router.push(`/verify/${ids[0]}`);
+        }}
+      />
     </main>
   );
 }

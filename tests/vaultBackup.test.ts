@@ -105,3 +105,27 @@ describe('admin key in backups', () => {
     expect(kept.note).toMatch(/kept the current one/);
   });
 });
+
+describe('party / notary scope', () => {
+  it('never exports or restores admin material from a party page, keeps everything else', async () => {
+    const src = await vaultWith();
+    await src.save(A, { roleKeys: { seller: hex(2) }, authorityKey: hex(3), authorityKeyHistory: [{ key: hex(4), replacedAt: 1 }] });
+    await src.save(ADMIN_RECORD, { adminKey: hex(9) });
+    const party = await exportVault(src, { scope: 'party', includeAdminKey: true });
+    expect(party.records[ADMIN_RECORD]).toBeUndefined();
+    expect(party.records[A]).toEqual({ roleKeys: { seller: hex(2) } });
+
+    // An admin backup restored on a party page: role keys in, admin and authority keys out (and reported).
+    const full = await exportVault(src, { contractAddress: A });
+    const dst = await vaultWith('party-pass-1');
+    const r = await restoreVault(dst, full, { scope: 'party' });
+    expect(r.adminSkipped).toBe(true);
+    expect(r.admin).toBeNull();
+    expect(await dst.load(A)).toEqual({ roleKeys: { seller: hex(2) } });
+    expect(await dst.contracts()).not.toContain(ADMIN_RECORD);
+
+    // A party backup restores without the warning.
+    const again = await restoreVault(await vaultWith('party-pass-2'), party, { scope: 'party' });
+    expect(again.adminSkipped).toBe(false);
+  });
+});

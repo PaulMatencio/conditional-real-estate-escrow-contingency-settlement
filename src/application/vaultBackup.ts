@@ -187,4 +187,6 @@ export interface RestoreReport {
   admin: string | null;
   /** Transaction-log entries added from the backup. */
   txLogAdded: number;
+  /** Party/notary restore: the file held admin keys (admin secret key, contract authority keys) that were not restored. */
+  adminSkipped?: boolean;
 }
