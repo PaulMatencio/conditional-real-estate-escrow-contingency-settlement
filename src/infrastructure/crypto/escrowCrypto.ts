@@ -93,6 +93,11 @@ export function topUpCoinOf(contractAddress: string, escrowColorHex: string, t: 
   };
 }
 
+/** v2: the coin a payout of any held coin (vault, loan or top-up) creates for its recipient. */
+export function payoutOfCoin(coin: { nonce: Uint8Array; color: Uint8Array; value: bigint }): { nonce: string; color: string; value: string } {
+  return { nonce: bytesToHex(pureCircuits.payoutNonceOf(coin.nonce)), color: bytesToHex(coin.color), value: coin.value.toString() };
+}
+
 /** FR-SETTLE-03: the coin a payout creates for its recipient. */
 export function payoutCoinOf(contractAddress: string, escrowColorHex: string, t: WirePrivateTerms): { nonce: string; color: string; value: string } {
   const v = vaultCoinOf(contractAddress, escrowColorHex, t);

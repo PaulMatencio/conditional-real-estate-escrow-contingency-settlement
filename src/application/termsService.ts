@@ -7,6 +7,7 @@ import type { EscrowView } from '@/domain/escrowView';
 import {
   COMMITMENT_KEYS,
   LENDER_COMMITMENT_KEYS,
+  type LENDER_OPENING_KINDS,
   norm,
   validateTerms,
   type AttestationBundle,
@@ -144,19 +145,64 @@ export function assertTermsMatch(crypto: TermsCrypto, pkg: TermsPackage | undefi
 /** FR-TERMS-05: a single opening for a third party (notary, auditor) without the rest of the package. */
 export function selectiveOpening(pkg: TermsPackage, kind: Opening['kind']): Opening {
   const base = { format: 'EscrowOpeningV1' as const, contractAddress: pkg.contractAddress };
-  if (kind === 'amount') return { ...base, kind, amount: pkg.terms.amount, salt: pkg.terms.amountSalt, ticker: pkg.escrowTicker };
-  return kind === 'buyerPayout' ? { ...base, kind, key: pkg.terms.buyerPayout, salt: pkg.terms.buyerSalt } : { ...base, kind, key: pkg.terms.sellerPayout, salt: pkg.terms.sellerSalt };
+  const t = pkg.terms;
+  switch (kind) {
+    case 'amount':
+      return { ...base, kind, amount: t.amount, salt: t.amountSalt, ticker: pkg.escrowTicker };
+    case 'price':
+      return { ...base, kind, amount: t.price, salt: t.priceSalt, ticker: pkg.escrowTicker };
+    case 'lenderShare':
+      return { ...base, kind, amount: t.lenderShare, salt: t.lenderShareSalt, ticker: pkg.escrowTicker };
+    case 'loanTerms':
+      return { ...base, kind, refundOnLoss: t.refundOnLoss, salt: t.loanTermsSalt };
+    case 'buyerPayout':
+      return { ...base, kind, key: t.buyerPayout, salt: t.buyerSalt };
+    case 'sellerPayout':
+      return { ...base, kind, key: t.sellerPayout, salt: t.sellerSalt };
+    case 'lenderPayout':
+      return { ...base, kind, key: t.lenderPayout, salt: t.lenderPayoutSalt };
+  }
 }
+
+/** v2: an opening the lender can hand over from its own package (price, loan amount, refund term, its key). */
+export function lenderOpening(pkg: LenderPackage, kind: (typeof LENDER_OPENING_KINDS)[number]): Opening {
+  const base = { format: 'EscrowOpeningV1' as const, contractAddress: pkg.contractAddress };
+  if (kind === 'price') return { ...base, kind, amount: pkg.price, salt: pkg.priceSalt, ticker: pkg.escrowTicker };
+  if (kind === 'lenderShare') return { ...base, kind, amount: pkg.lenderShare, salt: pkg.lenderShareSalt, ticker: pkg.escrowTicker };
+  if (kind === 'loanTerms') return { ...base, kind, refundOnLoss: pkg.refundOnLoss, salt: pkg.loanTermsSalt };
+  return { ...base, kind, key: pkg.lenderPayout, salt: pkg.lenderPayoutSalt };
+}
+
+const OPENING_LABEL: Record<Opening['kind'], string> = {
+  price: 'Total price',
+  amount: 'Buyer deposit',
+  lenderShare: 'Loan amount',
+  loanTerms: 'Loan refusal refund term',
+  buyerPayout: 'Buyer payout key',
+  sellerPayout: 'Seller payout key',
+  lenderPayout: 'Lender payout key'
+};
+export const openingLabel = (k: Opening['kind']): string => OPENING_LABEL[k];
 
 /** FR-NOTARY-02: verify an opening locally against the ledger commitment. */
 export function verifyOpening(crypto: TermsCrypto, o: Opening, view: EscrowView): { ok: boolean; detail: string } {
-  if (o.kind === 'amount') {
-    const c = crypto.amountCommitment(BigInt(o.amount), o.salt);
-    return c === view.commitments.amount ? { ok: true, detail: `Price verified: ${o.amount} ${view.escrowTicker}` } : { ok: false, detail: 'The amount opening does not match amountCommitment.' };
+  const label = OPENING_LABEL[o.kind];
+  const result = (local: string, onchain: string | null, detail: string) =>
+    onchain !== null && local === onchain ? { ok: true, detail } : { ok: false, detail: `The ${label.toLowerCase()} opening does not match ${o.kind}Commitment.` };
+  switch (o.kind) {
+    case 'amount':
+      return result(crypto.amountCommitment(BigInt(o.amount), o.salt), view.commitments.amount, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+    case 'price':
+      return result(crypto.priceCommitment(BigInt(o.amount), o.salt), view.commitments.price, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+    case 'lenderShare':
+      return result(crypto.lenderShareCommitment(BigInt(o.amount), o.salt), view.commitments.lenderShare, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+    case 'loanTerms':
+      return result(crypto.loanTermsCommitment(o.refundOnLoss, o.salt), view.commitments.loanTerms, `${label} verified: ${o.refundOnLoss ? 'on (a refused loan refunds the buyer)' : 'off (a refused loan can forfeit the buyer deposit)'}`);
+    default: {
+      const onchain = o.kind === 'buyerPayout' ? view.commitments.buyerPayout : o.kind === 'sellerPayout' ? view.commitments.sellerPayout : view.commitments.lenderPayout;
+      return result(crypto.payoutCommitment(o.key, o.salt), onchain, `${label} verified`);
+    }
   }
-  const onchain = o.kind === 'buyerPayout' ? view.commitments.buyerPayout : view.commitments.sellerPayout;
-  const c = crypto.payoutCommitment(o.key, o.salt);
-  return c === onchain ? { ok: true, detail: `${o.kind === 'buyerPayout' ? 'Buyer' : 'Seller'} payout key verified` } : { ok: false, detail: `The opening does not match ${o.kind}Commitment.` };
 }
 
 // ------------------------------------------------------------------------ KYC pre-check (FR-KYC-01)

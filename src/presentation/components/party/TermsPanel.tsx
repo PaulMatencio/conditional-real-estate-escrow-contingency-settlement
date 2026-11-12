@@ -2,13 +2,14 @@
 import { useState } from 'react';
 import { FileLock2 } from 'lucide-react';
 import { checkTermsAgainstLedger, selectiveOpening } from '@/application/termsService';
-import { TERMS_V1_MESSAGE, isLenderPackage, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
+import { COMMITMENT_KEYS, TERMS_V1_MESSAGE, isLenderPackage, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { FilePick, TypedConfirmDialog, downloadJson, readJsonFile } from './helpers';
+import { OpeningButtons, TermsAmounts, openingKindsFor } from '../OpeningButtons';
 
 /**
  * Private Terms Vault for one party (FR-TERMS-03..06): import the package (plain, passphrase-sealed or an X25519
@@ -67,7 +68,7 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
           {check && (
             <div className="flex flex-wrap items-center gap-2 text-sm" aria-live="polite">
               <span className="text-slate-400">{t('terms.check')}:</span>
-              {(['amount', 'buyerPayout', 'sellerPayout'] as const).map((k) => (
+              {COMMITMENT_KEYS.map((k) => (
                 <Badge key={k} tone={check[k] === 'match' ? 'ok' : check[k] === 'unset' ? 'muted' : 'bad'}>
                   {k}: {check[k]}
                 </Badge>
@@ -75,20 +76,11 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
             </div>
           )}
           {check && !check.ok && check.amount !== 'unset' && <Alert tone="bad">TERMS_COMMITMENT_MISMATCH — {t('terms.mismatch')}</Alert>}
-          <p className="text-sm text-slate-300">
-            {t('terms.amount')}: <strong>{pkg.terms.amount}</strong> {pkg.escrowTicker ?? view?.escrowTicker} · {t('terms.vaultIndex')}: {pkg.vaultIndex ?? '—'}
+          <TermsAmounts terms={pkg.terms} ticker={pkg.escrowTicker ?? view?.escrowTicker} />
+          <p className="text-sm text-slate-400">
+            {t('terms.vaultIndex')}: {pkg.vaultIndex ?? '—'}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-ghost" onClick={() => downloadJson('opening-amount.json', selectiveOpening(pkg, 'amount'))}>
-              {t('terms.openingAmount')}
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => downloadJson('opening-buyer-payout.json', selectiveOpening(pkg, 'buyerPayout'))}>
-              {t('terms.openingBuyer')}
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => downloadJson('opening-seller-payout.json', selectiveOpening(pkg, 'sellerPayout'))}>
-              {t('terms.openingSeller')}
-            </button>
-          </div>
+          <OpeningButtons kinds={openingKindsFor(pkg.terms)} make={(k) => selectiveOpening(pkg, k)} />
           {canBackup && (
             <div className="flex flex-wrap items-center gap-2">
               <button

@@ -1,16 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { HandCoins, Landmark } from 'lucide-react';
-import { checkLenderPackage } from '@/application/termsService';
-import { LENDER_COMMITMENT_KEYS, isLenderPackage, isTermsPackage, type LenderPackage } from '@/domain/terms';
+import { checkLenderPackage, lenderOpening } from '@/application/termsService';
+import { LENDER_COMMITMENT_KEYS, LENDER_OPENING_KINDS, isLenderPackage, isTermsPackage, type LenderPackage } from '@/domain/terms';
 import { availableActions, type PartyCircuit } from '@/domain/lifecycle';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase } from '@/infrastructure/crypto/aead';
-import { documentCommitment, newSalt } from '@/infrastructure/crypto/escrowCrypto';
+import { documentCommitment, loanCoinOf, newSalt, payoutOfCoin } from '@/infrastructure/crypto/escrowCrypto';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono, Spinner, Stat } from '../ui';
-import { ConfirmDialog, Countdown, FilePick, TypedConfirmDialog, fmtTime, readFileBytes, readJsonFile } from './helpers';
+import { ConfirmDialog, Countdown, FilePick, TypedConfirmDialog, downloadJson, fmtTime, readFileBytes, readJsonFile } from './helpers';
+import { OpeningButtons } from '../OpeningButtons';
 
 /**
  * Lender page, contract v2 (loan mode). The lender receives only its part of the terms (the lender package: price,
@@ -104,6 +105,10 @@ export function LenderTermsCard() {
             </div>
           )}
           {check && !check.ok && <Alert tone="bad">TERMS_COMMITMENT_MISMATCH — {t('lender.mismatch')}</Alert>}
+          <div>
+            <span className="label">{t('custody.openings')}</span>
+            <OpeningButtons kinds={LENDER_OPENING_KINDS} make={(k) => lenderOpening(pkg, k as (typeof LENDER_OPENING_KINDS)[number])} />
+          </div>
           <button type="button" className="btn-danger" onClick={() => setRemove(true)}>
             {t('lender.remove')}
           </button>
@@ -229,6 +234,27 @@ export function LoanCard() {
       )}
       {f.loanHeld && !f.secondCoinPaid && view.status === 'ContingenciesPending' && <div className="mt-2">{button('withdrawLoan', true)}</div>}
       {f.loanHeld && !f.secondCoinPaid && (view.status === 'Refunded' || view.status === 'Expired') && <div className="mt-2">{button('refundLender', false)}</div>}
+      {pkg && view.contractAddress && (f.loanWithdrawn || (f.loanHeld && f.secondCoinPaid)) && (
+        <div className="mt-3 space-y-2 text-sm">
+          <p className="text-slate-400">{t(f.loanWithdrawn ? 'lender.repaidWithdrawn' : 'lender.repaidMaybe')}</p>
+          {(() => {
+            const coin = payoutOfCoin(loanCoinOf(view.contractAddress, view.escrowColor, pkg));
+            return (
+              <>
+                <Field label="nonce">
+                  <Mono value={coin.nonce} />
+                </Field>
+                <p className="text-slate-300">
+                  value {coin.value} {ticker} · {t('settle.to')} <span className="mono">{pkg.lenderPayout.slice(0, 12)}…</span>
+                </p>
+                <button type="button" className="btn-ghost" onClick={() => downloadJson('loan-repayment-coin.json', { ...coin, recipient: pkg.lenderPayout, contractAddress: view.contractAddress })}>
+                  {t('settle.exportCoin')}
+                </button>
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {pending && (
         <ConfirmDialog

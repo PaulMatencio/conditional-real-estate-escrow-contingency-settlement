@@ -4,7 +4,8 @@ import { Archive } from 'lucide-react';
 import { checkTermsAgainstLedger, selectiveOpening } from '@/application/termsService';
 import type { VaultRecord } from '@/application/partyPorts';
 import type { EscrowView } from '@/domain/escrowView';
-import { isTermsPackage, type Opening, type TermsPackage } from '@/domain/terms';
+import { COMMITMENT_KEYS, isTermsPackage, type Opening, type TermsPackage } from '@/domain/terms';
+import { OpeningButtons, TermsAmounts, openingKindsFor } from '../OpeningButtons';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { MIN_BACKUP_PASSPHRASE } from '@/infrastructure/storage/vaultBackupStore';
@@ -133,15 +134,13 @@ export function CustodianCard({ view, onOpening }: { view: EscrowView; onOpening
                   {new Date(custody.receivedAt).toLocaleString()} · {custody.fileName}
                 </span>
                 {check &&
-                  (['amount', 'buyerPayout', 'sellerPayout'] as const).map((k) => (
+                  COMMITMENT_KEYS.map((k) => (
                     <Badge key={k} tone={check[k] === 'match' ? 'ok' : check[k] === 'unset' ? 'muted' : 'bad'}>
                       {k}: {check[k]}
                     </Badge>
                   ))}
               </div>
-              <p className="text-sm text-slate-300">
-                {t('terms.amount')}: <strong>{custody.terms.terms.amount}</strong> {view.escrowTicker}
-              </p>
+              <TermsAmounts terms={custody.terms.terms} ticker={view.escrowTicker} />
 
               <Field label={t('custody.handOut')} hint={t('custody.handOutHint')} htmlFor="custody-to-key">
                 <div className="flex flex-wrap gap-2">
@@ -161,18 +160,16 @@ export function CustodianCard({ view, onOpening }: { view: EscrowView; onOpening
 
               <div>
                 <span className="label">{t('custody.openings')}</span>
-                <div className="flex flex-wrap gap-2">
-                  {(['amount', 'buyerPayout', 'sellerPayout'] as const).map((k) => (
-                    <button key={k} type="button" className="btn-ghost" onClick={() => downloadJson(`opening-${k}.json`, selectiveOpening(custody.terms, k))}>
-                      {t(k === 'amount' ? 'terms.openingAmount' : k === 'buyerPayout' ? 'terms.openingBuyer' : 'terms.openingSeller')}
-                    </button>
-                  ))}
-                  {onOpening && (
-                    <button type="button" className="btn-primary" onClick={() => onOpening(selectiveOpening(custody.terms, 'amount'))}>
-                      {t('custody.verifyPrice')}
-                    </button>
-                  )}
-                </div>
+                <OpeningButtons kinds={openingKindsFor(custody.terms.terms)} make={(k) => selectiveOpening(custody.terms, k)} />
+                {onOpening && (
+                  <button
+                    type="button"
+                    className="btn-primary mt-2"
+                    onClick={() => openingKindsFor(custody.terms.terms).filter((k) => k === 'price' || k === 'amount' || k === 'lenderShare' || k === 'loanTerms').forEach((k) => onOpening(selectiveOpening(custody.terms, k)))}
+                  >
+                    {t('custody.verifyPrice')}
+                  </button>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">

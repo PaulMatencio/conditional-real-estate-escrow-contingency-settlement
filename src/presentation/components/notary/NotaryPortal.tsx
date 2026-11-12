@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileSearch, Landmark, Printer, Stamp } from 'lucide-react';
 import { buildCertificate, lockedFundsStatement } from '@/application/notaryService';
-import { verifyOpening } from '@/application/termsService';
+import { openingLabel, verifyOpening } from '@/application/termsService';
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { isAttestationBundle, type Opening } from '@/domain/terms';
@@ -13,7 +13,7 @@ import { documentCommitment } from '@/infrastructure/crypto/escrowCrypto';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useEscrow } from '../../providers/EscrowProvider';
-import { useT } from '../../i18n';
+import { useT, type MessageKey } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
 import { StatusOverview } from '../party/StatusOverview';
 import { CustodianCard } from './CustodianCard';
@@ -70,7 +70,7 @@ export function NotaryPortal({ address }: { address?: string }) {
     if (o?.format !== 'EscrowOpeningV1') return add({ label: f.name, ok: false, detail: t('notary.notOpening') });
     const r = verifyOpening(termsCrypto, o, view);
     if (r.ok) setOpenings((x) => [...x.filter((y) => y.kind !== o.kind), o]);
-    add({ label: `${t('notary.opening')} ${o.kind}`, ...r });
+    add({ label: `${t('notary.opening')}: ${openingLabel(o.kind)}`, ...r });
   };
 
   const onDocument = async (f: File) => {
@@ -123,11 +123,21 @@ export function NotaryPortal({ address }: { address?: string }) {
             <Card title={t('notary.locked')} icon={<Stamp size={16} aria-hidden />}>
               {(() => {
                 const l = lockedFundsStatement(view);
-                const price = openings.find((o) => o.kind === 'amount');
+                const amountOf = (k: 'price' | 'amount' | 'lenderShare') => {
+                  const o = openings.find((x) => x.kind === k);
+                  return o && 'amount' in o ? o.amount : null;
+                };
+                const terms = openings.find((o) => o.kind === 'loanTerms');
+                const lines: [MessageKey, string | null][] = [
+                  ['notary.priceVerified', amountOf('price')],
+                  ['notary.depositVerified', amountOf('amount')],
+                  ['notary.loanVerified', amountOf('lenderShare')]
+                ];
                 return (
                   <>
                     <Alert tone={l.locked ? 'ok' : 'warn'}>{l.statement}</Alert>
-                    {price && price.kind === 'amount' && <Alert tone="ok">{t('notary.priceVerified')}: {price.amount} {view.escrowTicker}</Alert>}
+                    {lines.map(([k, v]) => v !== null && <Alert key={k} tone="ok">{t(k)}: {v} {view.escrowTicker}</Alert>)}
+                    {terms && terms.kind === 'loanTerms' && <Alert tone="ok">{t('notary.refundVerified')}: {t(terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</Alert>}
                   </>
                 );
               })()}
@@ -154,7 +164,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                 ))}
               </ul>
             </Card>
-            <CustodianCard view={view} onOpening={(o) => acceptOpening(o, `${t('notary.opening')} ${o.kind} (${t('custody.badge')})`)} />
+            <CustodianCard view={view} onOpening={(o) => acceptOpening(o, `${t('notary.opening')}: ${openingLabel(o.kind)} (${t('custody.badge')})`)} />
             <Card title={t('notary.certificate')} className="print:hidden">
               <p className="mb-3 text-sm text-slate-400">{t('notary.certificateHint')}</p>
               <div className="flex flex-wrap gap-2">

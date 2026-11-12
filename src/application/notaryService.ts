@@ -8,7 +8,7 @@ import type { Opening } from '@/domain/terms';
 import { verifyOpening, type TermsCrypto } from './termsService';
 
 export interface NotaryCertificate {
-  format: 'EuNotarialEscrowCertificateV1';
+  format: 'EuNotarialEscrowCertificateV2';
   generatedAt: string;
   network: string;
   contractAddress: string;
@@ -20,6 +20,20 @@ export interface NotaryCertificate {
   lockedFunds: { locked: boolean; statement: string };
   token: { color: string; ticker: string };
   commitments: EscrowView['commitments'];
+  /** v2: how the price is funded and where the second coin (loan or buyer top-up) stands. Amounts only via openings. */
+  financing: {
+    mode: string | null;
+    loanHeld: boolean;
+    topUpHeld: boolean;
+    loanLost: boolean;
+    loanWithdrawn: boolean;
+    /** Public only once the loan was lost; otherwise "undisclosed" unless a loanTerms opening was verified. */
+    refundTerm: 'on' | 'off' | 'undisclosed';
+    loanOfferExpiry: string;
+    topUpWindowEnd: string | null;
+    buyerCoinPaid: boolean;
+    secondCoinPaid: boolean;
+  };
   verifiedOpenings: { kind: Opening['kind']; ok: boolean; detail: string }[];
   kyc: {
     buyer: { verified: boolean; issuerId: string; ref: string; travelRuleRef: string };
@@ -34,15 +48,29 @@ export interface NotaryCertificate {
 }
 
 export function lockedFundsStatement(v: EscrowView): { locked: boolean; statement: string } {
+  const f = v.financing;
+  const loan = f.mode === 'Deposited';
+  const second = f.loanHeld && !f.secondCoinPaid ? ' The lender\'s loan coin (exactly the committed loan amount) is held too.' : f.topUpHeld && !f.secondCoinPaid ? ' The buyer\'s top-up coin (exactly the committed loan amount) is held too.' : '';
   if (fundsLocked(v)) {
+    const what = loan ? 'the committed buyer deposit' : 'the committed amount (the whole price in a cash deal)';
+    const missing = loan && !f.loanHeld && !f.topUpHeld ? ' The loan amount is not deposited yet: the seller cannot be paid until it is (by the lender, or by the buyer as a top-up).' : '';
     return {
       locked: true,
-      statement: `The contract only accepts a deposit coin equal to the committed amount (depositToEscrow asserts ERROR_DEPOSIT_COIN_MISMATCH otherwise). Status ${v.status} with disbursed = false proves the committed amount is locked in the contract.`
+      statement: `The contract only accepts deposit coins equal to their committed amounts (ERROR_DEPOSIT_COIN_MISMATCH / ERROR_LOAN_COIN_MISMATCH / ERROR_TOPUP_COIN_MISMATCH otherwise). Status ${v.status} with nothing paid out proves ${what} is locked in the contract.${second}${missing}`
     };
   }
-  if (v.status === 'Refunded' || v.status === 'Expired') return { locked: true, statement: `Funds are still held but are only payable back to the buyer (status ${v.status}).` };
+  if (v.status === 'Refunded' || v.status === 'Expired') return { locked: true, statement: `Funds are still held but are only payable back to whoever deposited them (status ${v.status}).${second}` };
+  if (v.status === 'Forfeited') return { locked: true, statement: 'The loan was lost, the loan refusal refund term is off and the buyer did not replace the loan before the closing deadline: the buyer deposit is payable only to the seller.' };
   if (v.status === 'Closed') return { locked: false, statement: 'Funds were disbursed; the escrow is closed.' };
   return { locked: false, statement: `No funds are locked (status ${v.status}).` };
+}
+
+/** The refund term: from the ledger once the loan was lost, else from a verified loanTerms opening. */
+function refundTermOf(crypto: TermsCrypto, view: EscrowView, openings: Opening[]): 'on' | 'off' | 'undisclosed' {
+  if (view.financing.loanLost) return view.financing.loanLostRefund ? 'on' : 'off';
+  const o = openings.find((x) => x.kind === 'loanTerms');
+  if (o && o.kind === 'loanTerms' && verifyOpening(crypto, o, view).ok) return o.refundOnLoss ? 'on' : 'off';
+  return 'undisclosed';
 }
 
 export function buildCertificate(
@@ -51,7 +79,7 @@ export function buildCertificate(
   input: { network: string; openings: Opening[]; transactions?: NotaryCertificate['transactions']; blockHeight?: number; blockHash?: string; stateRoot?: string; now?: Date }
 ): NotaryCertificate {
   return {
-    format: 'EuNotarialEscrowCertificateV1',
+    format: 'EuNotarialEscrowCertificateV2',
     generatedAt: (input.now ?? new Date()).toISOString(),
     network: input.network,
     contractAddress: view.contractAddress,
@@ -62,6 +90,18 @@ export function buildCertificate(
     lockedFunds: lockedFundsStatement(view),
     token: { color: view.escrowColor, ticker: view.escrowTicker },
     commitments: view.commitments,
+    financing: {
+      mode: view.financing.mode,
+      loanHeld: view.financing.loanHeld,
+      topUpHeld: view.financing.topUpHeld,
+      loanLost: view.financing.loanLost,
+      loanWithdrawn: view.financing.loanWithdrawn,
+      refundTerm: refundTermOf(crypto, view, input.openings),
+      loanOfferExpiry: view.financing.loanOfferExpiry.toString(),
+      topUpWindowEnd: view.financing.loanLost && view.financing.loanLostRefund ? view.financing.topUpWindowEnd.toString() : null,
+      buyerCoinPaid: view.financing.buyerCoinPaid,
+      secondCoinPaid: view.financing.secondCoinPaid
+    },
     verifiedOpenings: input.openings.map((o) => ({ kind: o.kind, ...verifyOpening(crypto, o, view) })),
     kyc: {
       buyer: view.buyerKyc,

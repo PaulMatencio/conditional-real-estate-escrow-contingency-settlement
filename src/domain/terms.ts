@@ -85,8 +85,17 @@ export interface LenderPackage {
 
 /** FR-TERMS-05 / FR-NOTARY-02: one opening handed to a third party, without the rest of the package. */
 export type Opening =
-  | { format: 'EscrowOpeningV1'; kind: 'amount'; contractAddress?: string; amount: string; salt: string; ticker?: string }
-  | { format: 'EscrowOpeningV1'; kind: 'buyerPayout' | 'sellerPayout'; contractAddress?: string; key: string; salt: string };
+  /** amount = the buyer deposit (v2), price = the total price, lenderShare = the loan amount. */
+  | { format: 'EscrowOpeningV1'; kind: 'amount' | 'price' | 'lenderShare'; contractAddress?: string; amount: string; salt: string; ticker?: string }
+  | { format: 'EscrowOpeningV1'; kind: 'buyerPayout' | 'sellerPayout' | 'lenderPayout'; contractAddress?: string; key: string; salt: string }
+  /** v2: the loan refusal refund term. */
+  | { format: 'EscrowOpeningV1'; kind: 'loanTerms'; contractAddress?: string; refundOnLoss: boolean; salt: string };
+
+/** Opening kinds in display order. The loan ones exist only in a loan deal. */
+export const OPENING_KINDS = ['price', 'amount', 'lenderShare', 'loanTerms', 'buyerPayout', 'sellerPayout', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
+export const LOAN_OPENING_KINDS: readonly Opening['kind'][] = ['lenderShare', 'loanTerms', 'lenderPayout'];
+/** What the lender package can open. */
+export const LENDER_OPENING_KINDS = ['price', 'lenderShare', 'loanTerms', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
 
 /** KycAttestationV1 bundle exactly as the eu-counterparty-simulator CASP returns it. */
 export interface WirePoint {

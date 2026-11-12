@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import type { VaultRecord } from '@/application/partyPorts';
 import { preflight, runPartyAction, type PartyContext } from '@/application/partyService';
-import { checkLenderPackage, lenderPackageOf } from '@/application/termsService';
+import { buildCertificate, lockedFundsStatement } from '@/application/notaryService';
+import { checkLenderPackage, lenderOpening, lenderPackageOf, selectiveOpening, verifyOpening } from '@/application/termsService';
 import type { Caller } from '@/domain/roles';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { BUYER_KEY, K, LENDER_KEY, OFFER_EXPIRY, SELLER_KEY, WINDOW, configuredLoanEscrow, hex, rid } from './helpers/fixtures';
@@ -137,5 +138,52 @@ describe('withdrawal after the loan offer expiry', () => {
     const r = await act(seller, 'seller', 'refundLender');
     expect(r.shielded!.outputs.map((o) => [o.recipient, o.value])).toEqual([[LENDER_KEY, '150000']]);
     expect(sim.view().status).toBe('Closed');
+  });
+});
+
+describe('notary openings and certificate V2 (loan mode)', () => {
+  it('verifies price, deposit, loan amount and refund term separately, and rejects a tampered value', async () => {
+    const { sim, pkg } = await configuredLoanEscrow(false);
+    const v = sim.view();
+    const check = (kind: Parameters<typeof selectiveOpening>[1]) => verifyOpening(termsCrypto, selectiveOpening(pkg, kind), v);
+    expect(check('price')).toEqual({ ok: true, detail: 'Total price verified: 250000 EURe' });
+    expect(check('amount')).toEqual({ ok: true, detail: 'Buyer deposit verified: 100000 EURe' });
+    expect(check('lenderShare')).toEqual({ ok: true, detail: 'Loan amount verified: 150000 EURe' });
+    expect(check('loanTerms').ok).toBe(true);
+    expect(check('loanTerms').detail).toMatch(/off/);
+    expect(check('lenderPayout').ok).toBe(true);
+    const price = selectiveOpening(pkg, 'price');
+    expect(verifyOpening(termsCrypto, { ...price, amount: '250001' } as typeof price, v).ok).toBe(false);
+    // A price opening must not pass as a deposit opening.
+    expect(verifyOpening(termsCrypto, { ...price, kind: 'amount' } as never, v).ok).toBe(false);
+  });
+
+  it('lets the lender export only its own openings', async () => {
+    const { sim, pkg } = await configuredLoanEscrow();
+    const lp = lenderPackageOf(pkg);
+    for (const kind of ['price', 'lenderShare', 'loanTerms', 'lenderPayout'] as const) expect(verifyOpening(termsCrypto, lenderOpening(lp, kind), sim.view()).ok).toBe(true);
+  });
+
+  it('reports the refund term as undisclosed, from an opening, or from the ledger once the loan is lost', async () => {
+    const { sim, pkg, lender } = await inReview(false);
+    const cert = (openings: Parameters<typeof buildCertificate>[2]['openings']) => buildCertificate(termsCrypto, sim.view(), { network: 'undeployed', openings });
+    expect(cert([]).format).toBe('EuNotarialEscrowCertificateV2');
+    expect(cert([]).financing.mode).toBe('Deposited');
+    expect(cert([]).financing.refundTerm).toBe('undisclosed');
+    expect(cert([selectiveOpening(pkg, 'loanTerms')]).financing.refundTerm).toBe('off');
+    await act(lender, 'lender', 'declineLoan', [hex(0x61)]);
+    expect(cert([]).financing.loanLost).toBe(true);
+    expect(cert([]).financing.refundTerm).toBe('off');
+    expect(cert([]).financing.topUpWindowEnd).toBeNull();
+  });
+
+  it('states that a forfeited deposit is payable only to the seller', async () => {
+    const { sim, seller, lender } = await inReview(false);
+    await act(lender, 'lender', 'declineLoan', [hex(0x61)]);
+    sim.setTime(Number(sim.view().closingDeadline));
+    await act(seller, 'anyone', 'expireEscrow');
+    const s = lockedFundsStatement(sim.view());
+    expect(s.locked).toBe(true);
+    expect(s.statement).toMatch(/payable only to the seller/);
   });
 });

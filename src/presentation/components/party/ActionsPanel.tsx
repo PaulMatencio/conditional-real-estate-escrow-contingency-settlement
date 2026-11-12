@@ -22,7 +22,8 @@ const DEDICATED: PartyCircuit[] = [
   'depositLoan',
   'declineLoan',
   'withdrawLoan',
-  'depositTopUp'
+  'depositTopUp',
+  'claimForfeit'
 ];
 /** Permissionless circuits: called as 'anyone'. */
 const OPEN: PartyCircuit[] = ['expireEscrow', 'endTopUpWindow'];

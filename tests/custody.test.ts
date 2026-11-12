@@ -18,7 +18,7 @@ describe('custodian copy', () => {
     expect(isTermsPackage(opened)).toBe(true);
     const view = sim.view();
     expect(checkTermsAgainstLedger(termsCrypto, opened as typeof pkg, view).ok).toBe(true);
-    expect(verifyOpening(termsCrypto, selectiveOpening(opened as typeof pkg, 'amount'), view)).toEqual({ ok: true, detail: 'Price verified: 250000 EURe' });
+    expect(verifyOpening(termsCrypto, selectiveOpening(opened as typeof pkg, 'amount'), view)).toEqual({ ok: true, detail: 'Buyer deposit verified: 250000 EURe' });
     // Handing it back to a party: a fresh envelope only that party opens.
     const buyer = await generateRecipientKeyPair();
     expect(await openEnvelope(await sealTo(opened, buyer.publicKey, 'buyer'), buyer)).toEqual(opened);
