@@ -8,11 +8,12 @@ import * as rt from '@midnight-ntwrk/compact-runtime';
 import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway, ShieldedEffects } from '@/application/partyPorts';
 import { withTxLog, type TxLogger } from '@/application/txLog';
 import { AppError } from '@/domain/errors';
-import type { ConfigureTerms, DeployParams } from '@/domain/escrow';
+import type { ConfigureTerms, DeployParams, FinancingTerms } from '@/domain/escrow';
 import type { EscrowView } from '@/domain/escrowView';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { PartyCircuit } from '@/domain/lifecycle';
 import { contractArgs, witnessInputs } from '../contract/callArgs';
+import { maybeFinancingArgs } from '../contract/financingArgs';
 import { Contract } from '../contract/module';
 import { toEscrowView, type LedgerInput } from '../contract/view';
 import { createWitnesses, type PrivateInputs } from '../contract/witnesses';
@@ -165,6 +166,9 @@ export class EscrowSimulator {
   /** Admin helpers for Simulator Mode setup. */
   configure(sk: Uint8Array, terms: ConfigureTerms) {
     return this.adminRun('configure', maybeTermsArgs(terms), sk);
+  }
+  configureFinancing(sk: Uint8Array, f: FinancingTerms) {
+    return this.adminRun('configureFinancing', maybeFinancingArgs(f), sk);
   }
   addKycIssuer(sk: Uint8Array, issuerId: string, publicKey: { x: string; y: string }) {
     return this.adminRun('addKycIssuer', [hex32ToBytes(issuerId), { x: BigInt(publicKey.x), y: BigInt(publicKey.y) }], sk);

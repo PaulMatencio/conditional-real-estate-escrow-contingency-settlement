@@ -11,6 +11,7 @@ import { ProgressPanel } from './ProgressPanel';
 import { TermsKycTab } from './admin/TermsKycTab';
 import { AuthorityCard } from './admin/AuthorityCard';
 import { VaultTab } from './admin/VaultTab';
+import { FinancingCard } from './admin/FinancingCard';
 import { DustCard } from './DustCard';
 import { TxLogPanel } from './TxLogPanel';
 import { VaultGate } from './party/PartySetup';
@@ -221,6 +222,7 @@ function InitializeTab() {
   if (!state) return <Alert tone="warn">{t('contract.title')}: {t('contract.notSet')}</Alert>;
   if (state.status !== 0) return <Alert tone="ok">{t('contract.status')}: {EscrowStatus[state.status]}</Alert>;
   return (
+    <div className="space-y-4">
     <Card title={t('init.title')} icon={<ListChecks size={16} aria-hidden />}>
       <p className="mb-2 text-sm text-slate-400">{t('init.hint')}</p>
       <p className="mb-3 text-sm">{t('init.missing')}: {state.missingAttributes.length ? state.missingAttributes.map((a) => <Badge key={a} tone="warn">{a}</Badge>) : '—'}</p>
@@ -258,6 +260,8 @@ function InitializeTab() {
       </div>
       <p className="mt-2 text-xs text-slate-500">{t('init.finalizeMoved')}</p>
     </Card>
+    <FinancingCard />
+    </div>
   );
 }
 

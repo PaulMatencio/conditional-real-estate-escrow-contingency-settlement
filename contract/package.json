@@ -2,12 +2,10 @@
   "name": "escrow-contract-tests",
   "private": true,
   "type": "module",
-  "description": "Simulator tests and CASP signing helper for the conditional real-estate escrow contract",
+  "description": "Simulator tests and CASP signing helper for the conditional real-estate escrow contract (v2: lender deposit, buyer top-up, loan refusal refund term)",
   "scripts": {
     "compile": "compact compile +0.36.0 --skip-zk conditional-real-estate-escrow-contingency-settlement.compact managed/escrow",
-    "test": "node test/check-kyc-module.mjs && node test/escrow.sim.mjs",
-    "compile:v2": "compact compile +0.36.0 --skip-zk conditional-real-estate-escrow-contingency-settlement-v2.compact managed/escrow-v2",
-    "test:v2": "node test/check-kyc-module.mjs && node test/escrow-v2.sim.mjs"
+    "test": "node test/check-kyc-module.mjs && node test/escrow.sim.mjs"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.21.0"

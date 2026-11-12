@@ -1,15 +1,17 @@
 /**
- * Simulator tests for conditional-real-estate-escrow-contingency-settlement-v2.compact
+ * Simulator tests for conditional-real-estate-escrow-contingency-settlement.compact, version 2
  * (lender deposit, buyer top-up, loan refusal refund term). The first part is the v1 suite run on a v2 cash
  * deal (FinancingMode.Attested, lender share 0); the "Loan" sections cover the new rules.
- *   cd contract && npm run compile:v2 && npm run test:v2
+ * Runs every circuit off-chain with @midnight-ntwrk/compact-runtime (no node, no proofs).
+ *   cd contract && npm install && npm run compile   (compact compile +0.36.0 --skip-zk -> managed/escrow)
+ *   npm test
  * Runs every circuit off-chain with @midnight-ntwrk/compact-runtime (no node, no proofs).
  *   cd contract && npm install && npm run compile   (compact compile +0.36.0 --skip-zk -> managed/escrow)
  *   npm test
  * Exits with code 1 if any check fails.
  */
 import * as rt from '@midnight-ntwrk/compact-runtime';
-import { Contract, ledger, pureCircuits, EscrowStatus, Contingency, InitAttribute, FinancingMode } from '../managed/escrow-v2/contract/index.js';
+import { Contract, ledger, pureCircuits, EscrowStatus, Contingency, InitAttribute, FinancingMode } from '../managed/escrow/contract/index.js';
 import { createCaspSigner, schnorrReduction, verifyKycSignature, newSalt } from './casp-signer.mjs';
 const S = Object.fromEntries(Object.entries(EscrowStatus).filter(([k]) => isNaN(k)).map(([k, v]) => [v, k]));
 const sk = (n) => { const b = new Uint8Array(32); b[0] = n; return b; };
@@ -395,8 +397,6 @@ const outs = (e) => (e.zswap?.outputs ?? []).map((o) => ({ to: o.recipient.is_le
 const ins = (e) => (e.zswap?.inputs ?? []).map((i) => h(i.nonce));
 const key = (a) => `${a.to}:${a.value}`;
 const sameOuts = (got, want) => JSON.stringify([...got].map(key).sort()) === JSON.stringify([...want].map(key).sort());
-const _unused = (got, want) => JSON.stringify([...got].sort((a, b) => (a.to + a.value).localeCompare(b.to + b.value))) ===
-  JSON.stringify([...want].sort((a, b) => (a.to + a.value).localeCompare(b.to + b.value)));
 
 console.log('Loan: the lender deposits its exact share, the release pays the full price');
 {

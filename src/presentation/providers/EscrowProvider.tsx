@@ -10,6 +10,7 @@ import { runPartyAction, finalizeBlockers, trackVault } from '@/application/part
 import { createTermsPackage } from '@/application/termsService';
 import { deployTracker } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
+import { DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
 import type { EscrowView } from '@/domain/escrowView';
 import { bytesToHex } from '@/domain/hex';
 import type { PartyCircuit } from '@/domain/lifecycle';
@@ -352,7 +353,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         s.logger = sharedTxLog();
         const wallet = session ? await createWalletProviders(session, prefs).then((p) => p.walletProvider.getCoinPublicKey() as unknown as string).catch(() => null) : null;
         const pkg = {
-          ...createTermsPackage(termsCrypto, { amount: opts.amount ?? '250000', buyerPayout: wallet ?? bytesToHex(generateSecretKey()), sellerPayout: bytesToHex(generateSecretKey()) }),
+          ...createTermsPackage(termsCrypto, { price: opts.amount ?? '250000', buyerPayout: wallet ?? bytesToHex(generateSecretKey()), sellerPayout: bytesToHex(generateSecretKey()), mode: 'attested' }),
           contractAddress: s.contractAddress,
           escrowColor: color,
           escrowTicker: 'EURe'
@@ -369,6 +370,16 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           closingDeadline: BigInt(t0 + 30 * 86400),
           disputeDeadline: BigInt(t0 + 45 * 86400),
           kycPolicy: { minKycLevel: 2, maxAmlRiskScore: 30 }
+        });
+        // v2: a simulated escrow is a cash deal (no loan); the financing commitments are still required.
+        await s.configureFinancing(admin, {
+          mode: 'attested',
+          priceCommitment: pkg.commitments.price,
+          lenderShareCommitment: pkg.commitments.lenderShare,
+          lenderPayoutCommitment: pkg.commitments.lenderPayout,
+          loanTermsCommitment: pkg.commitments.loanTerms,
+          loanOfferExpiry: BigInt(t0 + 30 * 86400),
+          topUpWindow: BigInt(DEFAULT_TOP_UP_DAYS * 86400)
         });
         if (opts.useCasp !== false) {
           const { keys: issuers } = await casp.issuerKeys();

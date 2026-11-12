@@ -4,7 +4,7 @@
  */
 import { AppError } from '@/domain/errors';
 import { isHex32 } from '@/domain/hex';
-import type { AdminState, ConfigureTerms, DeployParams, TxReceipt } from '@/domain/escrow';
+import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms, TxReceipt } from '@/domain/escrow';
 import type { DeployTracker, StepDef } from './deployProgress';
 import type { KeyValueStore } from './ports';
 
@@ -17,6 +17,7 @@ export interface EscrowAdminGateway {
   /** One maintenance transaction inserting the verifier keys of all given circuits. */
   registerCircuits(circuits: string[]): Promise<TxReceipt>;
   configure(terms: ConfigureTerms): Promise<TxReceipt>;
+  configureFinancing(f: FinancingTerms): Promise<TxReceipt>;
   finalize(): Promise<TxReceipt>;
 }
 

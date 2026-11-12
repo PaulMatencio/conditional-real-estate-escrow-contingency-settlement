@@ -1,5 +1,5 @@
 import { bytesToHex } from '@/domain/hex';
-import { CONTINGENCIES, INIT_ATTRIBUTES, STATUS, isZeroHex, type EscrowView, type MaintenanceStatus } from '@/domain/escrowView';
+import { CONTINGENCIES, FINANCING_MODES, INIT_ATTRIBUTES, STATUS, isZeroHex, type EscrowView, type MaintenanceStatus } from '@/domain/escrowView';
 import { InitAttribute, ledger, type Ledger } from './module';
 
 export type LedgerInput = Parameters<typeof ledger>[0];
@@ -43,7 +43,24 @@ export function toEscrowView(contractAddress: string, data: LedgerInput, mainten
     commitments: {
       amount: has('EscrowAmount') ? commit(L.amountCommitment) : null,
       buyerPayout: has('BuyerPayout') ? commit(L.buyerPayoutCommitment) : null,
-      sellerPayout: has('SellerPayout') ? commit(L.sellerPayoutCommitment) : null
+      sellerPayout: has('SellerPayout') ? commit(L.sellerPayoutCommitment) : null,
+      price: has('Price') ? commit(L.priceCommitment) : null,
+      lenderShare: has('LenderShare') ? commit(L.lenderShareCommitment) : null,
+      lenderPayout: has('LenderPayout') ? commit(L.lenderPayoutCommitment) : null,
+      loanTerms: has('LoanTerms') ? commit(L.loanTermsCommitment) : null
+    },
+    financing: {
+      mode: has('Financing') ? (FINANCING_MODES[L.financingMode] ?? null) : null,
+      loanOfferExpiry: L.loanOfferExpiry,
+      topUpWindow: L.topUpWindow,
+      loanHeld: L.loanHeld,
+      topUpHeld: L.topUpHeld,
+      loanLost: L.loanLost,
+      loanWithdrawn: L.loanWithdrawn,
+      loanLostRefund: L.loanLostRefund,
+      topUpWindowEnd: L.topUpWindowEnd,
+      buyerCoinPaid: L.buyerCoinPaid,
+      secondCoinPaid: L.secondCoinPaid
     },
     closingDeadline: L.closingDeadline,
     disputeDeadline: L.disputeDeadline,

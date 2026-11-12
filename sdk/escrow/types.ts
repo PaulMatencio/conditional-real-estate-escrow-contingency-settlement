@@ -2,7 +2,7 @@
 import type { JubjubPoint } from '@midnight-ntwrk/compact-runtime';
 export type { JubjubPoint };
 export type { KycAttestation, KycPolicy, SchnorrSignature } from '../../contract/managed/escrow/contract/index.js';
-export { EscrowStatus, InitAttribute, Contingency } from '../../contract/managed/escrow/contract/index.js';
+export { EscrowStatus, InitAttribute, Contingency, FinancingMode } from '../../contract/managed/escrow/contract/index.js';
 
 export interface TxData {
   txId: string;
@@ -11,5 +11,5 @@ export interface TxData {
 }
 
 /** Every circuit of the contract, in source order. */
-export const CIRCUITS = ["configure","addKycIssuer","removeKycIssuer","acceptConfiguration","finalizeInitialization","submitSellerKyc","revokeKycAttestation","revokeKycIssuer","cancelBeforeFunding","depositToEscrow","openContingencyReview","submitInspection","submitFinancing","submitTitle","waiveContingency","cancelAndRefund","sellerWithdraw","expireEscrow","openDispute","resolveDisputeRefund","resolveDisputeSettlement","voidContingencyResult","dismissDispute","releaseToSeller","refundBuyer"] as const;
+export const CIRCUITS = ["configure","configureFinancing","addKycIssuer","removeKycIssuer","acceptConfiguration","finalizeInitialization","submitSellerKyc","revokeKycAttestation","revokeKycIssuer","cancelBeforeFunding","depositToEscrow","depositLoan","declineLoan","withdrawLoan","depositTopUp","endTopUpWindow","openContingencyReview","submitInspection","submitFinancing","submitTitle","waiveContingency","cancelAndRefund","sellerWithdraw","expireEscrow","openDispute","resolveDisputeRefund","resolveDisputeSettlement","voidContingencyResult","dismissDispute","releaseToSeller","refundBuyer","refundLender","claimForfeit"] as const;
 export type CircuitName = (typeof CIRCUITS)[number];

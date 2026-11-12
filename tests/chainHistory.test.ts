@@ -27,6 +27,7 @@ describe('actor inference', () => {
     expect(inferActor(call('depositToEscrow'))).toBe('buyer');
     expect(inferActor(call('submitInspection'))).toBe('inspector');
     expect(inferActor(call('configure'))).toBe('admin');
+    expect(inferActor(call('configureFinancing'))).toBe('admin');
     expect(inferActor(call('acceptConfiguration'))).toBe('buyer|seller');
     expect(inferActor(call('acceptConfiguration', { acceptedBy: 'seller' }))).toBe('seller');
     expect(inferActor({ ...call('x'), kind: 'update' })).toBe('admin');

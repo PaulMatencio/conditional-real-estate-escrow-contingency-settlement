@@ -15,6 +15,7 @@ function fakeGateway(missing: string[]): EscrowAdminGateway & { registered: stri
     missingCircuits: async () => missing.filter((c) => !registered.includes(c)),
     registerCircuits: async (cs) => (registered.push(...cs), { txId: cs.join('+'), txHash: cs.join('+') }),
     configure: async () => ({ txId: '', txHash: '' }),
+    configureFinancing: async () => ({ txId: '', txHash: '' }),
     finalize: async () => ({ txId: '', txHash: '' })
   };
 }

@@ -13,10 +13,11 @@ import { LedgerTransaction, SucceedEntirely } from '@midnight-ntwrk/midnight-js-
 import { operationNames, readContractState, type ChainContractState } from '../contract/chainState';
 import { AppError, compactText, deepMessage } from '@/domain/errors';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
-import type { AdminState, ConfigureTerms, DeployParams, TxReceipt } from '@/domain/escrow';
+import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms, TxReceipt } from '@/domain/escrow';
+import { maybeFinancingArgs } from '../contract/financingArgs';
 import { contractConfig } from '../config/network';
 import { allCircuitIds, makeCompiledContract } from '../contract/compiled';
-import { InitAttribute, ledger } from '../contract/module';
+import { FinancingMode, InitAttribute, ledger } from '../contract/module';
 import { randomBytes } from '../crypto/identity';
 import { shortError, withTxLog, type TxLogStart } from '@/application/txLog';
 import { sharedTxLog } from '../storage/txLogStore';
@@ -190,6 +191,11 @@ export class AdminGateway {
         .filter((k) => !configured.has(InitAttribute[k as keyof typeof InitAttribute])),
       registeredCircuits: [...have].sort(),
       missingCircuits: all.filter((c) => !have.has(c)),
+      financing: {
+        mode: configured.has(InitAttribute.Financing) ? (L.financingMode === FinancingMode.Deposited ? 'deposited' : 'attested') : null,
+        loanOfferExpiry: L.loanOfferExpiry,
+        topUpWindow: L.topUpWindow
+      },
       maintenance: maintenanceOf(s)
     };
   }
@@ -199,7 +205,14 @@ export class AdminGateway {
     const s = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
     if (authorityLevel(maintenanceOf(s)) === 'immutable') return 'renounced';
-    const key = await vaultSigningKeys(sharedVault()).load(this.contractAddress);
+    return this.keyStatus(await vaultSigningKeys(sharedVault()).load(this.contractAddress), s);
+  }
+
+  /** Whether a given authority key (hex or ledger object) is a member of the on-chain maintenance committee. */
+  async keyStatus(key: unknown, state?: ChainContractState | null): Promise<'match' | 'mismatch' | 'missing' | 'renounced'> {
+    const s = state ?? (await readContractState(this.providers.publicDataProvider, this.contractAddress));
+    if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
+    if (authorityLevel(maintenanceOf(s)) === 'immutable') return 'renounced';
     if (!key) return 'missing';
     // Compare by value: ledger 9 keys are tagged objects, and String() of two objects is always "[object Object]".
     const vk = verifyingKeyId(signatureVerifyingKey(toSigningKey(key) as never));
@@ -295,6 +308,11 @@ export class AdminGateway {
   /** Fills in (or corrects) any subset of the missing terms — the delayed-initialization step. */
   configure(terms: ConfigureTerms): Promise<TxReceipt> {
     return this.call('configure', ...maybeTerms(terms));
+  }
+
+  /** v2: financing mode, the four financing commitments and the loan dates (delayed initialization too). */
+  configureFinancing(f: FinancingTerms): Promise<TxReceipt> {
+    return this.call('configureFinancing', ...maybeFinancingArgs(f));
   }
 
   finalize(): Promise<TxReceipt> {

@@ -58,7 +58,7 @@ export function makeCasp(secret = 0x1234567890abcdefn, issuerId = hex(0xc0)) {
 /** A simulator escrow with every term configured and the CASP whitelisted (still Initializing), plus the terms package. */
 export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
   const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
-  const pkg0 = createTermsPackage(termsCrypto, { amount: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY });
+  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, mode: 'attested' });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
   const casp = makeCasp();
   await sim.configure(K.admin, {
@@ -72,6 +72,16 @@ export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: T
     closingDeadline: DL,
     disputeDeadline: DDL,
     kycPolicy: { minKycLevel: 2, maxAmlRiskScore: 30 }
+  });
+  // v2: a cash deal (no loan); the financing commitments are still required.
+  await sim.configureFinancing(K.admin, {
+    mode: 'attested',
+    priceCommitment: pkg.commitments.price,
+    lenderShareCommitment: pkg.commitments.lenderShare,
+    lenderPayoutCommitment: pkg.commitments.lenderPayout,
+    loanTermsCommitment: pkg.commitments.loanTerms,
+    loanOfferExpiry: 0n,
+    topUpWindow: 0n
   });
   await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
   return { sim, pkg, casp };

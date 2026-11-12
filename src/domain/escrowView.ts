@@ -15,7 +15,8 @@ export const STATUS = [
   'Refunded',
   'Expired',
   'Closed',
-  'Cancelled'
+  'Cancelled',
+  'Forfeited'
 ] as const;
 export type StatusName = (typeof STATUS)[number];
 
@@ -31,8 +32,40 @@ export const INIT_ATTRIBUTES = [
   'ClosingDeadline',
   'DisputeDeadline',
   'KycIssuers',
-  'KycPolicy'
+  'KycPolicy',
+  'Financing',
+  'Price',
+  'LenderShare',
+  'LenderPayout',
+  'LoanTerms',
+  'LoanOfferExpiry',
+  'TopUpWindow'
 ] as const;
+
+/** Mirrors the contract's `FinancingMode`. */
+export const FINANCING_MODES = ['Attested', 'Deposited'] as const;
+export type FinancingModeName = (typeof FINANCING_MODES)[number];
+
+/** v2: how the financing contingency is met, and where the second coin stands. */
+export interface FinancingState {
+  /** Null until configured. */
+  mode: FinancingModeName | null;
+  /** Unix seconds (loan mode): the lender may withdraw from here on. */
+  loanOfferExpiry: bigint;
+  /** Seconds the buyer has to top up after a lost loan (refund term on). */
+  topUpWindow: bigint;
+  loanHeld: boolean;
+  topUpHeld: boolean;
+  /** The lender refused or withdrew. */
+  loanLost: boolean;
+  loanWithdrawn: boolean;
+  /** The refund term, public once the loan is lost. */
+  loanLostRefund: boolean;
+  /** Unix seconds; meaningful when the loan is lost with the refund term on. */
+  topUpWindowEnd: bigint;
+  buyerCoinPaid: boolean;
+  secondCoinPaid: boolean;
+}
 export type InitAttributeName = (typeof INIT_ATTRIBUTES)[number];
 
 /** Mirrors the contract's `Contingency`. */
@@ -99,7 +132,16 @@ export interface EscrowView {
   };
   escrowColor: string;
   escrowTicker: string;
-  commitments: { amount: string | null; buyerPayout: string | null; sellerPayout: string | null };
+  commitments: {
+    amount: string | null;
+    buyerPayout: string | null;
+    sellerPayout: string | null;
+    price: string | null;
+    lenderShare: string | null;
+    lenderPayout: string | null;
+    loanTerms: string | null;
+  };
+  financing: FinancingState;
   closingDeadline: bigint;
   disputeDeadline: bigint;
   kycIssuers: { issuerId: string; publicKey: { x: string; y: string } }[];

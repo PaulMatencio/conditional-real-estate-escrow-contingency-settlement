@@ -4,36 +4,79 @@
  */
 import { AppError } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
-import { norm, validateTerms, type AttestationBundle, type Opening, type TermsCommitments, type TermsPackage, type WirePrivateTerms } from '@/domain/terms';
+import {
+  COMMITMENT_KEYS,
+  LENDER_COMMITMENT_KEYS,
+  norm,
+  validateTerms,
+  type AttestationBundle,
+  type LenderPackage,
+  type Opening,
+  type TermsCommitments,
+  type TermsPackage,
+  type WirePrivateTerms
+} from '@/domain/terms';
 
 export interface TermsCrypto {
   newSalt(): string;
   commitmentsOf(t: WirePrivateTerms): TermsCommitments;
   amountCommitment(amount: bigint, salt: string): string;
   payoutCommitment(key: string, salt: string): string;
+  priceCommitment(price: bigint, salt: string): string;
+  lenderShareCommitment(share: bigint, salt: string): string;
+  loanTermsCommitment(refundOnLoss: boolean, salt: string): string;
   /** Schnorr check of a CASP bundle against the given issuer public key. */
   verifyBundleSignature(b: AttestationBundle, publicKey: { x: string; y: string }): boolean;
   kycReference(b: AttestationBundle): string;
 }
 
-/** FR-TERMS-01/02: the admin assembles the package from the amount and the keys the parties submitted. */
-export function createTermsPackage(
-  crypto: TermsCrypto,
-  input: { amount: string; buyerPayout: string; sellerPayout: string; contractAddress?: string; escrowColor?: string; escrowTicker?: string },
-  now: number = Date.now()
-): TermsPackage {
+export interface TermsInput {
+  /** Total price (whole token base units). */
+  price: string;
+  /** Buyer deposit (whole token base units). Defaults to the price (cash deal). The loan amount is price − deposit. */
+  buyerDeposit?: string;
+  buyerPayout: string;
+  sellerPayout: string;
+  /** Loan deals: the lender's shielded coin public key. Cash deals: omitted (a random placeholder is committed). */
+  lenderPayout?: string;
+  /** Loan refusal refund term (default true). */
+  refundOnLoss?: boolean;
+  /** The escrow's financing mode, when known: the shares are checked against it. */
+  mode?: 'attested' | 'deposited';
+  contractAddress?: string;
+  escrowColor?: string;
+  escrowTicker?: string;
+}
+
+/** FR-TERMS-01/02: the admin assembles the package from the price, the deposit split and the keys the parties submitted. */
+export function createTermsPackage(crypto: TermsCrypto, input: TermsInput, now: number = Date.now()): TermsPackage {
+  const price = input.price.trim();
+  const deposit = (input.buyerDeposit ?? input.price).trim();
+  if (!/^\d+$/.test(price) || !/^\d+$/.test(deposit)) throw new AppError('VALIDATION', 'Price and buyer deposit must be whole numbers in the token base unit.');
+  const loan = BigInt(price) - BigInt(deposit);
+  if (loan < 0n) throw new AppError('VALIDATION', 'The buyer deposit cannot exceed the price.');
+  if (loan > 0n && !input.lenderPayout?.trim()) throw new AppError('VALIDATION', 'A loan needs the lender payout key.');
   const terms: WirePrivateTerms = {
-    amount: input.amount.trim(),
+    amount: deposit,
     amountSalt: crypto.newSalt(),
     buyerPayout: norm(input.buyerPayout),
     buyerSalt: crypto.newSalt(),
     sellerPayout: norm(input.sellerPayout),
-    sellerSalt: crypto.newSalt()
+    sellerSalt: crypto.newSalt(),
+    price,
+    priceSalt: crypto.newSalt(),
+    lenderShare: loan.toString(),
+    lenderShareSalt: crypto.newSalt(),
+    // Cash deal: the contract still needs a lender payout commitment; a random key nobody holds is never paid.
+    lenderPayout: loan > 0n ? norm(input.lenderPayout!) : crypto.newSalt(),
+    lenderPayoutSalt: crypto.newSalt(),
+    refundOnLoss: input.refundOnLoss ?? true,
+    loanTermsSalt: crypto.newSalt()
   };
-  const problem = validateTerms(terms);
+  const problem = validateTerms(terms, input.mode);
   if (problem) throw new AppError('VALIDATION', problem);
   return {
-    format: 'EscrowTermsV1',
+    format: 'EscrowTermsV2',
     contractAddress: input.contractAddress ? norm(input.contractAddress) : undefined,
     escrowColor: input.escrowColor ? norm(input.escrowColor) : undefined,
     escrowTicker: input.escrowTicker,
@@ -43,30 +86,57 @@ export function createTermsPackage(
   };
 }
 
-export interface CommitmentCheck {
-  amount: 'match' | 'mismatch' | 'unset';
-  buyerPayout: 'match' | 'mismatch' | 'unset';
-  sellerPayout: 'match' | 'mismatch' | 'unset';
-  ok: boolean;
-}
+export type CommitmentState = 'match' | 'mismatch' | 'unset';
+export type CommitmentCheck = Record<keyof TermsCommitments, CommitmentState> & { ok: boolean };
 
-/** FR-TERMS-03: recompute all three commitments from the local copy and compare them with the ledger. */
+const cmp = (local: string, onchain: string | null): CommitmentState => (onchain === null ? 'unset' : local === onchain ? 'match' : 'mismatch');
+
+/** FR-TERMS-03: recompute all seven commitments from the local copy and compare them with the ledger. */
 export function checkTermsAgainstLedger(crypto: TermsCrypto, pkg: TermsPackage, view: EscrowView): CommitmentCheck {
   const mine = crypto.commitmentsOf(pkg.terms);
-  const cmp = (local: string, onchain: string | null) => (onchain === null ? 'unset' : local === onchain ? 'match' : 'mismatch');
-  const r = {
-    amount: cmp(mine.amount, view.commitments.amount),
-    buyerPayout: cmp(mine.buyerPayout, view.commitments.buyerPayout),
-    sellerPayout: cmp(mine.sellerPayout, view.commitments.sellerPayout)
-  } as const;
-  return { ...r, ok: r.amount === 'match' && r.buyerPayout === 'match' && r.sellerPayout === 'match' };
+  const r = Object.fromEntries(COMMITMENT_KEYS.map((k) => [k, cmp(mine[k], view.commitments[k])])) as Record<keyof TermsCommitments, CommitmentState>;
+  return { ...r, ok: COMMITMENT_KEYS.every((k) => r[k] === 'match') };
+}
+
+/** v2: the lender package checked against the four commitments it opens. */
+export function checkLenderPackage(crypto: TermsCrypto, pkg: LenderPackage, view: EscrowView): Record<(typeof LENDER_COMMITMENT_KEYS)[number], CommitmentState> & { ok: boolean } {
+  const mine = {
+    price: crypto.priceCommitment(BigInt(pkg.price), pkg.priceSalt),
+    lenderShare: crypto.lenderShareCommitment(BigInt(pkg.lenderShare), pkg.lenderShareSalt),
+    lenderPayout: crypto.payoutCommitment(pkg.lenderPayout, pkg.lenderPayoutSalt),
+    loanTerms: crypto.loanTermsCommitment(pkg.refundOnLoss, pkg.loanTermsSalt)
+  };
+  const r = Object.fromEntries(LENDER_COMMITMENT_KEYS.map((k) => [k, cmp(mine[k], view.commitments[k])])) as Record<(typeof LENDER_COMMITMENT_KEYS)[number], CommitmentState>;
+  return { ...r, ok: LENDER_COMMITMENT_KEYS.every((k) => r[k] === 'match') };
+}
+
+/** v2: the lender package cut from the full terms (sealed to the lender's envelope key by the admin). */
+export function lenderPackageOf(pkg: TermsPackage, now: number = Date.now()): LenderPackage {
+  const t = pkg.terms;
+  if (BigInt(t.lenderShare) <= 0n) throw new AppError('VALIDATION', 'This escrow has no loan: there is no lender package.');
+  return {
+    format: 'EscrowLenderTermsV2',
+    contractAddress: pkg.contractAddress,
+    escrowColor: pkg.escrowColor,
+    escrowTicker: pkg.escrowTicker,
+    price: t.price,
+    priceSalt: t.priceSalt,
+    lenderShare: t.lenderShare,
+    lenderShareSalt: t.lenderShareSalt,
+    lenderPayout: t.lenderPayout,
+    lenderPayoutSalt: t.lenderPayoutSalt,
+    refundOnLoss: t.refundOnLoss,
+    loanTermsSalt: t.loanTermsSalt,
+    commitments: { price: pkg.commitments.price, lenderShare: pkg.commitments.lenderShare, lenderPayout: pkg.commitments.lenderPayout, loanTerms: pkg.commitments.loanTerms },
+    createdAt: now
+  };
 }
 
 export function assertTermsMatch(crypto: TermsCrypto, pkg: TermsPackage | undefined, view: EscrowView): void {
   if (!pkg) throw new AppError('MISSING_MATERIAL', 'TERMS_COMMITMENT_MISMATCH: no private terms package in this browser.');
   const c = checkTermsAgainstLedger(crypto, pkg, view);
   if (!c.ok) {
-    const bad = (['amount', 'buyerPayout', 'sellerPayout'] as const).filter((k) => c[k] !== 'match');
+    const bad = COMMITMENT_KEYS.filter((k) => c[k] !== 'match');
     throw new AppError('TERMS_COMMITMENT_MISMATCH', `TERMS_COMMITMENT_MISMATCH: ${bad.join(', ')} ${bad.length > 1 ? 'do' : 'does'} not open the on-chain commitment.`);
   }
 }

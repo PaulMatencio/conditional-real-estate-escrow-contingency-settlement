@@ -28,6 +28,26 @@ export interface ConfigureTerms {
   kycPolicy?: KycPolicyInput;
 }
 
+/**
+ * v2 financing terms (`configureFinancing`): the financing mode, the four commitments only the full terms package can
+ * open (price, loan amount, lender payout key, refund term) and the loan dates. Same delayed-initialization rules as
+ * `configure`: any subset, admin only, while Initializing.
+ */
+export interface FinancingTerms {
+  mode?: 'attested' | 'deposited';
+  priceCommitment?: string;
+  lenderShareCommitment?: string;
+  lenderPayoutCommitment?: string;
+  loanTermsCommitment?: string;
+  /** Unix seconds (loan mode): the lender may withdraw from here on. Must not be after the closing deadline. */
+  loanOfferExpiry?: bigint;
+  /** Seconds (loan mode, refund term on): how long the buyer has to top up after a lost loan. */
+  topUpWindow?: bigint;
+}
+
+/** Days → seconds for the top-up window (default 7 days). */
+export const DEFAULT_TOP_UP_DAYS = 7;
+
 /** Mandatory at deployment and immutable afterwards; everything in `terms` may be filled in later. */
 export interface DeployParams {
   adminRoleId: string;
@@ -56,6 +76,8 @@ export interface AdminState {
   missingAttributes: string[];
   registeredCircuits: string[];
   missingCircuits: string[];
+  /** v2: financing mode (null until configured), loan offer expiry (unix s) and top-up window (s). */
+  financing: { mode: 'attested' | 'deposited' | null; loanOfferExpiry: bigint; topUpWindow: bigint };
   /** On-chain maintenance authority (null if not reported). */
   maintenance: import('./escrowView').MaintenanceStatus | null;
 }

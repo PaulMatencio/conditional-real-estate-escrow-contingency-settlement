@@ -9,9 +9,11 @@ export {
   EscrowStatus,
   InitAttribute,
   Contingency,
+  FinancingMode,
   type Ledger,
   type Witnesses,
   type PrivateTerms,
+  type LenderTerms,
   type KycAttestation,
   type SchnorrSignature,
   type KycPolicy

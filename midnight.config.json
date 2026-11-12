@@ -15,6 +15,7 @@
     "compilerVersion": "0.36.0",
     "deployCircuits": [
       "configure",
+      "configureFinancing",
       "addKycIssuer",
       "removeKycIssuer",
       "acceptConfiguration",

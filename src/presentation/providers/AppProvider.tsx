@@ -4,7 +4,7 @@ import { CONTRACT_SLOT, registerMissing, runAction, stagedDeploy } from '@/appli
 import { activeSink, deployTracker, type DeployProgress } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
 import { bytesToHex } from '@/domain/hex';
-import type { AdminState, ConfigureTerms, DeployParams } from '@/domain/escrow';
+import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms } from '@/domain/escrow';
 import { MAINTENANCE_BATCH_SIZE, networkConfig } from '@/infrastructure/config/network';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
@@ -39,6 +39,8 @@ interface App {
   deploy: (p: DeployParams) => Promise<void>;
   registerRemaining: () => Promise<void>;
   configure: (t: ConfigureTerms) => Promise<void>;
+  /** v2: financing mode, financing commitments and loan dates. */
+  configureFinancing: (f: FinancingTerms) => Promise<void>;
   finalize: () => Promise<void>;
   addKycIssuer: (issuerId: string, publicKey: { x: string; y: string }) => Promise<void>;
   removeKycIssuer: (issuerId: string) => Promise<void>;
@@ -240,6 +242,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await refresh();
       });
     },
+    configureFinancing: async (f) => {
+      await guard(async () => {
+        const gw = await gateway();
+        await runAction(deployTracker, 'Configure financing', () => gw.configureFinancing(f));
+        await refresh();
+      });
+    },
     finalize: async () => {
       await guard(async () => {
         const gw = await gateway();
@@ -265,8 +274,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!contractAddress) return null;
       const saved = await guard(() => exportAuthorityKey(sharedVault(), contractAddress));
       if (saved) return saved;
-      // Not in the vault (e.g. the vault save failed right after a deploy): last resort, the in-memory copy.
-      return providersRef.current ? signingKeyHex(await providersRef.current.privateStateProvider.getSigningKey(contractAddress)) : null;
+      // Not in the vault (e.g. the vault save failed right after a deploy): last resort, the in-memory copy — but only
+      // if it really is the on-chain authority. midnight-js invents a random key in memory whenever it attaches to a
+      // contract it has no key for; showing that one would hand the admin a useless "backup".
+      if (!providersRef.current) return null;
+      const mem = signingKeyHex(await providersRef.current.privateStateProvider.getSigningKey(contractAddress));
+      if (!mem) return null;
+      return (await guard(async () => (await gateway()).keyStatus(mem))) === 'match' ? mem : null;
     },
     importAuthority: async (key) => {
       await guard(async () => {

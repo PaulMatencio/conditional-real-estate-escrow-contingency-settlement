@@ -3,12 +3,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Building, FileLock2, RefreshCw, Send } from 'lucide-react';
 import type { CaspIssuerKey } from '@/application/partyPorts';
 import { finalizeBlockers } from '@/application/partyService';
-import { checkTermsAgainstLedger, createTermsPackage } from '@/application/termsService';
+import { checkTermsAgainstLedger, createTermsPackage, lenderPackageOf } from '@/application/termsService';
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { isHex32, shortHex } from '@/domain/hex';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
-import { isTermsPackage, type TermsPackage } from '@/domain/terms';
+import { COMMITMENT_KEYS, TERMS_V1_MESSAGE, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useApp } from '../../providers/AppProvider';
@@ -18,7 +18,8 @@ import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { VaultGate } from '../party/PartySetup';
 import { FilePick, downloadJson, readJsonFile } from '../party/helpers';
 
-const RECIPIENTS = ['buyer', 'seller', 'resolver', 'custodian'] as const;
+const RECIPIENTS = ['buyer', 'seller', 'resolver', 'custodian', 'lender'] as const;
+type Recipient = (typeof RECIPIENTS)[number];
 
 /**
  * Admin, Phase 2 (§3.1.5, FR-TERMS-01/02/04, FR-DEPLOY-03/04): build the private terms package from the amount and
@@ -30,8 +31,8 @@ export function TermsKycTab() {
   const app = useApp();
   const esc = useEscrow();
   const [view, setView] = useState<EscrowView | null>(null);
-  const [form, setForm] = useState({ amount: '', buyer: '', seller: '' });
-  const [recip, setRecip] = useState<Record<(typeof RECIPIENTS)[number], string>>({ buyer: '', seller: '', resolver: '', custodian: '' });
+  const [form, setForm] = useState({ price: '', deposit: '', buyer: '', seller: '', lender: '', refund: true });
+  const [recip, setRecip] = useState<Record<Recipient, string>>({ buyer: '', seller: '', resolver: '', custodian: '', lender: '' });
   const [pass, setPass] = useState('');
   const [restorePass, setRestorePass] = useState('');
   const [keys, setKeys] = useState<CaspIssuerKey[]>([]);
@@ -69,9 +70,29 @@ export function TermsKycTab() {
   const check = pkg && view ? checkTermsAgainstLedger(termsCrypto, pkg, view) : null;
   const blockers = view ? finalizeBlockers(view, esc.record, termsCrypto, BigInt(Math.floor(Date.now() / 1000))) : [];
 
+  const mode = view?.financing.mode ?? null;
+  const loanMode = mode === 'Deposited';
+  const loanAmount = (() => {
+    if (!loanMode) return null;
+    if (!/^\d+$/.test(form.price.trim()) || !/^\d+$/.test(form.deposit.trim())) return null;
+    return BigInt(form.price.trim()) - BigInt(form.deposit.trim());
+  })();
+
   const generate = async () => {
     try {
-      const p = createTermsPackage(termsCrypto, { amount: form.amount, buyerPayout: form.buyer, sellerPayout: form.seller, contractAddress: addr, escrowColor: view?.escrowColor, escrowTicker: view?.escrowTicker });
+      if (!mode) throw new Error(t('adminTerms.needMode'));
+      const p = createTermsPackage(termsCrypto, {
+        price: form.price,
+        buyerDeposit: loanMode ? form.deposit : form.price,
+        buyerPayout: form.buyer,
+        sellerPayout: form.seller,
+        lenderPayout: loanMode ? form.lender : undefined,
+        refundOnLoss: loanMode ? form.refund : true,
+        mode: loanMode ? 'deposited' : 'attested',
+        contractAddress: addr,
+        escrowColor: view?.escrowColor,
+        escrowTicker: view?.escrowTicker
+      });
       await esc.updateRecord((r) => ({ ...r, terms: p }));
       setMsg({ tone: 'ok', text: t('adminTerms.generated') });
     } catch (e) {
@@ -88,6 +109,7 @@ export function TermsKycTab() {
     setMsg(null);
     try {
       const raw = await readJsonFile(f);
+      if (isV1TermsPackage(raw)) throw new Error(TERMS_V1_MESSAGE);
       let p: unknown = raw;
       if (isEnvelope(raw)) {
         const me = esc.identities.find((k) => k.publicKey === raw.recipient);
@@ -97,6 +119,7 @@ export function TermsKycTab() {
         if (!restorePass) throw new Error(t('terms.needPass'));
         p = await openWithPassphrase(raw, restorePass);
       }
+      if (isV1TermsPackage(p)) throw new Error(TERMS_V1_MESSAGE);
       if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
       if (p.contractAddress && p.contractAddress !== addr) throw new Error(t('terms.otherContract'));
       const bound: TermsPackage = { ...p, contractAddress: addr, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };
@@ -113,6 +136,22 @@ export function TermsKycTab() {
     }
   };
   const committedButMissing = !pkg && !!view?.commitments.amount;
+
+  /** The seven commitments go on-chain in two transactions: configure (3) and configureFinancing (4). */
+  const commit = async (p: TermsPackage) => {
+    await app.configure({ amountCommitment: p.commitments.amount, buyerPayoutCommitment: p.commitments.buyerPayout, sellerPayoutCommitment: p.commitments.sellerPayout });
+    await app.configureFinancing({
+      priceCommitment: p.commitments.price,
+      lenderShareCommitment: p.commitments.lenderShare,
+      lenderPayoutCommitment: p.commitments.lenderPayout,
+      loanTermsCommitment: p.commitments.loanTerms
+    });
+    await reload();
+  };
+
+  /** Recipients this escrow needs: the lender only in a loan deal (and it gets the lender package, not the full terms). */
+  const recipients = RECIPIENTS.filter((r) => r !== 'lender' || loanMode);
+  const sealFor = (r: Recipient, p: TermsPackage) => (r === 'lender' ? sealTo(lenderPackageOf(p), recip[r].trim(), r) : sealTo(p, recip[r].trim(), r));
 
   return (
     <div className="space-y-4">
@@ -134,33 +173,76 @@ export function TermsKycTab() {
             </div>
           </div>
         )}
+        {!mode && (
+          <div className="mb-3">
+            <Alert tone="warn">{t('adminTerms.needMode')}</Alert>
+          </div>
+        )}
+        {mode && (
+          <p className="mb-3 text-sm text-slate-300">
+            {t('financing.mode')}: <Badge tone="accent">{t(loanMode ? 'financing.modeLoan' : 'financing.modeCash')}</Badge>
+          </p>
+        )}
         <div className="grid gap-x-4 sm:grid-cols-3">
-          <Field label={`${t('terms.amount')} (${view?.escrowTicker ?? ''})`} htmlFor="t-amount">
-            <input id="t-amount" className="input" inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          <Field label={`${t('adminTerms.price')} (${view?.escrowTicker ?? ''})`} hint={t(loanMode ? 'adminTerms.priceHint' : 'adminTerms.priceCashHint')} htmlFor="t-price">
+            <input id="t-price" className="input" inputMode="numeric" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
           </Field>
+          {loanMode && (
+            <>
+              <Field label={`${t('adminTerms.deposit')} (${view?.escrowTicker ?? ''})`} hint={t('adminTerms.depositHint')} htmlFor="t-deposit">
+                <input id="t-deposit" className="input" inputMode="numeric" value={form.deposit} onChange={(e) => setForm({ ...form, deposit: e.target.value })} />
+              </Field>
+              <Field label={`${t('adminTerms.loan')} (${view?.escrowTicker ?? ''})`} hint={t('adminTerms.loanHint')}>
+                <p className={`input !border-transparent ${loanAmount !== null && loanAmount <= 0n ? 'text-bad' : ''}`} aria-live="polite">
+                  {loanAmount === null ? '—' : loanAmount.toString()}
+                </p>
+              </Field>
+            </>
+          )}
+        </div>
+        <div className="grid gap-x-4 sm:grid-cols-3">
           <Field label={t('adminTerms.buyerKey')} htmlFor="t-buyer" hint={t('adminTerms.keyHint')}>
             <input id="t-buyer" className="input mono" value={form.buyer} onChange={(e) => setForm({ ...form, buyer: e.target.value })} spellCheck={false} />
           </Field>
           <Field label={t('adminTerms.sellerKey')} htmlFor="t-seller">
             <input id="t-seller" className="input mono" value={form.seller} onChange={(e) => setForm({ ...form, seller: e.target.value })} spellCheck={false} />
           </Field>
+          {loanMode && (
+            <Field label={t('adminTerms.lenderKey')} hint={t('adminTerms.lenderKeyHint')} htmlFor="t-lender">
+              <input id="t-lender" className="input mono" value={form.lender} onChange={(e) => setForm({ ...form, lender: e.target.value })} spellCheck={false} />
+            </Field>
+          )}
         </div>
+        {loanMode && (
+          <label className="mb-3 flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={form.refund} onChange={(e) => setForm({ ...form, refund: e.target.checked })} />
+            <span>
+              <strong>{t('adminTerms.refund')}</strong>
+              <span className="block text-xs text-slate-400">{t(form.refund ? 'adminTerms.refundOn' : 'adminTerms.refundOff')}</span>
+            </span>
+          </label>
+        )}
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn-ghost" disabled={!esc.vaultUnlocked || (!!pkg && !!view?.commitments.amount)} onClick={() => void generate()}>
+          <button type="button" className="btn-ghost" disabled={!esc.vaultUnlocked || !mode || (!!pkg && !!view?.commitments.amount)} onClick={() => void generate()}>
             {t('adminTerms.generate')}
           </button>
           <button
             type="button"
             className="btn-primary"
             disabled={!pkg || busy || view?.status !== 'Initializing'}
-            onClick={() => pkg && void app.configure({ amountCommitment: pkg.commitments.amount, buyerPayoutCommitment: pkg.commitments.buyerPayout, sellerPayoutCommitment: pkg.commitments.sellerPayout })}
+            onClick={() => pkg && void commit(pkg)}
           >
             {t('adminTerms.commit')}
           </button>
         </div>
+        <p className="mt-1 text-xs text-slate-500">{t('adminTerms.commitHint')}</p>
         {pkg && (
           <div className="mt-3 space-y-1 text-sm">
-            {(['amount', 'buyerPayout', 'sellerPayout'] as const).map((k) => (
+            <p className="text-slate-300">
+              {t('adminTerms.price')}: <strong>{pkg.terms.price}</strong> · {t('adminTerms.deposit')}: <strong>{pkg.terms.amount}</strong> · {t('adminTerms.loan')}: <strong>{pkg.terms.lenderShare}</strong>
+              {BigInt(pkg.terms.lenderShare) > 0n && <> · {t(pkg.terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</>}
+            </p>
+            {COMMITMENT_KEYS.map((k) => (
               <div key={k} className="flex flex-wrap items-center gap-2">
                 <span className="w-24 text-slate-400">{k}</span>
                 <span className="mono">{shortHex(pkg.commitments[k], 12, 8)}</span>
@@ -174,8 +256,8 @@ export function TermsKycTab() {
       {pkg && (
         <Card title={t('adminTerms.distribute')} icon={<Send size={16} aria-hidden />}>
           <p className="mb-3 text-sm text-slate-400">{t('adminTerms.distributeHint')}</p>
-          {RECIPIENTS.map((r) => (
-            <Field key={r} label={t('adminTerms.envKey').replace('{who}', r)} hint={t(r === 'custodian' ? 'adminTerms.envFromCustodian' : 'adminTerms.envFromParty').replace('{who}', r)} htmlFor={`env-${r}`}>
+          {recipients.map((r) => (
+            <Field key={r} label={t('adminTerms.envKey').replace('{who}', r)} hint={t(r === 'custodian' ? 'adminTerms.envFromCustodian' : r === 'lender' ? 'adminTerms.envFromLender' : 'adminTerms.envFromParty').replace('{who}', r)} htmlFor={`env-${r}`}>
               <div className="flex gap-2">
                 <input id={`env-${r}`} className="input mono" value={recip[r]} onChange={(e) => setRecip({ ...recip, [r]: e.target.value })} spellCheck={false} />
                 <button
@@ -183,7 +265,7 @@ export function TermsKycTab() {
                   className="btn-ghost"
                   disabled={!recip[r].trim()}
                   onClick={() =>
-                    void sealTo(pkg, recip[r].trim(), r).then(
+                    void sealFor(r, pkg).then(
                       async (env) => {
                         downloadJson(`terms-for-${r}.json`, env);
                         if (r === 'custodian') await esc.updateRecord((x) => ({ ...x, backups: [...(x.backups ?? []), { at: Date.now(), kind: 'custodian' }] }));

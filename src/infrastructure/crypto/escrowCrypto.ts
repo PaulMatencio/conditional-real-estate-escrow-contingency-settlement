@@ -5,8 +5,8 @@
  */
 import * as rt from '@midnight-ntwrk/compact-runtime';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
-import type { AttestationBundle, TermsCommitments, WireAttestation, WirePrivateTerms } from '@/domain/terms';
-import { pureCircuits, type KycAttestation, type PrivateTerms, type SchnorrSignature } from '../contract/module';
+import type { AttestationBundle, LenderPackage, TermsCommitments, WireAttestation, WirePrivateTerms } from '@/domain/terms';
+import { pureCircuits, type KycAttestation, type LenderTerms, type PrivateTerms, type SchnorrSignature } from '../contract/module';
 import { randomBytes } from './identity';
 import { insecureContextMessage } from './aead';
 
@@ -19,20 +19,47 @@ export function termsFromWire(t: WirePrivateTerms): PrivateTerms {
     buyerPayout: { bytes: hex32ToBytes(t.buyerPayout, 'buyer payout key') },
     buyerSalt: hex32ToBytes(t.buyerSalt, 'buyer salt'),
     sellerPayout: { bytes: hex32ToBytes(t.sellerPayout, 'seller payout key') },
-    sellerSalt: hex32ToBytes(t.sellerSalt, 'seller salt')
+    sellerSalt: hex32ToBytes(t.sellerSalt, 'seller salt'),
+    price: BigInt(t.price.trim()),
+    priceSalt: hex32ToBytes(t.priceSalt, 'price salt'),
+    lenderShare: BigInt(t.lenderShare.trim()),
+    lenderShareSalt: hex32ToBytes(t.lenderShareSalt, 'loan amount salt'),
+    lenderPayout: { bytes: hex32ToBytes(t.lenderPayout, 'lender payout key') },
+    lenderPayoutSalt: hex32ToBytes(t.lenderPayoutSalt, 'lender salt'),
+    refundOnLoss: t.refundOnLoss,
+    loanTermsSalt: hex32ToBytes(t.loanTermsSalt, 'loan terms salt')
+  };
+}
+
+/** v2: the `lenderTerms` witness, from the lender package (or from the full terms, for a party refunding the lender). */
+export function lenderTermsFromWire(t: Pick<LenderPackage, 'lenderShare' | 'lenderShareSalt' | 'lenderPayout' | 'lenderPayoutSalt' | 'refundOnLoss' | 'loanTermsSalt'>): LenderTerms {
+  return {
+    lenderShare: BigInt(t.lenderShare.trim()),
+    lenderShareSalt: hex32ToBytes(t.lenderShareSalt, 'loan amount salt'),
+    lenderPayout: { bytes: hex32ToBytes(t.lenderPayout, 'lender payout key') },
+    lenderPayoutSalt: hex32ToBytes(t.lenderPayoutSalt, 'lender salt'),
+    refundOnLoss: t.refundOnLoss,
+    loanTermsSalt: hex32ToBytes(t.loanTermsSalt, 'loan terms salt')
   };
 }
 
 export const amountCommitment = (amount: bigint, saltHex: string): string => bytesToHex(pureCircuits.amountCommitmentOf(amount, hex32ToBytes(saltHex, 'salt')));
 export const payoutCommitment = (keyHex: string, saltHex: string): string =>
   bytesToHex(pureCircuits.payoutCommitmentOf({ bytes: hex32ToBytes(keyHex, 'payout key') }, hex32ToBytes(saltHex, 'salt')));
+export const priceCommitment = (price: bigint, saltHex: string): string => bytesToHex(pureCircuits.priceCommitmentOf(price, hex32ToBytes(saltHex, 'salt')));
+export const lenderShareCommitment = (share: bigint, saltHex: string): string => bytesToHex(pureCircuits.lenderShareCommitmentOf(share, hex32ToBytes(saltHex, 'salt')));
+export const loanTermsCommitment = (refundOnLoss: boolean, saltHex: string): string => bytesToHex(pureCircuits.loanTermsCommitmentOf(refundOnLoss, hex32ToBytes(saltHex, 'salt')));
 
-/** FR-TERMS-01: the three salted commitments the admin passes to `configure`. */
+/** FR-TERMS-01: the seven salted commitments (`configure` takes three, `configureFinancing` the other four). */
 export function commitmentsOf(t: WirePrivateTerms): TermsCommitments {
   return {
     amount: amountCommitment(BigInt(t.amount.trim()), t.amountSalt),
     buyerPayout: payoutCommitment(t.buyerPayout, t.buyerSalt),
-    sellerPayout: payoutCommitment(t.sellerPayout, t.sellerSalt)
+    sellerPayout: payoutCommitment(t.sellerPayout, t.sellerSalt),
+    price: priceCommitment(BigInt(t.price.trim()), t.priceSalt),
+    lenderShare: lenderShareCommitment(BigInt(t.lenderShare.trim()), t.lenderShareSalt),
+    lenderPayout: payoutCommitment(t.lenderPayout, t.lenderPayoutSalt),
+    loanTerms: loanTermsCommitment(t.refundOnLoss, t.loanTermsSalt)
   };
 }
 
@@ -45,6 +72,24 @@ export function vaultCoinOf(contractAddress: string, escrowColorHex: string, t: 
     nonce: pureCircuits.vaultNonceOf(contractSelfBytes(contractAddress), hex32ToBytes(t.buyerSalt), hex32ToBytes(t.sellerSalt)),
     color: hex32ToBytes(escrowColorHex, 'escrow color'),
     value: BigInt(t.amount)
+  };
+}
+
+/** v2: the lender's loan coin `{lenderNonceOf(self, shareSalt, payoutSalt), escrowColor, lenderShare}`. */
+export function loanCoinOf(contractAddress: string, escrowColorHex: string, t: Pick<WirePrivateTerms, 'lenderShare' | 'lenderShareSalt' | 'lenderPayoutSalt'>) {
+  return {
+    nonce: pureCircuits.lenderNonceOf(contractSelfBytes(contractAddress), hex32ToBytes(t.lenderShareSalt), hex32ToBytes(t.lenderPayoutSalt)),
+    color: hex32ToBytes(escrowColorHex, 'escrow color'),
+    value: BigInt(t.lenderShare)
+  };
+}
+
+/** v2: the buyer's top-up coin `{topUpNonceOf(self, buyerSalt, sellerSalt), escrowColor, lenderShare}`. */
+export function topUpCoinOf(contractAddress: string, escrowColorHex: string, t: WirePrivateTerms) {
+  return {
+    nonce: pureCircuits.topUpNonceOf(contractSelfBytes(contractAddress), hex32ToBytes(t.buyerSalt), hex32ToBytes(t.sellerSalt)),
+    color: hex32ToBytes(escrowColorHex, 'escrow color'),
+    value: BigInt(t.lenderShare)
   };
 }
 

@@ -38,7 +38,7 @@ export interface ChainAction {
 }
 
 /** Admin-only circuits (not in the party action table). */
-const ADMIN_CIRCUITS = new Set(['configure', 'addKycIssuer', 'removeKycIssuer', 'finalizeInitialization']);
+const ADMIN_CIRCUITS = new Set(['configure', 'configureFinancing', 'addKycIssuer', 'removeKycIssuer', 'finalizeInitialization']);
 
 /** Who could have sent it: one role when the contract allows only one, else the possible roles joined by "|". */
 export function inferActor(a: ChainAction): string {

@@ -44,7 +44,7 @@ mkdirSync(path.join(root, c.sdkDir), { recursive: true });
 writeFileSync(path.join(root, c.sdkDir, 'types.ts'), `${header}import type { JubjubPoint } from '@midnight-ntwrk/compact-runtime';
 export type { JubjubPoint };
 export type { KycAttestation, KycPolicy, SchnorrSignature } from '../../${c.managedDir}/contract/index.js';
-export { EscrowStatus, InitAttribute, Contingency } from '../../${c.managedDir}/contract/index.js';
+export { EscrowStatus, InitAttribute, Contingency, FinancingMode } from '../../${c.managedDir}/contract/index.js';
 
 export interface TxData {
   txId: string;
@@ -57,7 +57,7 @@ export const CIRCUITS = ${JSON.stringify(names)} as const;
 export type CircuitName = (typeof CIRCUITS)[number];
 `);
 writeFileSync(path.join(root, c.sdkDir, 'client.ts'), `${header}import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
-import type { Contingency, JubjubPoint, KycAttestation, KycPolicy, SchnorrSignature, TxData } from './types.js';
+import type { Contingency, FinancingMode, JubjubPoint, KycAttestation, KycPolicy, SchnorrSignature, TxData } from './types.js';
 
 type CallResult = { public: { txId: string; txHash: string; blockHeight: number } };
 type Found = { callTx: Record<string, (...a: any[]) => Promise<CallResult>>; deployTxData: { public: { contractAddress: string } } };
