@@ -5,7 +5,7 @@
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { AppError } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
-import { networkConfig } from '../config/network';
+import { indexerHttpUrl, networkConfig } from '../config/network';
 import { readContractState } from '../contract/chainState';
 import { maintenanceOf, toEscrowView, type LedgerInput } from '../contract/view';
 
@@ -13,7 +13,7 @@ let pdp: ReturnType<typeof indexerPublicDataProvider> | null = null;
 
 function provider() {
   if (!pdp) {
-    pdp = indexerPublicDataProvider(networkConfig.indexer, networkConfig.indexerWS);
+    pdp = indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS);
   }
   return pdp;
 }

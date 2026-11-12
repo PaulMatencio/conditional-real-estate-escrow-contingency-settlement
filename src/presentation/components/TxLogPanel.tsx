@@ -4,7 +4,7 @@ import { CloudDownload, ScrollText } from 'lucide-react';
 import { importChainHistory } from '@/application/chainHistory';
 import { displayStatus, toCsv, type TxLogEntry } from '@/application/txLog';
 import { shortHex } from '@/domain/hex';
-import { explorerTxUrl, networkConfig } from '@/infrastructure/config/network';
+import { explorerTxUrl, indexerHttpUrl, networkConfig } from '@/infrastructure/config/network';
 import { IndexerChainHistory } from '@/infrastructure/indexer/chainHistorySource';
 import { sharedTxLog } from '@/infrastructure/storage/txLogStore';
 import { formatDust } from '@/infrastructure/wallet/dust';
@@ -44,7 +44,7 @@ export function TxLogPanel({ contractAddress, importAddress, embedded = false }:
     setImporting(0);
     setImportMsg(null);
     try {
-      const source = new IndexerChainHistory(networkConfig.indexer, networkConfig.indexerWS);
+      const source = new IndexerChainHistory(indexerHttpUrl(), networkConfig.indexerWS);
       const { actions, complete } = await source.contractActions(importAddress, { signal: ac.signal, onProgress: (n) => setImporting(n) });
       const r = await log.transform((current) => importChainHistory(current, actions, { contractAddress: importAddress, network: networkConfig.networkId }));
       const text = t('txlog.importDone')

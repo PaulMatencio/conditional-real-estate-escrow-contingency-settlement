@@ -12,7 +12,7 @@ import type { EscrowView } from '@/domain/escrowView';
 import { bytesToHex, hexToBytes } from '@/domain/hex';
 import type { PartyCircuit } from '@/domain/lifecycle';
 import type { WirePrivateTerms } from '@/domain/terms';
-import { networkConfig } from '../config/network';
+import { indexerHttpUrl, networkConfig } from '../config/network';
 import { contractArgs, witnessInputs } from '../contract/callArgs';
 import { allCircuitIds, makeCompiledContract } from '../contract/compiled';
 import { readContractState } from '../contract/chainState';
@@ -28,7 +28,7 @@ import { IndexerChainHistory } from '../indexer/chainHistorySource';
  * (seller, resolver, or the buyer in another browser) find the vault coin without the depositor's help.
  */
 export async function findDepositTxHash(contractAddress: string): Promise<string | null> {
-  const { actions } = await new IndexerChainHistory(networkConfig.indexer, networkConfig.indexerWS, 60_000).contractActions(contractAddress);
+  const { actions } = await new IndexerChainHistory(indexerHttpUrl(), networkConfig.indexerWS, 60_000).contractActions(contractAddress);
   const deposit = [...actions].reverse().find((a) => a.kind === 'call' && a.entryPoint === 'depositToEscrow' && (a.result === 'SUCCESS' || a.result === null));
   return deposit?.txHash ?? null;
 }
@@ -169,7 +169,7 @@ const fail = (what: string) => (): never => {
 /** Indexer lookup of a transaction by hash (same query shape midnight-js uses). */
 export async function fetchTransaction(hash: string): Promise<{ raw: string; blockHash: string; blockHeight: number } | null> {
   const query = `query TX($offset: TransactionOffset!) { transactions(offset: $offset) { raw hash block { height hash } } }`;
-  const res = await fetch(networkConfig.indexer, {
+  const res = await fetch(indexerHttpUrl(), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ query, variables: { offset: { hash: hash.replace(/^0x/, '') } } })

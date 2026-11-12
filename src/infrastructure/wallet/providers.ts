@@ -8,7 +8,7 @@ import { MidnightBech32m, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } f
 import type { KeyValueStore } from '@/application/ports';
 import type { StepSink } from '@/application/deployProgress';
 import { compactText, deepMessage } from '@/domain/errors';
-import { networkConfig } from '../config/network';
+import { indexerHttpUrl, networkConfig } from '../config/network';
 import { ZK_ASSET_PATH } from '../contract/compiled';
 import { persistentPrivateStateProvider } from '../storage/privateStateProvider';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
@@ -116,7 +116,7 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
   const walletIndexer = indexerPublicDataProvider(cfg.indexerUri, cfg.indexerWsUri);
   const publicDataProvider =
     cfg.networkId === networkConfig.networkId
-      ? withFallback(indexerPublicDataProvider(networkConfig.indexer, networkConfig.indexerWS), walletIndexer)
+      ? withFallback(indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS), walletIndexer)
       : walletIndexer;
   // midnight-js 5 checks every artefact against the compiler's contract-manifest.json (served by the /zk route).
   const zkConfigProvider = new FetchZkConfigProvider<string>(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });

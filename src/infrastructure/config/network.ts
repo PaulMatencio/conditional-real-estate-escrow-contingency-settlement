@@ -36,3 +36,10 @@ export const MAINTENANCE_BATCH_SIZE = Math.min(10, Math.max(1, Math.floor(contra
 
 export const explorerTxUrl = (hash: string) => `${networkConfig.explorer}/tx/${hash}`;
 export const explorerContractUrl = (addr: string) => `${networkConfig.explorer}/contract/${addr}`;
+
+/**
+ * HTTP GraphQL endpoint of the configured indexer as the browser should call it: the same-origin `/api/indexer` proxy
+ * (see src/app/api/indexer/route.ts), so indexer error responses are never misreported as CORS failures. On the
+ * server and in tests, the indexer itself. WebSocket subscriptions keep using `networkConfig.indexerWS` directly.
+ */
+export const indexerHttpUrl = (): string => (typeof window !== 'undefined' ? `${window.location.origin}/api/indexer` : networkConfig.indexer);

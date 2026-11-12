@@ -234,7 +234,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     return gwRef.current;
   }, [mode, sim, contractAddress, session, prefs, record.terms]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { quiet?: boolean }) => {
     try {
       if (mode === 'simulator' && !sim) return;
       if (mode === 'wallet' && (!contractAddress || !session)) return;
@@ -250,14 +250,17 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         lastRound.current = round;
       }
     } catch (e) {
-      setError(friendlyMessage(e));
+      // The 15 s background poll stays quiet on a failed read (indexer hiccup, rate limit): the next poll retries and
+      // the last good view stays on screen. Reads the user asked for still report the error.
+      if (opts?.quiet) console.warn('[escrow] background refresh failed; retrying on the next poll', e);
+      else setError(friendlyMessage(e));
     }
   }, [mode, sim, contractAddress, session, gateway]);
 
   useEffect(() => {
     void refresh();
     if (mode !== 'wallet') return;
-    const id = setInterval(() => void refresh(), 15_000);
+    const id = setInterval(() => void refresh({ quiet: true }), 15_000);
     return () => clearInterval(id);
   }, [refresh, mode, simVersion]);
 
