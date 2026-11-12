@@ -8,7 +8,25 @@ export { KycAttestation, SchnorrSignature, kycMessage, kycReference,
          kycRevocationMessage, issuerRevocationMessage };
 
 // ============================================================
-// Conditional real-estate escrow with contingency settlement
+// Conditional real-estate escrow with contingency settlement — VERSION 2
+// (lender deposit, buyer top-up, loan-refusal refund term)
+//
+// v2 adds, for deals financed by a loan (FinancingMode.Deposited):
+//  - three committed amounts: total price = buyer share + lender share;
+//  - the lender deposits exactly its committed share (that deposit IS the
+//    financing approval) or refuses the loan; after a fixed loan offer
+//    expiry it may withdraw a deposit still waiting in ContingenciesPending;
+//  - the buyer may deposit the lender share itself (top-up) while no
+//    second coin is held;
+//  - the committed "loan refusal refund" term: on, a lost loan (refused or
+//    withdrawn) opens a top-up window, then the escrow is Refunded; off,
+//    the buyer must top up before the closing deadline or the seller keeps
+//    the buyer's deposit (Forfeited);
+//  - the release pays both coins to the seller; every unwind returns each
+//    coin to whoever deposited it.
+// Cash deals (FinancingMode.Attested) keep the v1 behaviour: one coin, and
+// the lender only attests. Design: "Escrow redesign — lender deposit and
+// loan-refusal term" (revision 3).
 //
 // Custody model: SHIELDED tokens (e.g. a MiCA EMT stablecoin issued as a
 // shielded Zswap token). The buyer's deposit is ONE shielded coin owned by
@@ -47,8 +65,15 @@ export enum EscrowStatus {
     Settled,               // approved for release to seller, not yet paid
     Refunded,              // approved for refund to buyer, not yet paid
     Expired,               // refundable to buyer, not yet paid
-    Closed,                // funds disbursed (terminal)
-    Cancelled              // abandoned before funding, no funds ever held (terminal)
+    Closed,                // every held coin paid out (terminal)
+    Cancelled,             // abandoned before funding, no funds ever held (terminal)
+    Forfeited              // v2: loan lost, refund term off, no top-up by the closing deadline: buyer coin to the seller
+}
+
+// v2: how the financing contingency is met.
+export enum FinancingMode {
+    Attested,              // cash deal: the lender only attests (v1 behaviour), lender share = 0
+    Deposited              // loan: the lender deposits its committed share (or the buyer tops up)
 }
 
 // Every term that may be missing at deployment and filled in later
@@ -64,7 +89,15 @@ export enum InitAttribute {
     ClosingDeadline,
     DisputeDeadline,
     KycIssuers,      // at least one trusted CASP issuer key registered
-    KycPolicy        // minimum KYC level / maximum AML risk score
+    KycPolicy,       // minimum KYC level / maximum AML risk score
+    // v2 (configureFinancing)
+    Financing,       // financing mode
+    Price,           // commitment to the total price
+    LenderShare,     // commitment to the lender share
+    LenderPayout,    // commitment to the lender's shielded payout key
+    LoanTerms,       // commitment to the loan refusal refund term
+    LoanOfferExpiry, // date from which the lender may withdraw (loan mode)
+    TopUpWindow      // seconds the buyer has to top up after a lost loan, refund term on (loan mode)
 }
 
 // ------------------------------------------------------------
@@ -79,13 +112,35 @@ export enum InitAttribute {
 
 // Private escrow terms, known to buyer, seller and admin, never on-chain.
 // The ledger holds a salted commitment to each part (see *CommitmentOf).
+// v2: `amount` is the BUYER SHARE (the buyer's own deposit); the total price,
+// the lender share, the lender payout key and the refund term are new.
 export struct PrivateTerms {
-    amount: Uint<128>,
+    amount: Uint<128>,                 // buyer share
     amountSalt: Bytes<32>,
     buyerPayout: ZswapCoinPublicKey,   // refunds go here (shielded)
     buyerSalt: Bytes<32>,
     sellerPayout: ZswapCoinPublicKey,  // the purchase price goes here (shielded)
-    sellerSalt: Bytes<32>
+    sellerSalt: Bytes<32>,
+    price: Uint<128>,                  // total price = amount + lenderShare
+    priceSalt: Bytes<32>,
+    lenderShare: Uint<128>,            // loan amount (0 in a cash deal)
+    lenderShareSalt: Bytes<32>,
+    lenderPayout: ZswapCoinPublicKey,  // the loan is repaid here on any unwind
+    lenderPayoutSalt: Bytes<32>,
+    refundOnLoss: Boolean,             // loan refusal refund term
+    loanTermsSalt: Bytes<32>
+}
+
+// v2: what the lender receives (the "lender package"): only the parts it
+// needs to fund, to refuse and to be repaid. No buyer share, no buyer or
+// seller payout key.
+export struct LenderTerms {
+    lenderShare: Uint<128>,
+    lenderShareSalt: Bytes<32>,
+    lenderPayout: ZswapCoinPublicKey,
+    lenderPayoutSalt: Bytes<32>,
+    refundOnLoss: Boolean,
+    loanTermsSalt: Bytes<32>
 }
 
 export struct KycPolicy {
@@ -102,7 +157,7 @@ export enum Contingency {
 export ledger status: EscrowStatus;
 export ledger lifecycleRound: Counter;
 export ledger correctionCount: Counter;   // how many results the resolver voided
-export ledger disbursed: Boolean;
+export ledger disbursed: Boolean;         // every held coin paid (status Closed)
 
 // ------------------------------------------------------------
 // Delayed initialization
@@ -164,12 +219,35 @@ export ledger titleWaived: Boolean;
 export ledger titleCommitment: Bytes<32>;
 export ledger voidedReportHistory: Map<Uint<64>, Bytes<32>>;
 
+// ------------------------------------------------------------
+// v2: financing by deposit
+// ------------------------------------------------------------
+export ledger financingMode: FinancingMode;
+export ledger priceCommitment: Bytes<32>;          // priceCommitmentOf(price, priceSalt)
+export ledger lenderShareCommitment: Bytes<32>;    // lenderShareCommitmentOf(lenderShare, lenderShareSalt)
+export ledger lenderPayoutCommitment: Bytes<32>;   // payoutCommitmentOf(lenderPayout, lenderPayoutSalt)
+export ledger loanTermsCommitment: Bytes<32>;      // loanTermsCommitmentOf(refundOnLoss, loanTermsSalt)
+export ledger loanOfferExpiry: Uint<64>;           // unix seconds; lender may withdraw from here on
+export ledger topUpWindow: Uint<64>;               // seconds
+export ledger loanHeld: Boolean;                   // the lender's coin is in the contract
+export ledger topUpHeld: Boolean;                  // the buyer's top-up coin is in the contract
+export ledger loanLost: Boolean;                   // the lender refused or withdrew
+export ledger loanWithdrawn: Boolean;              // ... by withdrawing (final, cannot be voided)
+export ledger loanLostRefund: Boolean;             // the refund term, disclosed when the loan is lost
+export ledger topUpWindowEnd: Uint<64>;            // set when the loan is lost with the refund term on
+export ledger buyerCoinPaid: Boolean;              // buyer coin (and top-up) paid out
+export ledger secondCoinPaid: Boolean;             // loan or top-up coin paid out
+
 witness localSecretKey(): Bytes<32>;
 // Openings of amountCommitment / buyerPayoutCommitment / sellerPayoutCommitment.
 witness privateTerms(): PrivateTerms;
 // The vault coin with its Merkle-tree index (assigned by the chain when the
 // deposit is confirmed; the dApp reads it from the indexer / zswap state).
 witness vaultCoin(): QualifiedShieldedCoinInfo;
+// v2: the second coin (the lender's loan coin or the buyer's top-up coin).
+witness secondCoin(): QualifiedShieldedCoinInfo;
+// v2: the lender package (lender circuits only).
+witness lenderTerms(): LenderTerms;
 // Buyer's private KYC attestation, the CASP signature and the issuer id.
 witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
 
@@ -218,6 +296,14 @@ constructor(
     titleSubmitted = false;
     titleCleared = false;
     titleWaived = false;
+    financingMode = FinancingMode.Attested;
+    loanHeld = false;
+    topUpHeld = false;
+    loanLost = false;
+    loanWithdrawn = false;
+    loanLostRefund = false;
+    buyerCoinPaid = false;
+    secondCoinPaid = false;
 
     applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
                 sellerPayout, amount, deadline, disputeEnd, policy);
@@ -271,7 +357,7 @@ circuit onlyTitleAgent(): [] {
 // ============================================================
 // Number of InitAttribute members; keep in sync with the enum.
 circuit isFullyConfigured(): Boolean {
-    return configured.size() == 11;
+    return configured.size() == 18;
 }
 
 // Writes every attribute passed as some(v); none() leaves it unchanged.
@@ -349,6 +435,53 @@ export circuit configure(
     configChanged();
 }
 
+// v2: financing terms, same rules as configure(): admin only, while
+// Initializing, any change resets both acceptances. Cash deals configure it
+// too (mode Attested, lender share 0) so every escrow commits to a price.
+export circuit configureFinancing(
+    mode: Maybe<FinancingMode>,
+    price: Maybe<Bytes<32>>,
+    lenderShare: Maybe<Bytes<32>>,
+    lenderPayout: Maybe<Bytes<32>>,
+    loanTerms: Maybe<Bytes<32>>,
+    offerExpiry: Maybe<Uint<64>>,
+    window: Maybe<Uint<64>>
+): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const m = disclose(mode);
+    if (m.is_some) { financingMode = m.value; configured.insert(InitAttribute.Financing); }
+    const p = disclose(price);
+    if (p.is_some) {
+        assert(p.value != pad(32, ""), "Price commitment cannot be empty");
+        priceCommitment = p.value;
+        configured.insert(InitAttribute.Price);
+    }
+    const ls = disclose(lenderShare);
+    if (ls.is_some) {
+        assert(ls.value != pad(32, ""), "Lender share commitment cannot be empty");
+        lenderShareCommitment = ls.value;
+        configured.insert(InitAttribute.LenderShare);
+    }
+    const lp = disclose(lenderPayout);
+    if (lp.is_some) {
+        assert(lp.value != pad(32, ""), "Lender payout commitment cannot be empty");
+        lenderPayoutCommitment = lp.value;
+        configured.insert(InitAttribute.LenderPayout);
+    }
+    const lt = disclose(loanTerms);
+    if (lt.is_some) {
+        assert(lt.value != pad(32, ""), "Loan terms commitment cannot be empty");
+        loanTermsCommitment = lt.value;
+        configured.insert(InitAttribute.LoanTerms);
+    }
+    const oe = disclose(offerExpiry);
+    if (oe.is_some) { loanOfferExpiry = oe.value; configured.insert(InitAttribute.LoanOfferExpiry); }
+    const w = disclose(window);
+    if (w.is_some) { topUpWindow = w.value; configured.insert(InitAttribute.TopUpWindow); }
+    configChanged();
+}
+
 circuit configChanged(): [] {
     buyerAccepted = false;
     sellerAccepted = false;
@@ -414,6 +547,11 @@ export circuit finalizeInitialization(): [] {
     assert(titleAgentId != sellerId, "Title agent must be independent from seller");
     assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
     assert(blockTimeLt(closingDeadline), "Closing deadline is already in the past");
+    if (financingMode == FinancingMode.Deposited) {
+        assert(lenderId != buyerId, "Lender must be distinct from the buyer when it deposits the loan");
+        assert(loanOfferExpiry <= closingDeadline, "Loan offer expiry must not be after the closing deadline");
+        assert(topUpWindow > 0, "Top-up window must be positive");
+    }
 
     status = EscrowStatus.Created;
     lifecycleRound.increment(1);
@@ -431,6 +569,20 @@ circuit anyFailed(): Boolean {
     return (inspectionSubmitted && !inspectionPassed) ||
            (financingSubmitted && !financingApproved) ||
            (titleSubmitted && !titleCleared);
+}
+// v2: a failure that lets the buyer cancel and be refunded. In loan mode a
+// lost loan counts only when the refund term is on (the buyer then gives up
+// its top-up window early); with the term off it must top up or forfeit.
+circuit refundableFailure(): Boolean {
+    const otherFailed = (inspectionSubmitted && !inspectionPassed) ||
+                        (titleSubmitted && !titleCleared);
+    if (financingMode == FinancingMode.Deposited) {
+        return otherFailed || (loanLost && loanLostRefund && !topUpHeld);
+    }
+    return otherFailed || (financingSubmitted && !financingApproved);
+}
+circuit secondCoinHeld(): Boolean {
+    return loanHeld || topUpHeld;
 }
 circuit advanceIfAllCleared(): [] {
     if (allCleared()) {
@@ -450,12 +602,33 @@ export pure circuit amountCommitmentOf(amount: Uint<128>, salt: Bytes<32>): Byte
 export pure circuit payoutCommitmentOf(key: ZswapCoinPublicKey, salt: Bytes<32>): Bytes<32> {
     return persistentHash<[Bytes<32>, Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:payout:v1"), key.bytes, salt]);
 }
+// v2 commitments.
+export pure circuit priceCommitmentOf(price: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:price:v2"), price, salt]);
+}
+export pure circuit lenderShareCommitmentOf(share: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:lender-share:v2"), share, salt]);
+}
+export pure circuit loanTermsCommitmentOf(refundOnLoss: Boolean, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Boolean, Bytes<32>]>([pad(32, "re-escrow:loan-terms:v2"), refundOnLoss, salt]);
+}
+
 // Nonce of the single vault coin. Deterministic, so buyer, seller and
 // resolver-side tooling that know the terms can rebuild the coin without
 // the depositor; bound to this contract and to secrets the notary's
 // amount opening does not reveal.
 export pure circuit vaultNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSalt: Bytes<32>): Bytes<32> {
     return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:vault-nonce:v1"), self, buyerSalt, sellerSalt]);
+}
+
+// v2: nonce of the lender's loan coin (from lender-package secrets only, so
+// the lender can build it) and of the buyer's top-up coin (from the buyer
+// and seller salts, under its own label: never equal to the vault nonce).
+export pure circuit lenderNonceOf(self: Bytes<32>, shareSalt: Bytes<32>, payoutSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:lender-nonce:v2"), self, shareSalt, payoutSalt]);
+}
+export pure circuit topUpNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:topup-nonce:v2"), self, buyerSalt, sellerSalt]);
 }
 
 // Nonce of the coin a payout creates (sendShielded evolves the input
@@ -467,8 +640,9 @@ export pure circuit payoutNonceOf(vaultNonce: Bytes<32>): Bytes<32> {
     ));
 }
 
-// Opens all three commitments from the private witness. Only the boolean
-// result is disclosed; amount and keys stay private.
+// Opens all seven commitments from the private witness and checks that the
+// shares add up to the price. Only the boolean results are disclosed;
+// amounts and keys stay private.
 circuit openTerms(): PrivateTerms {
     const t = privateTerms();
     assert(disclose(amountCommitmentOf(t.amount, t.amountSalt)) == amountCommitment,
@@ -477,6 +651,32 @@ circuit openTerms(): PrivateTerms {
            "ERROR_TERMS_MISMATCH: buyer payout key");
     assert(disclose(payoutCommitmentOf(t.sellerPayout, t.sellerSalt)) == sellerPayoutCommitment,
            "ERROR_TERMS_MISMATCH: seller payout key");
+    assert(disclose(priceCommitmentOf(t.price, t.priceSalt)) == priceCommitment,
+           "ERROR_TERMS_MISMATCH: price");
+    assert(disclose(lenderShareCommitmentOf(t.lenderShare, t.lenderShareSalt)) == lenderShareCommitment,
+           "ERROR_TERMS_MISMATCH: lender share");
+    assert(disclose(payoutCommitmentOf(t.lenderPayout, t.lenderPayoutSalt)) == lenderPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: lender payout key");
+    assert(disclose(loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)) == loanTermsCommitment,
+           "ERROR_TERMS_MISMATCH: loan terms");
+    assert(disclose(t.amount + t.lenderShare == t.price), "ERROR_TERMS_MISMATCH: price is not buyer share + lender share");
+    if (financingMode == FinancingMode.Deposited) {
+        assert(disclose(t.lenderShare > 0), "ERROR_TERMS_MISMATCH: loan mode needs a lender share");
+    } else {
+        assert(disclose(t.lenderShare == 0), "ERROR_TERMS_MISMATCH: a cash deal has no lender share");
+    }
+    return t;
+}
+
+// v2: opens the lender package (lender share, lender payout key, refund term).
+circuit openLenderTerms(): LenderTerms {
+    const t = lenderTerms();
+    assert(disclose(lenderShareCommitmentOf(t.lenderShare, t.lenderShareSalt)) == lenderShareCommitment,
+           "ERROR_TERMS_MISMATCH: lender share");
+    assert(disclose(payoutCommitmentOf(t.lenderPayout, t.lenderPayoutSalt)) == lenderPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: lender payout key");
+    assert(disclose(loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)) == loanTermsCommitment,
+           "ERROR_TERMS_MISMATCH: loan terms");
     return t;
 }
 
@@ -486,6 +686,27 @@ circuit expectedVaultCoin(t: PrivateTerms): ShieldedCoinInfo {
         color: escrowColor,
         value: t.amount
     };
+}
+circuit expectedLoanCoin(share: Uint<128>, shareSalt: Bytes<32>, payoutSalt: Bytes<32>): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: lenderNonceOf(kernel.self().bytes, shareSalt, payoutSalt),
+        color: escrowColor,
+        value: share
+    };
+}
+circuit expectedTopUpCoin(t: PrivateTerms): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: topUpNonceOf(kernel.self().bytes, t.buyerSalt, t.sellerSalt),
+        color: escrowColor,
+        value: t.lenderShare
+    };
+}
+// The second coin the contract holds (loan or top-up), as the full terms define it.
+circuit expectedSecondCoin(t: PrivateTerms): ShieldedCoinInfo {
+    if (loanHeld) {
+        return expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt);
+    }
+    return expectedTopUpCoin(t);
 }
 
 // Spends the whole vault coin to `recipient` (a shielded coin public key).
@@ -500,12 +721,31 @@ circuit payOutVault(t: PrivateTerms, recipient: ZswapCoinPublicKey): [] {
         disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
         "ERROR_VAULT_COIN_MISMATCH"
     );
+    sendInFull(q, recipient);
+}
+// v2: spends the second held coin, which must be exactly `e`, in full to `recipient`.
+circuit payOutSecond(e: ShieldedCoinInfo, recipient: ZswapCoinPublicKey): [] {
+    const q = secondCoin();
+    assert(
+        disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
+        "ERROR_SECOND_COIN_MISMATCH"
+    );
+    sendInFull(q, recipient);
+}
+circuit sendInFull(q: QualifiedShieldedCoinInfo, recipient: ZswapCoinPublicKey): [] {
     const r = sendShielded(
         disclose(q),
         left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient)),
-        disclose(t.amount)
+        disclose(q.value)
     );
-    assert(!disclose(r.change.is_some), "Vault must be paid out in full");
+    assert(!disclose(r.change.is_some), "Coin must be paid out in full");
+}
+// v2: the escrow closes once every coin it holds has been paid out.
+circuit closeIfAllPaid(): [] {
+    if (buyerCoinPaid && (!secondCoinHeld() || secondCoinPaid)) {
+        disbursed = true;
+        status = EscrowStatus.Closed;
+    }
 }
 
 // ============================================================
@@ -548,7 +788,8 @@ export circuit submitSellerKyc(): [] {
         status == EscrowStatus.ContingenciesPending ||
         status == EscrowStatus.ReadyToClose ||
         status == EscrowStatus.Disputed ||
-        status == EscrowStatus.Settled,
+        status == EscrowStatus.Settled ||
+        status == EscrowStatus.Forfeited,   // v2: needed to claim a forfeited deposit
         "Seller KYC cannot be submitted in current state"
     );
     onlySeller();
@@ -650,6 +891,120 @@ export circuit depositToEscrow(coin: ShieldedCoinInfo): [] {
 }
 
 // ============================================================
+// v2: FINANCING BY DEPOSIT (FinancingMode.Deposited)
+// ============================================================
+circuit onlyLoanMode(): [] {
+    assert(financingMode == FinancingMode.Deposited, "Not a loan-financed escrow");
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+}
+
+// The lender funds the loan: exactly its committed share, before the loan
+// offer expiry. The deposit IS the financing approval.
+export circuit depositLoan(coin: ShieldedCoinInfo, letterHash: Bytes<32>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    assert(!loanLost, "The loan was already refused or withdrawn");
+    assert(blockTimeLt(loanOfferExpiry), "Loan offer has expired");
+    const h = disclose(letterHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
+    const t = openLenderTerms();
+    const e = expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_LOAN_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
+    loanHeld = true;
+    financingSubmitted = true;
+    financingApproved = true;
+    financingLetter = h;
+    advanceIfAllCleared();
+}
+
+// Records a lost loan (refused or withdrawn). With the refund term on, the
+// buyer's top-up window starts. A circuit cannot read the clock, only compare
+// it: `now` is the caller's current time, accepted within 10 minutes of the
+// block time.
+circuit loseLoan(refundOnLoss: Boolean, now: Uint<64>): [] {
+    loanLost = true;
+    financingSubmitted = true;
+    financingApproved = false;
+    const refund = disclose(refundOnLoss);
+    loanLostRefund = refund;
+    if (refund) {
+        const t = disclose(now);
+        assert(blockTimeGte(t), "Time is in the future");
+        assert(blockTimeLt((t + 600) as Uint<64>), "Time is too old");
+        const end = (t + topUpWindow) as Uint<64>;
+        topUpWindowEnd = end < closingDeadline ? end : closingDeadline;
+    }
+}
+
+// The lender refuses the loan (before depositing anything).
+export circuit declineLoan(letterHash: Bytes<32>, now: Uint<64>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    assert(!loanLost, "The loan was already refused or withdrawn");
+    const h = disclose(letterHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
+    const t = openLenderTerms();
+    financingLetter = h;
+    loseLoan(t.refundOnLoss, now);
+}
+
+// From the loan offer expiry, while the escrow is still in review, the
+// lender takes its deposit back. Treated exactly like a refusal.
+export circuit withdrawLoan(now: Uint<64>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(loanHeld && !secondCoinPaid, "No loan deposit to withdraw");
+    assert(blockTimeGte(loanOfferExpiry), "Loan offer has not expired yet");
+    const t = openLenderTerms();
+    payOutSecond(expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt), t.lenderPayout);
+    loanHeld = false;
+    loanWithdrawn = true;
+    loseLoan(t.refundOnLoss, now);
+}
+
+// The buyer deposits the lender share itself (its KYC is checked again).
+// Refund term on and loan lost: only inside the top-up window.
+export circuit depositTopUp(coin: ShieldedCoinInfo): [] {
+    onlyLoanMode();
+    onlyBuyer();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    if (loanLost && loanLostRefund) {
+        assert(blockTimeLt(topUpWindowEnd), "Top-up window is over");
+    } else {
+        assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    }
+    const t = openTerms();
+    verifyBuyerKyc(t);
+    const e = expectedTopUpCoin(t);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_TOPUP_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
+    topUpHeld = true;
+    financingSubmitted = true;
+    financingApproved = true;
+    advanceIfAllCleared();
+}
+
+// Refund term on, loan lost, window over without a top-up: anyone may move
+// the escrow to Refunded.
+export circuit endTopUpWindow(): [] {
+    onlyLoanMode();
+    assert(loanLost && loanLostRefund, "No top-up window is running");
+    assert(!topUpHeld, "The buyer has topped up");
+    assert(blockTimeGte(topUpWindowEnd), "Top-up window is not over");
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
 // CONTINGENCIES
 // ============================================================
 export circuit openContingencyReview(): [] {
@@ -676,6 +1031,7 @@ export circuit submitInspection(passed: Boolean, reportHash: Bytes<32>): [] {
 }
 export circuit submitFinancing(approved: Boolean, reportHash: Bytes<32>): [] {
     assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: the lender deposits or refuses the loan");
     assert(!financingSubmitted, "Financing outcome already submitted");
     onlyLender();
     const h = disclose(reportHash);
@@ -710,6 +1066,7 @@ export circuit waiveContingency(which: Contingency): [] {
         inspectionPassed = true;
         inspectionWaived = true;
     } else if (c == Contingency.Financing) {
+        assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: top up instead of waiving financing");
         assert(!(financingSubmitted && financingApproved), "Financing already approved");
         financingSubmitted = true;
         financingApproved = true;
@@ -730,7 +1087,7 @@ export circuit cancelAndRefund(): [] {
         "Escrow is not in contingency review"
     );
     onlyBuyer();
-    assert(anyFailed(), "No submitted contingency has failed");
+    assert(refundableFailure(), "No submitted contingency has failed");
     status = EscrowStatus.Refunded;
     lifecycleRound.increment(1);
 }
@@ -770,7 +1127,13 @@ export circuit expireEscrow(): [] {
         );
         assert(blockTimeGte(closingDeadline), "Closing deadline has not expired");
     }
-    status = EscrowStatus.Expired;
+    // v2: loan lost, refund term off, no top-up: the buyer forfeits its deposit.
+    // (A disputed escrow always expires to a refund.)
+    if (status != EscrowStatus.Disputed && loanLost && !loanLostRefund && !topUpHeld) {
+        status = EscrowStatus.Forfeited;
+    } else {
+        status = EscrowStatus.Expired;
+    }
     lifecycleRound.increment(1);
 }
 
@@ -827,6 +1190,14 @@ export circuit voidContingencyResult(which: Contingency): [] {
         inspectionReport = pad(32, "");
     } else if (c == Contingency.Financing) {
         assert(financingSubmitted && !financingWaived, "No attested financing to void");
+        if (financingMode == FinancingMode.Deposited) {
+            // Only a refusal can be voided: a deposit is refunded, not erased,
+            // and a withdrawal is final.
+            assert(loanLost && !loanWithdrawn && !topUpHeld, "Only a loan refusal can be voided");
+            loanLost = false;
+            loanLostRefund = false;
+            topUpWindowEnd = 0;
+        }
         voidedReportHistory.insert(idx, financingLetter);
         financingSubmitted = false;
         financingApproved = false;
@@ -863,33 +1234,85 @@ export circuit releaseToSeller(): [] {
         status == EscrowStatus.ReadyToClose || status == EscrowStatus.Settled,
         "Escrow is not releasable to seller"
     );
-    assert(!disbursed, "Funds already disbursed");
+    assert(!buyerCoinPaid, "Funds already disbursed");
     if (status == EscrowStatus.ReadyToClose) {
         onlyBuyerOrSeller();
     } else {
         onlyDisputeResolver();
     }
+    requireUsableSellerKyc();
+    const t = openTerms();
+    if (financingMode == FinancingMode.Deposited) {
+        // v2: the full price = buyer coin + the second coin (loan or top-up).
+        assert(secondCoinHeld(), "The loan (or the buyer's top-up) is not deposited");
+        payOutSecond(expectedSecondCoin(t), t.sellerPayout);
+        secondCoinPaid = true;
+    }
+    payOutVault(t, t.sellerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+circuit requireUsableSellerKyc(): [] {
     assert(sellerKycVerified, "ERROR_SELLER_KYC_REQUIRED");
     assert(kycIssuers.member(sellerKycIssuer), "ERROR_NOT_WHITELISTED: seller KYC issuer was revoked");
     assert(!revokedKycRefs.member(sellerKycRef), "ERROR_KYC_REVOKED");
     assert(blockTimeLt(sellerKycValidUntil), "ERROR_KYC_EXPIRED");
-    const t = openTerms();
-    disbursed = true;
-    status = EscrowStatus.Closed;
-    payOutVault(t, t.sellerPayout);
-    lifecycleRound.increment(1);
 }
 
+// Pays the buyer coin (and the buyer's top-up, if any) back to the buyer.
+// The escrow closes once every held coin is paid (see refundLender).
 export circuit refundBuyer(): [] {
     assert(
         status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
         "Escrow is not refundable"
     );
-    assert(!disbursed, "Funds already disbursed");
+    assert(!buyerCoinPaid, "Funds already disbursed");
     onlyParty();
     const t = openTerms();
-    disbursed = true;
-    status = EscrowStatus.Closed;
+    if (topUpHeld) {
+        payOutSecond(expectedTopUpCoin(t), t.buyerPayout);
+        secondCoinPaid = true;
+    }
     payOutVault(t, t.buyerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// v2: pays the lender's loan coin back to the lender payout key on any
+// unwind. The lender (with its package) or any party may trigger it.
+export circuit refundLender(): [] {
+    assert(
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        "Escrow is not refundable"
+    );
+    assert(loanHeld && !secondCoinPaid, "No loan deposit to refund");
+    const id = roleId();
+    assert(
+        disclose(id == lenderId) || disclose(id == buyerId) ||
+        disclose(id == sellerId) || disclose(id == resolverId),
+        "Caller is not the lender, buyer, seller or resolver"
+    );
+    const t = openLenderTerms();
+    payOutSecond(expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt), t.lenderPayout);
+    secondCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// v2: loan lost with the refund term off and no top-up by the closing
+// deadline: the seller keeps the buyer's deposit (seller KYC required, as
+// for a release). Any loan coin was already withdrawn.
+export circuit claimForfeit(): [] {
+    assert(status == EscrowStatus.Forfeited, "Escrow is not forfeited");
+    assert(!buyerCoinPaid, "Funds already disbursed");
+    onlySeller();
+    requireUsableSellerKyc();
+    const t = openTerms();
+    payOutVault(t, t.sellerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
     lifecycleRound.increment(1);
 }
