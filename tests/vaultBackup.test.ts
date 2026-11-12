@@ -129,3 +129,15 @@ describe('party / notary scope', () => {
     expect(again.adminSkipped).toBe(false);
   });
 });
+
+describe('v2 lender fields', () => {
+  it('fills in the lender terms and the second-coin index, and reports a different lender package', async () => {
+    const lt = { format: 'EscrowLenderTermsV2', price: '10', priceSalt: hex(1), lenderShare: '6', lenderShareSalt: hex(2), lenderPayout: hex(3), lenderPayoutSalt: hex(4), refundOnLoss: true, loanTermsSalt: hex(5), commitments: { price: hex(6), lenderShare: hex(7), lenderPayout: hex(8), loanTerms: hex(9) }, createdAt: 1 } as const;
+    const added = mergeRecord({ secondCoin: { kind: 'loan' } }, { lenderTerms: lt, secondCoin: { kind: 'loan', index: '7' } }, 'c');
+    expect(added.record.lenderTerms).toEqual(lt);
+    expect(added.record.secondCoin).toEqual({ kind: 'loan', index: '7' });
+    expect(added.added).toEqual(['c: lender terms', 'c: loan coin index']);
+    const other = mergeRecord({ lenderTerms: lt }, { lenderTerms: { ...lt, commitments: { ...lt.commitments, price: hex(0x0a) } } }, 'c');
+    expect(other.conflicts).toEqual(['c: lender terms differ (kept the current ones)']);
+  });
+});

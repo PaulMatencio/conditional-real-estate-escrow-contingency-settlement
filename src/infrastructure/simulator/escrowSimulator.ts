@@ -72,7 +72,9 @@ export class EscrowSimulator {
         secretKey: () => self.inputs.secretKey(),
         privateTerms: () => (self.inputs.privateTerms ?? missing('the private terms'))(),
         kycAttestation: () => (self.inputs.kycAttestation ?? missing('a KYC attestation'))(),
-        vaultCoin: () => (self.inputs.vaultCoin ?? missing('the vault coin'))()
+        vaultCoin: () => (self.inputs.vaultCoin ?? missing('the vault coin'))(),
+        secondCoin: () => (self.inputs.secondCoin ?? missing('the loan or top-up coin'))(),
+        lenderTerms: () => (self.inputs.lenderTerms ?? missing('the lender terms'))()
       })
     );
   }
@@ -186,12 +188,15 @@ export class EscrowSimulator {
       now: async () => BigInt(sim.time),
       async call<C extends PartyCircuit>(circuit: C, args: CircuitArgs[C], material: CallMaterial): Promise<CallReceipt> {
         const v = sim.view();
-        const ctx = { contractAddress: sim.contractAddress, escrowColor: v.escrowColor, material };
+        const ctx = { contractAddress: sim.contractAddress, escrowColor: v.escrowColor, material, now: BigInt(sim.time) };
         const receipt = await sim.run(circuit, contractArgs(circuit, args, ctx), witnessInputs(ctx));
-        // The simulator has no Merkle tree: the single contract-owned coin is index 0.
-        return circuit === 'depositToEscrow' ? { ...receipt, vaultIndex: 0n } : receipt;
+        // The simulator has no Merkle tree: the buyer's coin is index 0, the second coin (loan or top-up) index 1.
+        if (circuit === 'depositToEscrow') return { ...receipt, vaultIndex: 0n };
+        if (circuit === 'depositLoan' || circuit === 'depositTopUp') return { ...receipt, vaultIndex: 1n };
+        return receipt;
       },
       locateVaultIndex: async () => 0n,
+      locateCoinIndex: async (c) => (c === 'depositToEscrow' ? 0n : 1n),
       coinPublicKey: async () => coinPublicKey,
       shieldedBalance: async () => null
     };

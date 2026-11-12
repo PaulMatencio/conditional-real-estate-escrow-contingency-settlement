@@ -9,7 +9,7 @@ import { Countdown, fmtTime } from './helpers';
 
 const PATH: StatusName[] = ['Initializing', 'Created', 'Funded', 'ContingenciesPending', 'ReadyToClose', 'Closed'];
 const tone = (s: StatusName) =>
-  s === 'Closed' ? 'ok' : s === 'Cancelled' || s === 'Refunded' || s === 'Expired' ? 'bad' : s === 'Disputed' ? 'warn' : s === 'Initializing' ? 'muted' : 'accent';
+  s === 'Closed' ? 'ok' : s === 'Cancelled' || s === 'Refunded' || s === 'Expired' || s === 'Forfeited' ? 'bad' : s === 'Disputed' ? 'warn' : s === 'Initializing' ? 'muted' : 'accent';
 
 /** Recommendation 3: who can still change this contract's rules, read from the chain. */
 export function AuthorityBadge({ maintenance }: { maintenance: MaintenanceStatus | null }) {
@@ -56,6 +56,23 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
           <Stat label={t('deadline.closing')} tip={t('tip.deadline.closing')} value={<span className="text-sm">{fmtTime(view.closingDeadline)}</span>} />
           <Stat label={t('deadline.dispute')} tip={t('tip.deadline.dispute')} value={<span className="text-sm">{fmtTime(view.disputeDeadline)}</span>} />
         </div>
+        {view.financing.mode && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400" aria-live="polite">
+            <span>{t('financing.mode')}:</span>
+            <Badge tone="accent">{t(view.financing.mode === 'Deposited' ? 'financing.modeLoan' : 'financing.modeCash')}</Badge>
+            {view.financing.mode === 'Deposited' && (
+              <>
+                {view.financing.loanHeld && <Badge tone="ok">{t('status.loanIn')}</Badge>}
+                {view.financing.topUpHeld && <Badge tone="ok">{t('status.topUpIn')}</Badge>}
+                {view.financing.loanLost && <Badge tone="warn">{t(view.financing.loanWithdrawn ? 'status.loanWithdrawn' : 'status.loanRefused')}</Badge>}
+                {view.financing.loanLost && <Badge tone={view.financing.loanLostRefund ? 'muted' : 'bad'}>{t(view.financing.loanLostRefund ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</Badge>}
+                <span>
+                  {t('financing.expiry')}: {fmtTime(view.financing.loanOfferExpiry)}
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </Card>
 
       {view.status === 'Initializing' && (

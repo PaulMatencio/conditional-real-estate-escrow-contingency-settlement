@@ -15,6 +15,8 @@ import { StatusOverview } from './StatusOverview';
 import { TermsPanel } from './TermsPanel';
 import { TimelinePanel } from './TimelinePanel';
 import { TxLogPanel } from '../TxLogPanel';
+import { LenderTermsCard, LoanCard } from './LenderPanel';
+import { TopUpCard } from './TopUpCard';
 import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 
 /**
@@ -26,6 +28,8 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
   const { view, now, error, setError, vaultUnlocked, contractAddress, setContractAddress, mode } = useEscrow();
   const { progress } = useApp();
   const [role, setRole] = useState<PartyRole>(initial);
+  // Contract v2: in a loan-financed escrow the lender deposits the loan instead of attesting.
+  const loanMode = view?.financing.mode === 'Deposited';
 
   return (
     <main id="main" className="mx-auto max-w-6xl space-y-4 px-4 py-6">
@@ -55,14 +59,17 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <RoleKeyCard role={role} onRoleChange={setRole} />
-          {(role === 'buyer' || role === 'seller') && <PayoutKeyCard party={role} />}
+          {(role === 'buyer' || role === 'seller' || (role === 'lender' && loanMode)) && <PayoutKeyCard party={role} />}
           {view && <ActionsPanel role={role} onlyEnabled={role === 'resolver'} />}
           {view && role === 'inspector' && <AttestorPanel contingency="Inspection" />}
-          {view && role === 'lender' && <AttestorPanel contingency="Financing" />}
+          {view && role === 'lender' && !loanMode && <AttestorPanel contingency="Financing" />}
+          {role === 'lender' && loanMode && vaultUnlocked && <LenderTermsCard />}
+          {role === 'lender' && loanMode && <LoanCard />}
           {view && role === 'titleAgent' && <AttestorPanel contingency="Title" />}
           {vaultUnlocked && (role === 'buyer' || role === 'seller' || role === 'resolver') && <TermsPanel />}
           {view && vaultUnlocked && (role === 'buyer' || role === 'seller') && <KycPanel party={role} />}
           {view && vaultUnlocked && role === 'buyer' && view.status !== 'Initializing' && <FundingPanel />}
+          {view && vaultUnlocked && role === 'buyer' && loanMode && ['ContingenciesPending', 'ReadyToClose', 'Refunded', 'Expired', 'Forfeited'].includes(view.status) && <TopUpCard />}
           {view && vaultUnlocked && (role === 'seller' || role === 'resolver') && <VaultTrackingCard />}
           {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <SettlementPanel party={role} />}
         </div>

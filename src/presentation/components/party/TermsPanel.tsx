@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { FileLock2 } from 'lucide-react';
 import { checkTermsAgainstLedger, selectiveOpening } from '@/application/termsService';
-import { isTermsPackage, type TermsPackage } from '@/domain/terms';
+import { TERMS_V1_MESSAGE, isLenderPackage, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
@@ -36,6 +36,8 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
         if (!pass) throw new Error(t('terms.needPass'));
         p = await openWithPassphrase(raw, pass);
       }
+      if (isV1TermsPackage(raw) || isV1TermsPackage(p)) throw new Error(TERMS_V1_MESSAGE);
+      if (isLenderPackage(p)) throw new Error(t('lender.lenderPackageHere'));
       if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
       if (p.contractAddress && contractAddress && p.contractAddress !== contractAddress) throw new Error(t('terms.otherContract'));
       const bound: TermsPackage = { ...p, contractAddress: contractAddress ?? p.contractAddress, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };

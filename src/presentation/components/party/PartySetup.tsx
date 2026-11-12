@@ -20,6 +20,8 @@ export function ModeBar() {
   const { connector } = useApp();
   const [addr, setAddr] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [simLoan, setSimLoan] = useState(false);
+  const [simRefund, setSimRefund] = useState(true);
   useEffect(() => {
     if (mode === 'wallet' && contractAddress) setAddr(contractAddress);
   }, [mode, contractAddress]);
@@ -61,9 +63,17 @@ export function ModeBar() {
       ) : (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-primary" disabled={!vaultUnlocked || busy} onClick={() => void createSimulation()}>
+            <button type="button" className="btn-primary" disabled={!vaultUnlocked || busy} onClick={() => void createSimulation({ loan: simLoan, refundOnLoss: simRefund })}>
               {t('sim.create')}
             </button>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={simLoan} onChange={(e) => setSimLoan(e.target.checked)} /> {t('sim.loan')}
+            </label>
+            {simLoan && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={simRefund} onChange={(e) => setSimRefund(e.target.checked)} /> {t('adminTerms.refund')}
+              </label>
+            )}
             {sim && view?.status === 'Initializing' && (
               <button type="button" className="btn-ghost" onClick={() => void simFinalize()}>
                 {t('sim.finalize')}
@@ -276,14 +286,14 @@ export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleCha
  * (not the full mn_shield-addr address), as the 64 hex the admin enters in the terms package. Available while the
  * escrow is still Initializing; compared with the committed key once a terms package is in the vault.
  */
-export function PayoutKeyCard({ party }: { party: 'buyer' | 'seller' }) {
+export function PayoutKeyCard({ party }: { party: 'buyer' | 'seller' | 'lender' }) {
   const { t } = useT();
   const { connector } = useApp();
   const { record, mode } = useEscrow();
   const [key, setKey] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const session = connector.status === 'connected' ? connector.session : null;
-  const committed = party === 'buyer' ? record.terms?.terms.buyerPayout : record.terms?.terms.sellerPayout;
+  const committed = party === 'buyer' ? record.terms?.terms.buyerPayout : party === 'seller' ? record.terms?.terms.sellerPayout : record.lenderTerms?.lenderPayout;
 
   const reveal = async () => {
     setErr(null);

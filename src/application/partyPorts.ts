@@ -6,7 +6,7 @@
  */
 import type { ContingencyName, EscrowView } from '@/domain/escrowView';
 import type { PartyCircuit } from '@/domain/lifecycle';
-import type { AttestationBundle, RevocationBundle, TermsPackage, WireSignature } from '@/domain/terms';
+import type { AttestationBundle, LenderPackage, RevocationBundle, TermsPackage, WireSignature } from '@/domain/terms';
 import type { TxReceipt } from '@/domain/escrow';
 
 /** Private inputs for one call. Lives only for the duration of the call. */
@@ -16,7 +16,17 @@ export interface CallMaterial {
   kyc?: AttestationBundle;
   /** Merkle index of the vault coin (FR-FUND-03). */
   vaultIndex?: bigint;
+  /** v2: the lender package (lender circuits; parties refunding the lender derive it from the full terms). */
+  lenderTerms?: LenderTerms;
+  /** v2: the second coin the contract holds (loan or buyer top-up) and its Merkle index. */
+  secondCoin?: { kind: 'loan' | 'topup'; index: bigint };
 }
+
+/** The lender-package fields the contract's `lenderTerms` witness opens. */
+export type LenderTerms = Pick<LenderPackage, 'lenderShare' | 'lenderShareSalt' | 'lenderPayout' | 'lenderPayoutSalt' | 'refundOnLoss' | 'loanTermsSalt'>;
+
+/** v2: the circuits that put a coin into the contract (their transaction locates the coin's index). */
+export type DepositCircuit = 'depositToEscrow' | 'depositLoan' | 'depositTopUp';
 
 export interface CircuitArgs {
   acceptConfiguration: [expectedVersion: bigint];
@@ -38,6 +48,15 @@ export interface CircuitArgs {
   dismissDispute: [];
   releaseToSeller: [];
   refundBuyer: [];
+  /** v2: the lender's commitment-letter hash (64 hex). */
+  depositLoan: [letterHash: string];
+  /** v2: the refusal letter hash. The current time is added by the gateway. */
+  declineLoan: [letterHash: string];
+  withdrawLoan: [];
+  depositTopUp: [];
+  endTopUpWindow: [];
+  refundLender: [];
+  claimForfeit: [];
   revokeKycAttestation: [issuerId: string, ref: string, sig: WireSignature];
   revokeKycIssuer: [issuerId: string, sig: WireSignature];
 }
@@ -67,6 +86,11 @@ export interface EscrowPartyGateway {
    * call it (NFR-08); without the deposit hash the gateway may still find it (the simulator always can).
    */
   locateVaultIndex(depositTxHash: string | null, terms: TermsPackage['terms']): Promise<bigint | null>;
+  /**
+   * v2: Merkle index of the coin a deposit circuit put into the contract (the vault coin, the loan coin or the buyer's
+   * top-up coin), from that transaction; without its hash the gateway looks it up in the chain history.
+   */
+  locateCoinIndex(circuit: DepositCircuit, txHash: string | null): Promise<bigint | null>;
   /** FR-WALLET-05: the connected wallet's shielded coin public key (64 hex), if any. */
   coinPublicKey(): Promise<string | null>;
   /** FR-WALLET-06: shielded balance of a token type, if the wallet reports it. */
@@ -118,6 +142,10 @@ export interface VaultRecord {
   roleKeyHistory?: { role: string; key: string; removedAt: number }[];
   /** FR-TERMS-04: at least one confirmed backup before finalize. */
   backups?: { at: number; kind: 'file' | 'custodian'; note?: string }[];
+  /** v2, lender only: the lender package (its part of the terms), checked against the ledger on import. */
+  lenderTerms?: LenderPackage;
+  /** v2: where the second coin (loan or buyer top-up) sits, once deposited: needed by refunds, withdrawals and the release. */
+  secondCoin?: { kind: 'loan' | 'topup'; index?: string; txHash?: string };
   /** Salt + metadata of documents this party committed (FR-ATTEST-02). */
   documents?: { contingency: ContingencyName; reportHash: string; salt: string; fileName: string; at: number }[];
   /** Contract maintenance-authority (signing) key, admin only; removed once the authority is renounced. */

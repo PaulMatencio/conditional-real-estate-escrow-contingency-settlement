@@ -86,3 +86,39 @@ export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: T
   await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
   return { sim, pkg, casp };
 }
+
+export const LENDER_KEY = hex(0x68);
+/** Loan offer expiry and top-up window of the loan fixture (simulated time starts at T0). */
+export const OFFER_EXPIRY = 1_500_000n;
+export const WINDOW = 100_000n;
+
+/** v2: a loan-financed simulator escrow (price 250000 = buyer deposit 100000 + loan 150000), still Initializing. */
+export async function configuredLoanEscrow(refundOnLoss = true): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
+  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
+  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerDeposit: '100000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, lenderPayout: LENDER_KEY, refundOnLoss, mode: 'deposited' });
+  const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
+  const casp = makeCasp();
+  await sim.configure(K.admin, {
+    inspector: rid(K.inspector),
+    lender: rid(K.lender),
+    titleAgent: rid(K.title),
+    resolver: rid(K.resolver),
+    buyerPayoutCommitment: pkg.commitments.buyerPayout,
+    sellerPayoutCommitment: pkg.commitments.sellerPayout,
+    amountCommitment: pkg.commitments.amount,
+    closingDeadline: DL,
+    disputeDeadline: DDL,
+    kycPolicy: { minKycLevel: 2, maxAmlRiskScore: 30 }
+  });
+  await sim.configureFinancing(K.admin, {
+    mode: 'deposited',
+    priceCommitment: pkg.commitments.price,
+    lenderShareCommitment: pkg.commitments.lenderShare,
+    lenderPayoutCommitment: pkg.commitments.lenderPayout,
+    loanTermsCommitment: pkg.commitments.loanTerms,
+    loanOfferExpiry: OFFER_EXPIRY,
+    topUpWindow: WINDOW
+  });
+  await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
+  return { sim, pkg, casp };
+}

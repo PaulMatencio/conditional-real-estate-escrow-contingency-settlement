@@ -12,7 +12,20 @@ import { Alert, Card, Spinner } from '../ui';
 import { ConfirmDialog, downloadJson } from './helpers';
 
 /** Circuits with their own panel (document hashing) are not repeated here. */
-const DEDICATED: PartyCircuit[] = ['submitInspection', 'submitFinancing', 'submitTitle', 'revokeKycAttestation', 'revokeKycIssuer'];
+const DEDICATED: PartyCircuit[] = [
+  'submitInspection',
+  'submitFinancing',
+  'submitTitle',
+  'revokeKycAttestation',
+  'revokeKycIssuer',
+  // v2: lender page (Loan card) and buyer page (Top-up card)
+  'depositLoan',
+  'declineLoan',
+  'withdrawLoan',
+  'depositTopUp'
+];
+/** Permissionless circuits: called as 'anyone'. */
+const OPEN: PartyCircuit[] = ['expireEscrow', 'endTopUpWindow'];
 
 /**
  * Role-aware action list (FR-WALLET-03, §3.1.6 AC-1): every circuit this role may call, enabled only when the phase,
@@ -27,7 +40,14 @@ export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; o
   const [pass, setPass] = useState('');
   if (!view) return null;
 
-  const material = { terms: !!record.terms, kycAttestation: !!record.kyc?.[role === 'seller' ? 'seller' : 'buyer'], vaultCoin: record.terms?.vaultIndex !== undefined || !!record.terms };
+  const material = {
+    terms: !!record.terms,
+    kycAttestation: !!record.kyc?.[role === 'seller' ? 'seller' : 'buyer'],
+    vaultCoin: record.terms?.vaultIndex !== undefined || !!record.terms,
+    lenderTerms: !!record.lenderTerms || !!record.terms,
+    // The second coin's index is located from the chain when needed (see trackSecondCoin).
+    secondCoin: true
+  };
   const actions = availableActions(view, role, now, material)
     .filter((a) => !DEDICATED.includes(a.circuit))
     .filter((a) => !onlyEnabled || a.enabled);
@@ -44,7 +64,7 @@ export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; o
     if (c === 'openDispute' && evidence.trim() && pass.length >= 8) {
       downloadJson('dispute-evidence.json', await sealWithPassphrase({ format: 'EscrowDisputeEvidenceV1', contractAddress: view.contractAddress, by: role, at: new Date().toISOString(), note: evidence }, pass));
     }
-    await run(c === 'expireEscrow' ? 'anyone' : role, c as never, argsFor(c) as never, role);
+    await run(OPEN.includes(c) ? 'anyone' : role, c as never, argsFor(c) as never, role);
     setEvidence('');
   };
 

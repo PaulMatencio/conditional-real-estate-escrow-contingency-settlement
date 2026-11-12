@@ -34,6 +34,7 @@ export function Summary({ s, showAdmin = true }: { s: BackupSummary; showAdmin?:
             <span className="mono text-slate-300">{shortHex(c.address)}</span>
             {c.terms && <Badge tone="accent">{t('vaultBackup.terms')}</Badge>}
             {c.custody && <Badge tone="accent">{t('custody.badge')}</Badge>}
+            {c.lenderTerms && <Badge tone="accent">{t('lender.termsTitle')}</Badge>}
             {c.roleKeys.map((r) => (
               <Badge key={r} tone="muted">{r}</Badge>
             ))}

@@ -7,7 +7,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { IDENTITY_RECORD, type CallReceipt, type CircuitArgs, type EscrowPartyGateway, type VaultRecord } from '@/application/partyPorts';
 import { runPartyAction, finalizeBlockers, trackVault } from '@/application/partyService';
-import { createTermsPackage } from '@/application/termsService';
+import { createTermsPackage, lenderPackageOf } from '@/application/termsService';
 import { deployTracker } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
 import { DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
@@ -77,7 +77,8 @@ interface EscrowCtx {
   setRoleKey: (role: PartyRole, hex: string | null) => Promise<void>;
   // simulator
   sim: EscrowSimulator | null;
-  createSimulation: (opts?: { amount?: string; useCasp?: boolean }) => Promise<void>;
+  /** `loan`: a loan-financed escrow (contract v2: buyer deposit 40 %, loan 60 %), lender terms stored in the vault too. */
+  createSimulation: (opts?: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean }) => Promise<void>;
   simFinalize: () => Promise<void>;
   setSimTime: (sec: number) => void;
   timeline: TimelineEvent[];
@@ -341,7 +342,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
 
   /** Simulator Mode: a ready-to-use escrow with every role key in the vault and the live CASP simulator whitelisted. */
   const createSimulation = useCallback(
-    async (opts: { amount?: string; useCasp?: boolean } = {}) => {
+    async (opts: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean } = {}) => {
       setError(null);
       try {
         if (!vault.unlocked) throw new Error('Unlock the vault first: role keys and terms are kept encrypted.');
@@ -352,8 +353,17 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const s = await EscrowSimulator.create({ adminRoleId: id('admin'), buyerRoleId: id('buyer'), sellerRoleId: id('seller'), tokenColor: color, ticker: 'EURe' }, { time: t0 });
         s.logger = sharedTxLog();
         const wallet = session ? await createWalletProviders(session, prefs).then((p) => p.walletProvider.getCoinPublicKey() as unknown as string).catch(() => null) : null;
+        const price = opts.amount ?? '250000';
         const pkg = {
-          ...createTermsPackage(termsCrypto, { price: opts.amount ?? '250000', buyerPayout: wallet ?? bytesToHex(generateSecretKey()), sellerPayout: bytesToHex(generateSecretKey()), mode: 'attested' }),
+          ...createTermsPackage(termsCrypto, {
+            price,
+            buyerDeposit: opts.loan ? ((BigInt(price) * 40n) / 100n).toString() : price,
+            buyerPayout: wallet ?? bytesToHex(generateSecretKey()),
+            sellerPayout: bytesToHex(generateSecretKey()),
+            lenderPayout: opts.loan ? bytesToHex(generateSecretKey()) : undefined,
+            refundOnLoss: opts.refundOnLoss ?? true,
+            mode: opts.loan ? 'deposited' : 'attested'
+          }),
           contractAddress: s.contractAddress,
           escrowColor: color,
           escrowTicker: 'EURe'
@@ -371,21 +381,22 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           disputeDeadline: BigInt(t0 + 45 * 86400),
           kycPolicy: { minKycLevel: 2, maxAmlRiskScore: 30 }
         });
-        // v2: a simulated escrow is a cash deal (no loan); the financing commitments are still required.
+        // v2: a cash deal or a loan deal; the financing commitments are required either way.
         await s.configureFinancing(admin, {
-          mode: 'attested',
+          mode: opts.loan ? 'deposited' : 'attested',
           priceCommitment: pkg.commitments.price,
           lenderShareCommitment: pkg.commitments.lenderShare,
           lenderPayoutCommitment: pkg.commitments.lenderPayout,
           loanTermsCommitment: pkg.commitments.loanTerms,
-          loanOfferExpiry: BigInt(t0 + 30 * 86400),
+          loanOfferExpiry: BigInt(t0 + 20 * 86400),
           topUpWindow: BigInt(DEFAULT_TOP_UP_DAYS * 86400)
         });
         if (opts.useCasp !== false) {
           const { keys: issuers } = await casp.issuerKeys();
           for (const k of issuers.filter((i) => i.status === 'active')) await s.addKycIssuer(admin, k.issuerId, k.publicKey);
         }
-        await vault.save(s.contractAddress, { terms: pkg, roleKeys: keys });
+        // One browser plays every role in Simulator Mode: the lender's package sits in the same vault record.
+        await vault.save(s.contractAddress, { terms: pkg, roleKeys: keys, lenderTerms: opts.loan ? lenderPackageOf(pkg) : undefined });
         lastRound.current = null;
         setTimeline([]);
         setSim(s);

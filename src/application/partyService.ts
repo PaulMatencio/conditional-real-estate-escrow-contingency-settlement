@@ -5,11 +5,11 @@
  */
 import { AppError } from '@/domain/errors';
 import { authorityLevel, isFullyConfigured, type EscrowView } from '@/domain/escrowView';
-import { ACTIONS, type PartyCircuit } from '@/domain/lifecycle';
+import { ACTIONS, needsSecondCoin, type PartyCircuit } from '@/domain/lifecycle';
 import type { Caller } from '@/domain/roles';
 import type { VaultRecord } from './partyPorts';
 import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway } from './partyPorts';
-import { assertTermsMatch, precheckAttestation, type TermsCrypto } from './termsService';
+import { assertTermsMatch, checkLenderPackage, precheckAttestation, type TermsCrypto } from './termsService';
 import { withTxLog, type TxLogger } from './txLog';
 
 export interface PartyContext {
@@ -61,8 +61,25 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
       problems.push((e as Error).message);
     }
   }
+  if (spec.witnesses.includes('lenderTerms')) {
+    if (ctx.record.lenderTerms) {
+      const c = checkLenderPackage(ctx.crypto, ctx.record.lenderTerms, view);
+      if (!c.ok) problems.push(`TERMS_COMMITMENT_MISMATCH: the lender terms do not open the on-chain commitments (${(['price', 'lenderShare', 'lenderPayout', 'loanTerms'] as const).filter((k) => c[k] !== 'match').join(', ')}).`);
+    } else if (ctx.record.terms) {
+      if (!spec.witnesses.includes('privateTerms')) {
+        try {
+          assertTermsMatch(ctx.crypto, ctx.record.terms, view);
+        } catch (e) {
+          problems.push((e as Error).message);
+        }
+      }
+    } else problems.push('No lender terms in this browser (Lender terms card: import the package the admin sent).');
+  }
+  if (needsSecondCoin(circuit, view) && ctx.record.secondCoin?.index === undefined) {
+    problems.push('Index of the loan or top-up coin unknown: it is read from its deposit transaction, which was not found yet.');
+  }
   if (spec.witnesses.includes('kycAttestation')) {
-    const role = circuit === 'depositToEscrow' ? 'buyer' : 'seller';
+    const role = circuit === 'depositToEscrow' || circuit === 'depositTopUp' ? 'buyer' : 'seller';
     const b = ctx.record.kyc?.[role];
     if (!b) problems.push(`No ${role} KYC attestation imported (Compliance → import or request from the CASP).`);
     else {
@@ -80,6 +97,16 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
     if (bal === null) warnings.push('The wallet did not report a shielded balance; the deposit fails if it holds too little.');
     else if (bal < need) problems.push(`Shielded balance too low: ${bal} ${view.escrowTicker}, need ${need} (shortfall ${need - bal}).`);
   }
+  if ((circuit === 'depositTopUp' || circuit === 'depositLoan') && (ctx.record.terms || ctx.record.lenderTerms)) {
+    const need = BigInt(ctx.record.lenderTerms?.lenderShare ?? ctx.record.terms!.terms.lenderShare);
+    const bal = await ctx.gateway.shieldedBalance(view.escrowColor).catch(() => null);
+    if (bal === null) warnings.push('The wallet did not report a shielded balance; the deposit fails if it holds too little.');
+    else if (bal < need) problems.push(`Shielded balance too low: ${bal} ${view.escrowTicker}, need ${need} (shortfall ${need - bal}).`);
+  }
+  if (circuit === 'depositLoan' && ctx.record.lenderTerms) {
+    const key = await ctx.gateway.coinPublicKey().catch(() => null);
+    if (key && key !== ctx.record.lenderTerms.lenderPayout) warnings.push("The connected wallet's shielded key differs from the committed lender payout key; a repayment will go to the committed key.");
+  }
   if (circuit === 'depositToEscrow' || circuit === 'submitSellerKyc') {
     const key = await ctx.gateway.coinPublicKey().catch(() => null);
     const committed = circuit === 'depositToEscrow' ? ctx.record.terms?.terms.buyerPayout : ctx.record.terms?.terms.sellerPayout;
@@ -90,11 +117,20 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
 
 export function materialFor(ctx: PartyContext, circuit: PartyCircuit, role: Caller): CallMaterial {
   const spec = ACTIONS[circuit];
+  const lt = ctx.record.lenderTerms;
+  const sc = ctx.record.secondCoin;
+  const usesSecond = spec.witnesses.includes('secondCoin');
   return {
     secretKey: spec.witnesses.includes('localSecretKey') ? ctx.secretKey : undefined,
-    terms: spec.witnesses.includes('privateTerms') ? ctx.record.terms?.terms : undefined,
+    // The full terms also serve the lender witness (refundLender by a party) and the top-up coin.
+    terms: spec.witnesses.includes('privateTerms') || ((spec.witnesses.includes('lenderTerms') || usesSecond) && !lt) ? ctx.record.terms?.terms : undefined,
     kyc: spec.witnesses.includes('kycAttestation') ? ctx.record.kyc?.[role === 'seller' ? 'seller' : 'buyer'] : undefined,
-    vaultIndex: spec.witnesses.includes('vaultCoin') && ctx.record.terms?.vaultIndex !== undefined ? BigInt(ctx.record.terms.vaultIndex) : undefined
+    vaultIndex: spec.witnesses.includes('vaultCoin') && ctx.record.terms?.vaultIndex !== undefined ? BigInt(ctx.record.terms.vaultIndex) : undefined,
+    lenderTerms:
+      (spec.witnesses.includes('lenderTerms') || usesSecond) && lt
+        ? { lenderShare: lt.lenderShare, lenderShareSalt: lt.lenderShareSalt, lenderPayout: lt.lenderPayout, lenderPayoutSalt: lt.lenderPayoutSalt, refundOnLoss: lt.refundOnLoss, loanTermsSalt: lt.loanTermsSalt }
+        : undefined,
+    secondCoin: usesSecond && sc?.index !== undefined ? { kind: sc.kind, index: BigInt(sc.index) } : undefined
   };
 }
 
@@ -111,6 +147,9 @@ export async function runPartyAction<C extends PartyCircuit>(ctx: PartyContext, 
   if (ACTIONS[circuit].witnesses.includes('vaultCoin') && ctx.record.terms && ctx.record.terms.vaultIndex === undefined) {
     ctx = { ...ctx, record: await trackVault(ctx) };
   }
+  if (needsSecondCoin(circuit, view) && ctx.record.secondCoin?.index === undefined) {
+    ctx = { ...ctx, record: await trackSecondCoin(ctx, view) };
+  }
   const pf = await preflight(ctx, view, caller, circuit, args, now);
   if (!pf.ok) throw new AppError('PREFLIGHT', pf.problems.join(' · '));
   // Pre-flight passed: from here on a transaction is attempted, so it is logged whatever the outcome.
@@ -125,7 +164,22 @@ export async function runPartyAction<C extends PartyCircuit>(ctx: PartyContext, 
     if (index === null) index = await ctx.gateway.locateVaultIndex(receipt.txHash, record.terms.terms).catch(() => null);
     record.terms = { ...record.terms, depositTxHash: receipt.txHash, vaultIndex: index === null ? undefined : index.toString() };
   }
+  if (circuit === 'depositLoan' || circuit === 'depositTopUp') {
+    let index = receipt.vaultIndex ?? null;
+    if (index === null) index = await ctx.gateway.locateCoinIndex(circuit, receipt.txHash).catch(() => null);
+    record.secondCoin = { kind: circuit === 'depositLoan' ? 'loan' : 'topup', txHash: receipt.txHash, index: index === null ? undefined : index.toString() };
+  }
   return { receipt, record };
+}
+
+/** v2: locate the second coin (loan or top-up) from its deposit transaction, from any party's browser. */
+export async function trackSecondCoin(ctx: PartyContext, view: EscrowView): Promise<VaultRecord> {
+  const f = view.financing;
+  if (!f.loanHeld && !f.topUpHeld) return ctx.record;
+  const kind = f.loanHeld ? 'loan' : 'topup';
+  const known = ctx.record.secondCoin?.kind === kind ? ctx.record.secondCoin : undefined;
+  const index = await ctx.gateway.locateCoinIndex(kind === 'loan' ? 'depositLoan' : 'depositTopUp', known?.txHash ?? null).catch(() => null);
+  return index === null ? ctx.record : { ...ctx.record, secondCoin: { kind, txHash: known?.txHash, index: index.toString() } };
 }
 
 /** FR-FUND-03: derive the vault coin index on this party's own (no dependency on the depositor) and store it. */

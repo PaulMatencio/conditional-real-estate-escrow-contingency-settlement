@@ -6,7 +6,7 @@
  */
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { Transaction, ZswapChainState } from '@midnightntwrk/ledger-v9';
-import type { CallMaterial, CallReceipt, CircuitArgs, EscrowPartyGateway } from '@/application/partyPorts';
+import type { CallMaterial, CallReceipt, CircuitArgs, DepositCircuit, EscrowPartyGateway } from '@/application/partyPorts';
 import { AppError } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { bytesToHex, hexToBytes } from '@/domain/hex';
@@ -27,11 +27,15 @@ import { IndexerChainHistory } from '../indexer/chainHistorySource';
  * The escrow's successful deposit transaction, read from the public chain history. Lets a party who did not deposit
  * (seller, resolver, or the buyer in another browser) find the vault coin without the depositor's help.
  */
-export async function findDepositTxHash(contractAddress: string): Promise<string | null> {
+export async function findDepositTxHash(contractAddress: string, circuit: DepositCircuit = 'depositToEscrow'): Promise<string | null> {
   const { actions } = await new IndexerChainHistory(indexerHttpUrl(), networkConfig.indexerWS, 60_000).contractActions(contractAddress);
-  const deposit = [...actions].reverse().find((a) => a.kind === 'call' && a.entryPoint === 'depositToEscrow' && (a.result === 'SUCCESS' || a.result === null));
+  const deposit = [...actions].reverse().find((a) => a.kind === 'call' && a.entryPoint === circuit && (a.result === 'SUCCESS' || a.result === null));
   return deposit?.txHash ?? null;
 }
+
+/** Wallet Mode `now` for declineLoan / withdrawLoan: 2 minutes behind the wall clock, so the block time is past it. */
+const TIME_MARGIN = 120n;
+const DEPOSITS: readonly string[] = ['depositToEscrow', 'depositLoan', 'depositTopUp'];
 
 type CallTx = Record<string, (...args: unknown[]) => Promise<{ public: { txId: string; txHash: string; blockHeight: number; blockHash?: string; tx?: unknown } }>>;
 interface Found {
@@ -62,7 +66,9 @@ export class PartyGateway implements EscrowPartyGateway {
     const compiled = makeCompiledContract(() => self.current.secretKey(), subset, {
       privateTerms: () => (self.current.privateTerms ?? fail('the private terms'))(),
       kycAttestation: () => (self.current.kycAttestation ?? fail('a KYC attestation'))(),
-      vaultCoin: () => (self.current.vaultCoin ?? fail('the vault coin'))()
+      vaultCoin: () => (self.current.vaultCoin ?? fail('the vault coin'))(),
+      secondCoin: () => (self.current.secondCoin ?? fail('the loan or top-up coin'))(),
+      lenderTerms: () => (self.current.lenderTerms ?? fail('the lender terms'))()
     });
     this.found = (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(this.providers, { contractAddress: this.contractAddress, compiledContract: compiled })) as Found;
     return this.found;
@@ -83,7 +89,7 @@ export class PartyGateway implements EscrowPartyGateway {
     if (this.busy) throw new AppError('VALIDATION', 'Another transaction is in progress. Wait for it to finish.');
     this.busy = true;
     const view = await this.readView();
-    const ctx = { contractAddress: this.contractAddress, escrowColor: view.escrowColor, material };
+    const ctx = { contractAddress: this.contractAddress, escrowColor: view.escrowColor, material, now: (await this.now()) - TIME_MARGIN };
     try {
       const found = await this.open();
       const fn = found.callTx[circuit];
@@ -91,11 +97,11 @@ export class PartyGateway implements EscrowPartyGateway {
       this.current = witnessInputs(ctx);
       const r = await fn(...contractArgs(circuit, args, ctx));
       const receipt: CallReceipt = { txId: String(r.public.txId), txHash: r.public.txHash, blockHeight: r.public.blockHeight, blockHash: r.public.blockHash };
-      if (circuit === 'depositToEscrow' && material.terms && r.public.tx) {
+      if (DEPOSITS.includes(circuit) && r.public.tx) {
         // midnight-js 5 returns the finalized transaction as an era-tagged handle; decode it with ledger 9.
         const handle = r.public.tx as { serialize(): Uint8Array };
         const tx = Transaction.deserialize('signature', 'proof', 'binding', handle.serialize()) as unknown as Transaction<never, never, never>;
-        receipt.vaultIndex = (await this.indexFromTx(tx, r.public.blockHash ?? null, material.terms).catch(() => null)) ?? undefined;
+        receipt.vaultIndex = (await this.indexFromTx(tx, r.public.blockHash ?? null).catch(() => null)) ?? undefined;
       }
       return receipt;
     } catch (e) {
@@ -115,7 +121,7 @@ export class PartyGateway implements EscrowPartyGateway {
    * the deposit gives `firstFree`. Index = firstFree − (outputs inserted by the tx) + position. Assumes no later
    * transaction in the same block inserted coins before the indexer snapshot; verify on the preview network.
    */
-  private async indexFromTx(tx: Transaction<never, never, never>, blockHash: string | null, _terms: WirePrivateTerms): Promise<bigint | null> {
+  private async indexFromTx(tx: Transaction<never, never, never>, blockHash: string | null): Promise<bigint | null> {
     let local = new ZswapChainState();
     const whitelist = new Set([this.contractAddress]);
     let position: bigint | null = null;
@@ -136,13 +142,18 @@ export class PartyGateway implements EscrowPartyGateway {
     return zswap.firstFree - inserted + position;
   }
 
-  async locateVaultIndex(depositTxHash: string | null, terms: WirePrivateTerms): Promise<bigint | null> {
-    const hash = depositTxHash ?? (await findDepositTxHash(this.contractAddress).catch(() => null));
+  async locateVaultIndex(depositTxHash: string | null, _terms: WirePrivateTerms): Promise<bigint | null> {
+    return this.locateCoinIndex('depositToEscrow', depositTxHash);
+  }
+
+  /** Each deposit circuit puts exactly one coin into the contract: its transaction gives that coin's index. */
+  async locateCoinIndex(circuit: DepositCircuit, txHash: string | null): Promise<bigint | null> {
+    const hash = txHash ?? (await findDepositTxHash(this.contractAddress, circuit).catch(() => null));
     if (!hash) return null;
     const found = await fetchTransaction(hash);
     if (!found) return null;
     const tx = Transaction.deserialize('signature', 'proof', 'binding', hexToBytes(found.raw)) as unknown as Transaction<never, never, never>;
-    return this.indexFromTx(tx, found.blockHash, terms);
+    return this.indexFromTx(tx, found.blockHash);
   }
 
   async coinPublicKey(): Promise<string | null> {

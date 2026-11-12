@@ -27,7 +27,7 @@ export const isVaultBackup = (x: unknown): x is VaultBackup =>
 
 export interface BackupSummary {
   createdAt: string;
-  contracts: { address: string; terms: boolean; custody: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
+  contracts: { address: string; terms: boolean; custody: boolean; lenderTerms?: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
   identity: boolean;
   adminKey: boolean;
   adminContract?: string;
@@ -44,6 +44,7 @@ export function summarize(b: VaultBackup): BackupSummary {
         address,
         terms: !!r.terms,
         custody: !!r.custody,
+        lenderTerms: !!r.lenderTerms,
         roleKeys: Object.keys(r.roleKeys ?? {}),
         kyc: Object.keys(r.kyc ?? {}),
         authorityKey: !!r.authorityKey,
@@ -127,6 +128,16 @@ export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: 
     if (!current.custody) (out.custody = incoming.custody), added.push('custodian copy of the terms');
     else if (!same(current.custody.terms.terms, incoming.custody.terms.terms)) conflicts.push('custodian copy differs (kept the current one)');
     else out.custody = { ...current.custody, handedOut: unionBy(current.custody.handedOut, incoming.custody.handedOut, (h) => `${h.at}:${h.to}`) };
+  }
+
+  // v2: the lender package and where the second coin sits.
+  if (incoming.lenderTerms) {
+    if (!current.lenderTerms) (out.lenderTerms = incoming.lenderTerms), added.push('lender terms');
+    else if (!same(current.lenderTerms.commitments, incoming.lenderTerms.commitments)) conflicts.push('lender terms differ (kept the current ones)');
+  }
+  if (incoming.secondCoin) {
+    const cur = current.secondCoin;
+    if (!cur || (cur.kind === incoming.secondCoin.kind && cur.index === undefined && incoming.secondCoin.index !== undefined)) (out.secondCoin = incoming.secondCoin), added.push(`${incoming.secondCoin.kind} coin index`);
   }
 
   out.roleKeyHistory = unionBy(current.roleKeyHistory, incoming.roleKeyHistory, (h) => `${h.role}:${h.key}`);
