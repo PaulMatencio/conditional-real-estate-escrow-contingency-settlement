@@ -1,0 +1,1318 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+// Shared KYC attestation format and Schnorr verifier (vendored, byte-identical
+// to eu-counterparty-simulator/compact/KycAttestationV1.compact).
+import "KycAttestationV1";
+export { KycAttestation, SchnorrSignature, kycMessage, kycReference,
+         kycRevocationMessage, issuerRevocationMessage };
+
+// ============================================================
+// Conditional real-estate escrow with contingency settlement — VERSION 2
+// (lender deposit, buyer top-up, loan-refusal refund term)
+//
+// v2 adds, for deals financed by a loan (FinancingMode.Deposited):
+//  - three committed amounts: total price = buyer share + lender share;
+//  - the lender deposits exactly its committed share (that deposit IS the
+//    financing approval) or refuses the loan; after a fixed loan offer
+//    expiry it may withdraw a deposit still waiting in ContingenciesPending;
+//  - the buyer may deposit the lender share itself (top-up) while no
+//    second coin is held;
+//  - the committed "loan refusal refund" term: on, a lost loan (refused or
+//    withdrawn) opens a top-up window, then the escrow is Refunded; off,
+//    the buyer must top up before the closing deadline or the seller keeps
+//    the buyer's deposit (Forfeited);
+//  - the release pays both coins to the seller; every unwind returns each
+//    coin to whoever deposited it.
+// Cash deals (FinancingMode.Attested) keep the v1 behaviour: one coin, and
+// the lender only attests. Design: "Escrow redesign — lender deposit and
+// loan-refusal term" (revision 3).
+//
+// Custody model: SHIELDED tokens (e.g. a MiCA EMT stablecoin issued as a
+// shielded Zswap token). The buyer's deposit is ONE shielded coin owned by
+// this contract (receiveShielded); payouts spend that exact coin to the
+// seller's or buyer's shielded coin public key (sendShielded). The amount
+// and both payout keys are PRIVATE: the ledger only holds salted
+// commitments, and parties supply the openings through the `privateTerms`
+// witness. The coin itself is never written to the public ledger.
+//
+// Strict phases (see contract/compact.md for the full graph):
+//
+//   Initializing ──configure* / accept (buyer+seller) / finalize (admin)──▶ Created
+//      │ (deployed with admin, buyer, seller, shielded token color + ticker;
+//      │  other terms, incl. the amount / payout-key commitments, may be missing)
+//   cancel ──▶ Cancelled
+//
+//   Created ──fund (buyer + valid KYC attestation)──▶ Funded ──open review──▶ ContingenciesPending
+//      │                 │                      │        │
+//   cancel            expire               all cleared  fail/withdraw/expire
+//      ▼                 ▼                      ▼        ▼
+//   Cancelled         Expired ◀── Disputed ──▶ ReadyToClose / Refunded
+//                                                │
+//   Settled / Refunded / Expired ──payout──▶ Closed
+//
+// Every state-changing circuit asserts the exact source phase(s)
+// it may run from, so no transition can be skipped or replayed.
+// ============================================================
+
+export enum EscrowStatus {
+    Initializing,          // deployed, terms still being configured by the admin
+    Created,               // deployed, waiting for the buyer's deposit
+    Funded,                // deposit held, review not yet opened
+    ContingenciesPending,  // attestors submitting outcomes
+    ReadyToClose,          // every contingency cleared (or waived)
+    Disputed,              // frozen, only the resolver can move it
+    Settled,               // approved for release to seller, not yet paid
+    Refunded,              // approved for refund to buyer, not yet paid
+    Expired,               // refundable to buyer, not yet paid
+    Closed,                // every held coin paid out (terminal)
+    Cancelled,             // abandoned before funding, no funds ever held (terminal)
+    Forfeited              // v2: loan lost, refund term off, no top-up by the closing deadline: buyer coin to the seller
+}
+
+// v2: how the financing contingency is met.
+export enum FinancingMode {
+    Attested,              // cash deal: the lender only attests (v1 behaviour), lender share = 0
+    Deposited              // loan: the lender deposits its committed share (or the buyer tops up)
+}
+
+// Every term that may be missing at deployment and filled in later
+// by the admin. `configured` holds the ones already populated.
+export enum InitAttribute {
+    Inspector,
+    Lender,
+    TitleAgent,
+    Resolver,
+    BuyerPayout,     // commitment to the buyer's shielded payout key
+    SellerPayout,    // commitment to the seller's shielded payout key
+    EscrowAmount,    // commitment to the escrowed amount
+    ClosingDeadline,
+    DisputeDeadline,
+    KycIssuers,      // at least one trusted CASP issuer key registered
+    KycPolicy,       // minimum KYC level / maximum AML risk score
+    // v2 (configureFinancing)
+    Financing,       // financing mode
+    Price,           // commitment to the total price
+    LenderShare,     // commitment to the lender share
+    LenderPayout,    // commitment to the lender's shielded payout key
+    LoanTerms,       // commitment to the loan refusal refund term
+    LoanOfferExpiry, // date from which the lender may withdraw (loan mode)
+    TopUpWindow      // seconds the buyer has to top up after a lost loan, refund term on (loan mode)
+}
+
+// ------------------------------------------------------------
+// KYC / AML (zero-knowledge attestation from a trusted CASP)
+// ------------------------------------------------------------
+// The CASP (KYC provider) checks the buyer's documents OFF-chain and
+// signs these claims with its Jubjub key. The buyer keeps the signed
+// attestation privately and proves in-circuit that it is genuine and
+// satisfies the policy. Only pass/fail and the issuer id become public;
+// level, risk score and salt stay private. The KycAttestation and
+// SchnorrSignature structs come from the shared KycAttestationV1 module.
+
+// Private escrow terms, known to buyer, seller and admin, never on-chain.
+// The ledger holds a salted commitment to each part (see *CommitmentOf).
+// v2: `amount` is the BUYER SHARE (the buyer's own deposit); the total price,
+// the lender share, the lender payout key and the refund term are new.
+export struct PrivateTerms {
+    amount: Uint<128>,                 // buyer share
+    amountSalt: Bytes<32>,
+    buyerPayout: ZswapCoinPublicKey,   // refunds go here (shielded)
+    buyerSalt: Bytes<32>,
+    sellerPayout: ZswapCoinPublicKey,  // the purchase price goes here (shielded)
+    sellerSalt: Bytes<32>,
+    price: Uint<128>,                  // total price = amount + lenderShare
+    priceSalt: Bytes<32>,
+    lenderShare: Uint<128>,            // loan amount (0 in a cash deal)
+    lenderShareSalt: Bytes<32>,
+    lenderPayout: ZswapCoinPublicKey,  // the loan is repaid here on any unwind
+    lenderPayoutSalt: Bytes<32>,
+    refundOnLoss: Boolean,             // loan refusal refund term
+    loanTermsSalt: Bytes<32>
+}
+
+// v2: what the lender receives (the "lender package"): only the parts it
+// needs to fund, to refuse and to be repaid. No buyer share, no buyer or
+// seller payout key.
+export struct LenderTerms {
+    lenderShare: Uint<128>,
+    lenderShareSalt: Bytes<32>,
+    lenderPayout: ZswapCoinPublicKey,
+    lenderPayoutSalt: Bytes<32>,
+    refundOnLoss: Boolean,
+    loanTermsSalt: Bytes<32>
+}
+
+export struct KycPolicy {
+    minKycLevel: Uint<8>,
+    maxAmlRiskScore: Uint<8>
+}
+
+export enum Contingency {
+    Inspection,
+    Financing,
+    Title
+}
+
+export ledger status: EscrowStatus;
+export ledger lifecycleRound: Counter;
+export ledger correctionCount: Counter;   // how many results the resolver voided
+export ledger disbursed: Boolean;         // every held coin paid (status Closed)
+
+// ------------------------------------------------------------
+// Delayed initialization
+// ------------------------------------------------------------
+export ledger adminId: Bytes<32>;               // configures terms; no power after finalize
+export ledger configured: Set<InitAttribute>;   // populated attributes (missing = all - configured)
+export ledger configVersion: Counter;           // bumped by every admin change
+export ledger buyerAccepted: Boolean;           // reset by every admin change
+export ledger sellerAccepted: Boolean;          // reset by every admin change
+
+// Role identities: persistentHash of each role holder's secret key.
+// Attestor roles may share an identity with each other (or with the
+// buyer, e.g. a cash buyer acting as "lender"), but must be distinct
+// from the dispute resolver AND from the seller (separation of duties).
+export ledger buyerId: Bytes<32>;
+export ledger sellerId: Bytes<32>;
+export ledger inspectorId: Bytes<32>;
+export ledger lenderId: Bytes<32>;
+export ledger titleAgentId: Bytes<32>;
+export ledger resolverId: Bytes<32>;
+
+// Escrowed asset and PRIVATE terms (commitments only)
+export ledger escrowColor: Bytes<32>;             // shielded token type, fixed at deployment
+export ledger escrowTicker: Opaque<"string">;      // display symbol, fixed at deployment
+export ledger amountCommitment: Bytes<32>;         // amountCommitmentOf(amount, amountSalt)
+export ledger buyerPayoutCommitment: Bytes<32>;    // payoutCommitmentOf(buyerPayout, buyerSalt)
+export ledger sellerPayoutCommitment: Bytes<32>;   // payoutCommitmentOf(sellerPayout, sellerSalt)
+export ledger closingDeadline: Uint<64>;   // unix seconds
+export ledger disputeDeadline: Uint<64>;   // unix seconds, > closingDeadline
+
+// KYC: trusted CASP whitelist, revocation set, policy and buyer/seller verification records.
+export ledger kycIssuers: Map<Bytes<32>, JubjubPoint>;
+export ledger revokedKycRefs: Set<Bytes<32>>;
+export ledger kycPolicy: KycPolicy;
+export ledger buyerKycVerified: Boolean;
+export ledger buyerKycIssuer: Bytes<32>;
+export ledger buyerKycRef: Bytes<32>;          // hiding commitment to the attestation (audit / notary)
+export ledger buyerTravelRuleRef: Bytes<32>;   // originator Travel Rule (IVMS101) commitment
+export ledger sellerKycVerified: Boolean;
+export ledger sellerKycIssuer: Bytes<32>;
+export ledger sellerKycRef: Bytes<32>;         // hiding commitment to seller's attestation
+export ledger sellerKycValidUntil: Uint<64>;   // expiry timestamp checked at payout / expiration
+export ledger sellerTravelRuleRef: Bytes<32>;  // beneficiary Travel Rule (IVMS101) commitment
+
+// Contingency results. `submitted` = an outcome is on record,
+// `passed` = that outcome is favourable, `waived` = buyer waived it.
+// Each attested submission also anchors an off-chain document commitment (`Bytes<32>`).
+export ledger inspectionSubmitted: Boolean;
+export ledger inspectionPassed: Boolean;
+export ledger inspectionWaived: Boolean;
+export ledger inspectionReport: Bytes<32>;
+export ledger financingSubmitted: Boolean;
+export ledger financingApproved: Boolean;
+export ledger financingWaived: Boolean;
+export ledger financingLetter: Bytes<32>;
+export ledger titleSubmitted: Boolean;
+export ledger titleCleared: Boolean;
+export ledger titleWaived: Boolean;
+export ledger titleCommitment: Bytes<32>;
+export ledger voidedReportHistory: Map<Uint<64>, Bytes<32>>;
+
+// ------------------------------------------------------------
+// v2: financing by deposit
+// ------------------------------------------------------------
+export ledger financingMode: FinancingMode;
+export ledger priceCommitment: Bytes<32>;          // priceCommitmentOf(price, priceSalt)
+export ledger lenderShareCommitment: Bytes<32>;    // lenderShareCommitmentOf(lenderShare, lenderShareSalt)
+export ledger lenderPayoutCommitment: Bytes<32>;   // payoutCommitmentOf(lenderPayout, lenderPayoutSalt)
+export ledger loanTermsCommitment: Bytes<32>;      // loanTermsCommitmentOf(refundOnLoss, loanTermsSalt)
+export ledger loanOfferExpiry: Uint<64>;           // unix seconds; lender may withdraw from here on
+export ledger topUpWindow: Uint<64>;               // seconds
+export ledger loanHeld: Boolean;                   // the lender's coin is in the contract
+export ledger topUpHeld: Boolean;                  // the buyer's top-up coin is in the contract
+export ledger loanLost: Boolean;                   // the lender refused or withdrew
+export ledger loanWithdrawn: Boolean;              // ... by withdrawing (final, cannot be voided)
+export ledger loanLostRefund: Boolean;             // the refund term, disclosed when the loan is lost
+export ledger topUpWindowEnd: Uint<64>;            // set when the loan is lost with the refund term on
+export ledger buyerCoinPaid: Boolean;              // buyer coin (and top-up) paid out
+export ledger secondCoinPaid: Boolean;             // loan or top-up coin paid out
+
+witness localSecretKey(): Bytes<32>;
+// Openings of amountCommitment / buyerPayoutCommitment / sellerPayoutCommitment.
+witness privateTerms(): PrivateTerms;
+// The vault coin with its Merkle-tree index (assigned by the chain when the
+// deposit is confirmed; the dApp reads it from the indexer / zswap state).
+witness vaultCoin(): QualifiedShieldedCoinInfo;
+// v2: the second coin (the lender's loan coin or the buyer's top-up coin).
+witness secondCoin(): QualifiedShieldedCoinInfo;
+// v2: the lender package (lender circuits only).
+witness lenderTerms(): LenderTerms;
+// Buyer's private KYC attestation, the CASP signature and the issuer id.
+witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
+
+// Admin, buyer, seller, the escrowed token's color and its ticker are
+// mandatory at deployment and can never change. Every
+// other term is a Maybe: pass none() to leave it for later, some(v)
+// to set it now. The contract starts in Initializing and is unusable
+// until finalizeInitialization() succeeds.
+constructor(
+    admin: Bytes<32>,
+    buyer: Bytes<32>,
+    seller: Bytes<32>,
+    color: Bytes<32>,
+    ticker: Opaque<"string">,
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
+) {
+    adminId = disclose(admin);
+    buyerId = disclose(buyer);
+    sellerId = disclose(seller);
+    assert(buyerId != sellerId, "Buyer and seller must be distinct");
+    assert(adminId != buyerId, "Admin must be the seller or a third party, not the buyer");
+    escrowColor = disclose(color);
+    escrowTicker = disclose(ticker);
+    buyerKycVerified = false;
+    sellerKycVerified = false;
+
+    status = EscrowStatus.Initializing;
+    disbursed = false;
+    buyerAccepted = false;
+    sellerAccepted = false;
+    inspectionSubmitted = false;
+    inspectionPassed = false;
+    inspectionWaived = false;
+    financingSubmitted = false;
+    financingApproved = false;
+    financingWaived = false;
+    titleSubmitted = false;
+    titleCleared = false;
+    titleWaived = false;
+    financingMode = FinancingMode.Attested;
+    loanHeld = false;
+    topUpHeld = false;
+    loanLost = false;
+    loanWithdrawn = false;
+    loanLostRefund = false;
+    buyerCoinPaid = false;
+    secondCoinPaid = false;
+
+    applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
+                sellerPayout, amount, deadline, disputeEnd, policy);
+}
+
+// ============================================================
+// ACCESS CONTROL (hash of witness secret, never ownPublicKey)
+// ============================================================
+// Exported so clients can derive the role ids passed to the constructor.
+export pure circuit roleIdOf(sk: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<2, Bytes<32>>>([pad(32, "re-escrow:role:"), sk]);
+}
+circuit roleId(): Bytes<32> {
+    return roleIdOf(localSecretKey());
+}
+circuit onlyBuyer(): [] {
+    assert(disclose(roleId() == buyerId), "Caller is not the buyer");
+}
+circuit onlySeller(): [] {
+    assert(disclose(roleId() == sellerId), "Caller is not the seller");
+}
+circuit onlyAdmin(): [] {
+    assert(disclose(roleId() == adminId), "Caller is not the admin");
+}
+circuit onlyBuyerOrSeller(): [] {
+    const id = roleId();
+    assert(disclose(id == buyerId) || disclose(id == sellerId), "Caller is not buyer or seller");
+}
+circuit onlyParty(): [] {
+    const id = roleId();
+    assert(
+        disclose(id == buyerId) || disclose(id == sellerId) || disclose(id == resolverId),
+        "Caller is not buyer, seller or resolver"
+    );
+}
+circuit onlyDisputeResolver(): [] {
+    assert(disclose(roleId() == resolverId), "Caller is not the dispute resolver");
+}
+circuit onlyInspector(): [] {
+    assert(disclose(roleId() == inspectorId), "Caller is not the inspector");
+}
+circuit onlyLender(): [] {
+    assert(disclose(roleId() == lenderId), "Caller is not the lender");
+}
+circuit onlyTitleAgent(): [] {
+    assert(disclose(roleId() == titleAgentId), "Caller is not the title agent");
+}
+
+// ============================================================
+// DELAYED INITIALIZATION
+// ============================================================
+// Number of InitAttribute members; keep in sync with the enum.
+circuit isFullyConfigured(): Boolean {
+    return configured.size() == 18;
+}
+
+// Writes every attribute passed as some(v); none() leaves it unchanged.
+// Only single-field sanity checks here; cross-field rules are checked
+// once, in finalizeInitialization(), when every value is known.
+circuit applyConfig(
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
+): [] {
+    const i = disclose(inspector);
+    if (i.is_some) { inspectorId = i.value; configured.insert(InitAttribute.Inspector); }
+    const l = disclose(lender);
+    if (l.is_some) { lenderId = l.value; configured.insert(InitAttribute.Lender); }
+    const t = disclose(titleAgent);
+    if (t.is_some) { titleAgentId = t.value; configured.insert(InitAttribute.TitleAgent); }
+    const r = disclose(resolver);
+    if (r.is_some) { resolverId = r.value; configured.insert(InitAttribute.Resolver); }
+    // Payout keys and amount arrive as salted commitments only.
+    const bp = disclose(buyerPayout);
+    if (bp.is_some) {
+        assert(bp.value != pad(32, ""), "Buyer payout commitment cannot be empty");
+        buyerPayoutCommitment = bp.value;
+        configured.insert(InitAttribute.BuyerPayout);
+    }
+    const sp = disclose(sellerPayout);
+    if (sp.is_some) {
+        assert(sp.value != pad(32, ""), "Seller payout commitment cannot be empty");
+        sellerPayoutCommitment = sp.value;
+        configured.insert(InitAttribute.SellerPayout);
+    }
+    const a = disclose(amount);
+    if (a.is_some) {
+        assert(a.value != pad(32, ""), "Amount commitment cannot be empty");
+        amountCommitment = a.value;
+        configured.insert(InitAttribute.EscrowAmount);
+    }
+    const d = disclose(deadline);
+    if (d.is_some) { closingDeadline = d.value; configured.insert(InitAttribute.ClosingDeadline); }
+    const de = disclose(disputeEnd);
+    if (de.is_some) { disputeDeadline = de.value; configured.insert(InitAttribute.DisputeDeadline); }
+    const kp = disclose(policy);
+    if (kp.is_some) {
+        assert(kp.value.minKycLevel > 0, "KYC policy must require a KYC level");
+        kycPolicy = kp.value;
+        configured.insert(InitAttribute.KycPolicy);
+    }
+}
+
+// Admin populates (or corrects) any subset of the missing terms.
+// Any change invalidates earlier buyer/seller acceptances.
+export circuit configure(
+    inspector: Maybe<Bytes<32>>,
+    lender: Maybe<Bytes<32>>,
+    titleAgent: Maybe<Bytes<32>>,
+    resolver: Maybe<Bytes<32>>,
+    buyerPayout: Maybe<Bytes<32>>,
+    sellerPayout: Maybe<Bytes<32>>,
+    amount: Maybe<Bytes<32>>,
+    deadline: Maybe<Uint<64>>,
+    disputeEnd: Maybe<Uint<64>>,
+    policy: Maybe<KycPolicy>
+): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
+                sellerPayout, amount, deadline, disputeEnd, policy);
+    configChanged();
+}
+
+// v2: financing terms, same rules as configure(): admin only, while
+// Initializing, any change resets both acceptances. Cash deals configure it
+// too (mode Attested, lender share 0) so every escrow commits to a price.
+export circuit configureFinancing(
+    mode: Maybe<FinancingMode>,
+    price: Maybe<Bytes<32>>,
+    lenderShare: Maybe<Bytes<32>>,
+    lenderPayout: Maybe<Bytes<32>>,
+    loanTerms: Maybe<Bytes<32>>,
+    offerExpiry: Maybe<Uint<64>>,
+    window: Maybe<Uint<64>>
+): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const m = disclose(mode);
+    if (m.is_some) { financingMode = m.value; configured.insert(InitAttribute.Financing); }
+    const p = disclose(price);
+    if (p.is_some) {
+        assert(p.value != pad(32, ""), "Price commitment cannot be empty");
+        priceCommitment = p.value;
+        configured.insert(InitAttribute.Price);
+    }
+    const ls = disclose(lenderShare);
+    if (ls.is_some) {
+        assert(ls.value != pad(32, ""), "Lender share commitment cannot be empty");
+        lenderShareCommitment = ls.value;
+        configured.insert(InitAttribute.LenderShare);
+    }
+    const lp = disclose(lenderPayout);
+    if (lp.is_some) {
+        assert(lp.value != pad(32, ""), "Lender payout commitment cannot be empty");
+        lenderPayoutCommitment = lp.value;
+        configured.insert(InitAttribute.LenderPayout);
+    }
+    const lt = disclose(loanTerms);
+    if (lt.is_some) {
+        assert(lt.value != pad(32, ""), "Loan terms commitment cannot be empty");
+        loanTermsCommitment = lt.value;
+        configured.insert(InitAttribute.LoanTerms);
+    }
+    const oe = disclose(offerExpiry);
+    if (oe.is_some) { loanOfferExpiry = oe.value; configured.insert(InitAttribute.LoanOfferExpiry); }
+    const w = disclose(window);
+    if (w.is_some) { topUpWindow = w.value; configured.insert(InitAttribute.TopUpWindow); }
+    configChanged();
+}
+
+circuit configChanged(): [] {
+    buyerAccepted = false;
+    sellerAccepted = false;
+    configVersion.increment(1);
+}
+
+// Trusted CASP whitelist. Managed by the admin during initialization;
+// accepted by buyer and seller with the rest of the configuration and
+// frozen at finalization.
+export circuit addKycIssuer(issuerId: Bytes<32>, issuerKey: JubjubPoint): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const k = disclose(issuerKey);
+    assert(!(jubjubPointX(k) == (0 as Field) && jubjubPointY(k) == (1 as Field)), "Issuer key must not be the identity point");
+    kycIssuers.insert(disclose(issuerId), k);
+    configured.insert(InitAttribute.KycIssuers);
+    configChanged();
+}
+export circuit removeKycIssuer(issuerId: Bytes<32>): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    const id = disclose(issuerId);
+    assert(kycIssuers.member(id), "Unknown KYC issuer");
+    kycIssuers.remove(id);
+    if (kycIssuers.isEmpty()) {
+        configured.remove(InitAttribute.KycIssuers);
+    }
+    configChanged();
+}
+
+// Buyer and seller each sign off on the complete configuration they
+// read at `expectedVersion`. If the admin changed anything in between,
+// the version no longer matches and the acceptance is rejected.
+export circuit acceptConfiguration(expectedVersion: Uint<64>): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    assert(isFullyConfigured(), "Configuration is incomplete");
+    assert(configVersion.read() == disclose(expectedVersion), "Configuration changed since it was read");
+    const id = roleId();
+    if (disclose(id == buyerId)) {
+        buyerAccepted = true;
+    } else {
+        assert(disclose(id == sellerId), "Caller is not buyer or seller");
+        sellerAccepted = true;
+    }
+}
+
+// All terms present, valid and accepted by both parties: the contract
+// becomes usable (Created). The configuration is frozen from here on
+// and the admin role has no further power.
+export circuit finalizeInitialization(): [] {
+    assert(status == EscrowStatus.Initializing, "Contract is already initialized");
+    onlyAdmin();
+    assert(isFullyConfigured(), "Configuration is incomplete");
+    assert(buyerAccepted && sellerAccepted, "Buyer and seller must accept the configuration");
+
+    assert(buyerId != resolverId, "Buyer must be distinct from dispute resolver");
+    assert(sellerId != resolverId, "Seller must be distinct from dispute resolver");
+    assert(inspectorId != resolverId, "Inspector must be distinct from dispute resolver");
+    assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
+    assert(titleAgentId != resolverId, "Title agent must be distinct from dispute resolver");
+    assert(inspectorId != sellerId, "Inspector must be independent from seller");
+    assert(lenderId != sellerId, "Lender must be independent from seller");
+    assert(titleAgentId != sellerId, "Title agent must be independent from seller");
+    assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
+    assert(blockTimeLt(closingDeadline), "Closing deadline is already in the past");
+    if (financingMode == FinancingMode.Deposited) {
+        assert(lenderId != buyerId, "Lender must be distinct from the buyer when it deposits the loan");
+        assert(loanOfferExpiry <= closingDeadline, "Loan offer expiry must not be after the closing deadline");
+        assert(topUpWindow > 0, "Top-up window must be positive");
+    }
+
+    status = EscrowStatus.Created;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// PHASE HELPERS
+// ============================================================
+circuit allCleared(): Boolean {
+    return inspectionSubmitted && inspectionPassed &&
+           financingSubmitted && financingApproved &&
+           titleSubmitted && titleCleared;
+}
+circuit anyFailed(): Boolean {
+    return (inspectionSubmitted && !inspectionPassed) ||
+           (financingSubmitted && !financingApproved) ||
+           (titleSubmitted && !titleCleared);
+}
+// v2: a failure that lets the buyer cancel and be refunded. In loan mode a
+// lost loan counts only when the refund term is on (the buyer then gives up
+// its top-up window early); with the term off it must top up or forfeit.
+circuit refundableFailure(): Boolean {
+    const otherFailed = (inspectionSubmitted && !inspectionPassed) ||
+                        (titleSubmitted && !titleCleared);
+    if (financingMode == FinancingMode.Deposited) {
+        return otherFailed || (loanLost && loanLostRefund && !topUpHeld);
+    }
+    return otherFailed || (financingSubmitted && !financingApproved);
+}
+circuit secondCoinHeld(): Boolean {
+    return loanHeld || topUpHeld;
+}
+circuit advanceIfAllCleared(): [] {
+    if (allCleared()) {
+        status = EscrowStatus.ReadyToClose;
+        lifecycleRound.increment(1);
+    }
+}
+
+// ============================================================
+// PRIVATE TERMS & SHIELDED VAULT
+// ============================================================
+// Salted commitments to the private terms. Exported so the dApp (and a
+// notary given an opening) can recompute them off-chain.
+export pure circuit amountCommitmentOf(amount: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:amount:v1"), amount, salt]);
+}
+export pure circuit payoutCommitmentOf(key: ZswapCoinPublicKey, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Bytes<32>, Bytes<32>]>([pad(32, "re-escrow:payout:v1"), key.bytes, salt]);
+}
+// v2 commitments.
+export pure circuit priceCommitmentOf(price: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:price:v2"), price, salt]);
+}
+export pure circuit lenderShareCommitmentOf(share: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:lender-share:v2"), share, salt]);
+}
+export pure circuit loanTermsCommitmentOf(refundOnLoss: Boolean, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Boolean, Bytes<32>]>([pad(32, "re-escrow:loan-terms:v2"), refundOnLoss, salt]);
+}
+
+// Nonce of the single vault coin. Deterministic, so buyer, seller and
+// resolver-side tooling that know the terms can rebuild the coin without
+// the depositor; bound to this contract and to secrets the notary's
+// amount opening does not reveal.
+export pure circuit vaultNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:vault-nonce:v1"), self, buyerSalt, sellerSalt]);
+}
+
+// v2: nonce of the lender's loan coin (from lender-package secrets only, so
+// the lender can build it) and of the buyer's top-up coin (from the buyer
+// and seller salts, under its own label: never equal to the vault nonce).
+export pure circuit lenderNonceOf(self: Bytes<32>, shareSalt: Bytes<32>, payoutSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:lender-nonce:v2"), self, shareSalt, payoutSalt]);
+}
+export pure circuit topUpNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSalt: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<4, Bytes<32>>>([pad(32, "re-escrow:topup-nonce:v2"), self, buyerSalt, sellerSalt]);
+}
+
+// Nonce of the coin a payout creates (sendShielded evolves the input
+// nonce). The recipient's dApp uses it to rebuild and import the payout
+// coin {payoutNonceOf(vaultNonce), escrowColor, amount} into its wallet.
+export pure circuit payoutNonceOf(vaultNonce: Bytes<32>): Bytes<32> {
+    return upgradeFromTransient(transientHash<Vector<2, Field>>(
+        [pad(28, "midnight:kernel:nonce_evolve") as Field, degradeToTransient(vaultNonce)]
+    ));
+}
+
+// Opens all seven commitments from the private witness and checks that the
+// shares add up to the price. Only the boolean results are disclosed;
+// amounts and keys stay private.
+circuit openTerms(): PrivateTerms {
+    const t = privateTerms();
+    assert(disclose(amountCommitmentOf(t.amount, t.amountSalt)) == amountCommitment,
+           "ERROR_TERMS_MISMATCH: amount");
+    assert(disclose(payoutCommitmentOf(t.buyerPayout, t.buyerSalt)) == buyerPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: buyer payout key");
+    assert(disclose(payoutCommitmentOf(t.sellerPayout, t.sellerSalt)) == sellerPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: seller payout key");
+    assert(disclose(priceCommitmentOf(t.price, t.priceSalt)) == priceCommitment,
+           "ERROR_TERMS_MISMATCH: price");
+    assert(disclose(lenderShareCommitmentOf(t.lenderShare, t.lenderShareSalt)) == lenderShareCommitment,
+           "ERROR_TERMS_MISMATCH: lender share");
+    assert(disclose(payoutCommitmentOf(t.lenderPayout, t.lenderPayoutSalt)) == lenderPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: lender payout key");
+    assert(disclose(loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)) == loanTermsCommitment,
+           "ERROR_TERMS_MISMATCH: loan terms");
+    assert(disclose(t.amount + t.lenderShare == t.price), "ERROR_TERMS_MISMATCH: price is not buyer share + lender share");
+    if (financingMode == FinancingMode.Deposited) {
+        assert(disclose(t.lenderShare > 0), "ERROR_TERMS_MISMATCH: loan mode needs a lender share");
+    } else {
+        assert(disclose(t.lenderShare == 0), "ERROR_TERMS_MISMATCH: a cash deal has no lender share");
+    }
+    return t;
+}
+
+// v2: opens the lender package (lender share, lender payout key, refund term).
+circuit openLenderTerms(): LenderTerms {
+    const t = lenderTerms();
+    assert(disclose(lenderShareCommitmentOf(t.lenderShare, t.lenderShareSalt)) == lenderShareCommitment,
+           "ERROR_TERMS_MISMATCH: lender share");
+    assert(disclose(payoutCommitmentOf(t.lenderPayout, t.lenderPayoutSalt)) == lenderPayoutCommitment,
+           "ERROR_TERMS_MISMATCH: lender payout key");
+    assert(disclose(loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)) == loanTermsCommitment,
+           "ERROR_TERMS_MISMATCH: loan terms");
+    return t;
+}
+
+circuit expectedVaultCoin(t: PrivateTerms): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: vaultNonceOf(kernel.self().bytes, t.buyerSalt, t.sellerSalt),
+        color: escrowColor,
+        value: t.amount
+    };
+}
+circuit expectedLoanCoin(share: Uint<128>, shareSalt: Bytes<32>, payoutSalt: Bytes<32>): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: lenderNonceOf(kernel.self().bytes, shareSalt, payoutSalt),
+        color: escrowColor,
+        value: share
+    };
+}
+circuit expectedTopUpCoin(t: PrivateTerms): ShieldedCoinInfo {
+    return ShieldedCoinInfo {
+        nonce: topUpNonceOf(kernel.self().bytes, t.buyerSalt, t.sellerSalt),
+        color: escrowColor,
+        value: t.lenderShare
+    };
+}
+// The second coin the contract holds (loan or top-up), as the full terms define it.
+circuit expectedSecondCoin(t: PrivateTerms): ShieldedCoinInfo {
+    if (loanHeld) {
+        return expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt);
+    }
+    return expectedTopUpCoin(t);
+}
+
+// Spends the whole vault coin to `recipient` (a shielded coin public key).
+// The coin comes from the witness and must be exactly the coin received at
+// deposit; Zswap rejects it if it was already spent or the index is wrong.
+// The recipient's wallet can rebuild the payout coin: its nonce is the
+// kernel's evolution of the vault nonce, same color and value.
+circuit payOutVault(t: PrivateTerms, recipient: ZswapCoinPublicKey): [] {
+    const q = vaultCoin();
+    const e = expectedVaultCoin(t);
+    assert(
+        disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
+        "ERROR_VAULT_COIN_MISMATCH"
+    );
+    sendInFull(q, recipient);
+}
+// v2: spends the second held coin, which must be exactly `e`, in full to `recipient`.
+circuit payOutSecond(e: ShieldedCoinInfo, recipient: ZswapCoinPublicKey): [] {
+    const q = secondCoin();
+    assert(
+        disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
+        "ERROR_SECOND_COIN_MISMATCH"
+    );
+    sendInFull(q, recipient);
+}
+circuit sendInFull(q: QualifiedShieldedCoinInfo, recipient: ZswapCoinPublicKey): [] {
+    const r = sendShielded(
+        disclose(q),
+        left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient)),
+        disclose(q.value)
+    );
+    assert(!disclose(r.change.is_some), "Coin must be paid out in full");
+}
+// v2: the escrow closes once every coin it holds has been paid out.
+circuit closeIfAllPaid(): [] {
+    if (buyerCoinPaid && (!secondCoinHeld() || secondCoinPaid)) {
+        disbursed = true;
+        status = EscrowStatus.Closed;
+    }
+}
+
+// ============================================================
+// KYC VERIFICATION
+// ============================================================
+// verifySchnorr, kycMessage, kycReference and the revocation messages
+// come from the shared KycAttestationV1 module.
+
+// Proves, without revealing the attestation, that the buyer holds a
+// valid, unexpired, unrevoked attestation from a whitelisted CASP for
+// THIS buyer and THIS payout wallet that meets the KYC/AML policy.
+circuit verifyBuyerKyc(t: PrivateTerms): [] {
+    const [att, sig, issuer] = kycAttestation();
+    const issuerId = disclose(issuer);
+    assert(kycIssuers.member(issuerId), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(issuerId), kycMessage(att), sig)),
+        "ERROR_NOT_WHITELISTED: invalid KYC attestation signature"
+    );
+    assert(disclose(att.subject == buyerId), "ERROR_NOT_WHITELISTED: attestation is for another subject");
+    assert(disclose(att.wallet == t.buyerPayout), "ERROR_NOT_WHITELISTED: wallet is not the verified buyer wallet");
+    assert(blockTimeLt(disclose(att.validUntil)), "ERROR_KYC_EXPIRED");
+    assert(disclose(att.kycLevel >= kycPolicy.minKycLevel), "ERROR_KYC_LEVEL_INSUFFICIENT");
+    assert(disclose(att.amlRiskScore <= kycPolicy.maxAmlRiskScore), "ERROR_AML_RISK_TOO_HIGH");
+    const ref = disclose(kycReference(att));
+    assert(!revokedKycRefs.member(ref), "ERROR_KYC_REVOKED");
+    buyerKycVerified = true;
+    buyerKycIssuer = issuerId;
+    buyerKycRef = ref;
+    buyerTravelRuleRef = disclose(att.travelRuleRef);
+}
+
+// Seller proves a valid, unexpired, unrevoked KYC/AML attestation bound
+// to sellerId and the seller's private payout key. May be submitted (or renewed) any time
+// from Created through Settled before releaseToSeller().
+export circuit submitSellerKyc(): [] {
+    assert(
+        status == EscrowStatus.Created ||
+        status == EscrowStatus.Funded ||
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose ||
+        status == EscrowStatus.Disputed ||
+        status == EscrowStatus.Settled ||
+        status == EscrowStatus.Forfeited,   // v2: needed to claim a forfeited deposit
+        "Seller KYC cannot be submitted in current state"
+    );
+    onlySeller();
+    const t = openTerms();
+    const [att, sig, issuer] = kycAttestation();
+    const issuerId = disclose(issuer);
+    assert(kycIssuers.member(issuerId), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(issuerId), kycMessage(att), sig)),
+        "ERROR_NOT_WHITELISTED: invalid KYC attestation signature"
+    );
+    assert(disclose(att.subject == sellerId), "ERROR_NOT_WHITELISTED: attestation is for another subject");
+    assert(disclose(att.wallet == t.sellerPayout), "ERROR_NOT_WHITELISTED: wallet is not the verified seller wallet");
+    const validUntil = disclose(att.validUntil);
+    assert(blockTimeLt(validUntil), "ERROR_KYC_EXPIRED");
+    assert(disclose(att.kycLevel >= kycPolicy.minKycLevel), "ERROR_KYC_LEVEL_INSUFFICIENT");
+    assert(disclose(att.amlRiskScore <= kycPolicy.maxAmlRiskScore), "ERROR_AML_RISK_TOO_HIGH");
+    const ref = disclose(kycReference(att));
+    assert(!revokedKycRefs.member(ref), "ERROR_KYC_REVOKED");
+    sellerKycVerified = true;
+    sellerKycIssuer = issuerId;
+    sellerKycRef = ref;
+    sellerKycValidUntil = validUntil;
+    sellerTravelRuleRef = disclose(att.travelRuleRef);
+}
+
+// Permissionless submission of a CASP-signed attestation revocation.
+export circuit revokeKycAttestation(issuerId: Bytes<32>, ref: Bytes<32>, sig: SchnorrSignature): [] {
+    const id = disclose(issuerId);
+    const r = disclose(ref);
+    assert(kycIssuers.member(id), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(id), kycRevocationMessage(r), sig)),
+        "Invalid KYC attestation revocation signature"
+    );
+    revokedKycRefs.insert(r);
+}
+
+// Permissionless submission of a CASP-signed key self-revocation.
+export circuit revokeKycIssuer(issuerId: Bytes<32>, sig: SchnorrSignature): [] {
+    const id = disclose(issuerId);
+    assert(kycIssuers.member(id), "ERROR_NOT_WHITELISTED: issuer is not a trusted CASP");
+    assert(
+        disclose(verifySchnorr(kycIssuers.lookup(id), issuerRevocationMessage(id), sig)),
+        "Invalid KYC issuer revocation signature"
+    );
+    kycIssuers.remove(id);
+    if (status == EscrowStatus.Initializing && kycIssuers.isEmpty()) {
+        configured.remove(InitAttribute.KycIssuers);
+        configChanged();
+    }
+}
+
+circuit hasUsableSellerKyc(): Boolean {
+    return sellerKycVerified &&
+           kycIssuers.member(sellerKycIssuer) &&
+           !revokedKycRefs.member(sellerKycRef) &&
+           blockTimeLt(sellerKycValidUntil);
+}
+
+// ============================================================
+// SETUP: CANCEL BEFORE FUNDING / DEPOSIT
+// ============================================================
+// Either side may walk away before any money is locked; while the
+// contract is still Initializing the admin may abandon it too.
+export circuit cancelBeforeFunding(): [] {
+    assert(
+        status == EscrowStatus.Initializing || status == EscrowStatus.Created,
+        "Escrow already funded"
+    );
+    const id = roleId();
+    assert(
+        disclose(id == buyerId) || disclose(id == sellerId) ||
+        (status == EscrowStatus.Initializing && disclose(id == adminId)),
+        "Caller cannot cancel"
+    );
+    status = EscrowStatus.Cancelled;
+    lifecycleRound.increment(1);
+}
+
+// The buyer's wallet creates ONE shielded output to this contract with
+// exactly expectedVaultCoin(terms): nonce from the terms, escrowColor and
+// the committed amount. The contract claims it with receiveShielded.
+export circuit depositToEscrow(coin: ShieldedCoinInfo): [] {
+    assert(status == EscrowStatus.Created, "Escrow is not ready for funding");
+    onlyBuyer();
+    assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    const t = openTerms();
+    assert(disclose(t.amount > 0), "Escrow amount must be positive");
+    verifyBuyerKyc(t);   // KYC/AML gate: reverts before any funds move
+    const e = expectedVaultCoin(t);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_DEPOSIT_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
+    status = EscrowStatus.Funded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// v2: FINANCING BY DEPOSIT (FinancingMode.Deposited)
+// ============================================================
+circuit onlyLoanMode(): [] {
+    assert(financingMode == FinancingMode.Deposited, "Not a loan-financed escrow");
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+}
+
+// The lender funds the loan: exactly its committed share, before the loan
+// offer expiry. The deposit IS the financing approval.
+export circuit depositLoan(coin: ShieldedCoinInfo, letterHash: Bytes<32>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    assert(!loanLost, "The loan was already refused or withdrawn");
+    assert(blockTimeLt(loanOfferExpiry), "Loan offer has expired");
+    const h = disclose(letterHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
+    const t = openLenderTerms();
+    const e = expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_LOAN_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
+    loanHeld = true;
+    financingSubmitted = true;
+    financingApproved = true;
+    financingLetter = h;
+    advanceIfAllCleared();
+}
+
+// Records a lost loan (refused or withdrawn). With the refund term on, the
+// buyer's top-up window starts. A circuit cannot read the clock, only compare
+// it: `now` is the caller's current time, accepted within 10 minutes of the
+// block time.
+circuit loseLoan(refundOnLoss: Boolean, now: Uint<64>): [] {
+    loanLost = true;
+    financingSubmitted = true;
+    financingApproved = false;
+    const refund = disclose(refundOnLoss);
+    loanLostRefund = refund;
+    if (refund) {
+        const t = disclose(now);
+        assert(blockTimeGte(t), "Time is in the future");
+        assert(blockTimeLt((t + 600) as Uint<64>), "Time is too old");
+        const end = (t + topUpWindow) as Uint<64>;
+        topUpWindowEnd = end < closingDeadline ? end : closingDeadline;
+    }
+}
+
+// The lender refuses the loan (before depositing anything).
+export circuit declineLoan(letterHash: Bytes<32>, now: Uint<64>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    assert(!loanLost, "The loan was already refused or withdrawn");
+    const h = disclose(letterHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
+    const t = openLenderTerms();
+    financingLetter = h;
+    loseLoan(t.refundOnLoss, now);
+}
+
+// From the loan offer expiry, while the escrow is still in review, the
+// lender takes its deposit back. Treated exactly like a refusal.
+export circuit withdrawLoan(now: Uint<64>): [] {
+    onlyLoanMode();
+    onlyLender();
+    assert(loanHeld && !secondCoinPaid, "No loan deposit to withdraw");
+    assert(blockTimeGte(loanOfferExpiry), "Loan offer has not expired yet");
+    const t = openLenderTerms();
+    payOutSecond(expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt), t.lenderPayout);
+    loanHeld = false;
+    loanWithdrawn = true;
+    loseLoan(t.refundOnLoss, now);
+}
+
+// The buyer deposits the lender share itself (its KYC is checked again).
+// Refund term on and loan lost: only inside the top-up window.
+export circuit depositTopUp(coin: ShieldedCoinInfo): [] {
+    onlyLoanMode();
+    onlyBuyer();
+    assert(!loanHeld && !topUpHeld, "The second coin is already deposited");
+    if (loanLost && loanLostRefund) {
+        assert(blockTimeLt(topUpWindowEnd), "Top-up window is over");
+    } else {
+        assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    }
+    const t = openTerms();
+    verifyBuyerKyc(t);
+    const e = expectedTopUpCoin(t);
+    assert(
+        disclose(coin.nonce == e.nonce && coin.color == e.color && coin.value == e.value),
+        "ERROR_TOPUP_COIN_MISMATCH"
+    );
+    receiveShielded(disclose(coin));
+    topUpHeld = true;
+    financingSubmitted = true;
+    financingApproved = true;
+    advanceIfAllCleared();
+}
+
+// Refund term on, loan lost, window over without a top-up: anyone may move
+// the escrow to Refunded.
+export circuit endTopUpWindow(): [] {
+    onlyLoanMode();
+    assert(loanLost && loanLostRefund, "No top-up window is running");
+    assert(!topUpHeld, "The buyer has topped up");
+    assert(blockTimeGte(topUpWindowEnd), "Top-up window is not over");
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// CONTINGENCIES
+// ============================================================
+export circuit openContingencyReview(): [] {
+    assert(status == EscrowStatus.Funded, "Escrow is not funded");
+    onlyBuyerOrSeller();
+    status = EscrowStatus.ContingenciesPending;
+    lifecycleRound.increment(1);
+}
+
+// Each contingency outcome is attested ONCE by its designated role,
+// anchored with a non-empty off-chain document commitment (`reportHash: Bytes<32>`).
+// A result can only be re-attested after the resolver voided it
+// (see voidContingencyResult); nobody can overwrite it in place.
+export circuit submitInspection(passed: Boolean, reportHash: Bytes<32>): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(!inspectionSubmitted, "Inspection outcome already submitted");
+    onlyInspector();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Inspection report commitment cannot be empty");
+    inspectionSubmitted = true;
+    inspectionPassed = disclose(passed);
+    inspectionReport = h;
+    advanceIfAllCleared();
+}
+export circuit submitFinancing(approved: Boolean, reportHash: Bytes<32>): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: the lender deposits or refuses the loan");
+    assert(!financingSubmitted, "Financing outcome already submitted");
+    onlyLender();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
+    financingSubmitted = true;
+    financingApproved = disclose(approved);
+    financingLetter = h;
+    advanceIfAllCleared();
+}
+export circuit submitTitle(cleared: Boolean, reportHash: Bytes<32>): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    assert(!titleSubmitted, "Title outcome already submitted");
+    onlyTitleAgent();
+    const h = disclose(reportHash);
+    assert(h != pad(32, ""), "Title commitment hash cannot be empty");
+    titleSubmitted = true;
+    titleCleared = disclose(cleared);
+    titleCommitment = h;
+    advanceIfAllCleared();
+}
+
+// Correction path #1 (buyer only): contingencies protect the buyer,
+// so only the buyer may relax one: mark it satisfied whether it is
+// still pending or has failed. Irreversible, and recorded as waived.
+export circuit waiveContingency(which: Contingency): [] {
+    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
+    onlyBuyer();
+    const c = disclose(which);
+    if (c == Contingency.Inspection) {
+        assert(!(inspectionSubmitted && inspectionPassed), "Inspection already passed");
+        inspectionSubmitted = true;
+        inspectionPassed = true;
+        inspectionWaived = true;
+    } else if (c == Contingency.Financing) {
+        assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: top up instead of waiving financing");
+        assert(!(financingSubmitted && financingApproved), "Financing already approved");
+        financingSubmitted = true;
+        financingApproved = true;
+        financingWaived = true;
+    } else {
+        assert(!(titleSubmitted && titleCleared), "Title already cleared");
+        titleSubmitted = true;
+        titleCleared = true;
+        titleWaived = true;
+    }
+    advanceIfAllCleared();
+}
+
+// A submitted contingency failed: the buyer may exit with a refund.
+export circuit cancelAndRefund(): [] {
+    assert(
+        status == EscrowStatus.ContingenciesPending,
+        "Escrow is not in contingency review"
+    );
+    onlyBuyer();
+    assert(refundableFailure(), "No submitted contingency has failed");
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// The seller backs out voluntarily: releases the buyer, who is refunded.
+export circuit sellerWithdraw(): [] {
+    assert(
+        status == EscrowStatus.Funded ||
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose,
+        "Seller cannot withdraw in current state"
+    );
+    onlySeller();
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// EXPIRATION (permissionless keeper call, time-gated)
+// ============================================================
+// Before closing: past closingDeadline the deal is dead -> refundable.
+// While disputed: past disputeDeadline the resolver lost its chance;
+// default to refunding the buyer so funds can never be stuck forever.
+// In ReadyToClose or Settled: past disputeDeadline if the seller has no
+// usable KYC, expire so the buyer's funds are not locked forever.
+export circuit expireEscrow(): [] {
+    if (status == EscrowStatus.Disputed) {
+        assert(blockTimeGte(disputeDeadline), "Dispute deadline has not expired");
+    } else if (status == EscrowStatus.ReadyToClose || status == EscrowStatus.Settled) {
+        assert(blockTimeGte(disputeDeadline), "Dispute deadline has not expired");
+        assert(!hasUsableSellerKyc(), "Seller has valid KYC; escrow can be released");
+    } else {
+        assert(
+            status == EscrowStatus.Funded ||
+            status == EscrowStatus.ContingenciesPending,
+            "Escrow cannot expire in current state"
+        );
+        assert(blockTimeGte(closingDeadline), "Closing deadline has not expired");
+    }
+    // v2: loan lost, refund term off, no top-up: the buyer forfeits its deposit.
+    // (A disputed escrow always expires to a refund.)
+    if (status != EscrowStatus.Disputed && loanLost && !loanLostRefund && !topUpHeld) {
+        status = EscrowStatus.Forfeited;
+    } else {
+        status = EscrowStatus.Expired;
+    }
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// DISPUTE
+// ============================================================
+export circuit openDispute(): [] {
+    assert(
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose,
+        "Escrow cannot be disputed in current state"
+    );
+    onlyBuyerOrSeller();
+    assert(blockTimeLt(disputeDeadline), "Dispute window is closed");
+    status = EscrowStatus.Disputed;
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// DISPUTE RESOLUTION (resolver never writes a contingency value)
+// ============================================================
+export circuit resolveDisputeRefund(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    status = EscrowStatus.Refunded;
+    lifecycleRound.increment(1);
+}
+
+// The resolver may only award the seller when every contingency is
+// on record as cleared/waived. It cannot turn a failed or pending
+// contingency into a payout to the seller.
+export circuit resolveDisputeSettlement(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    assert(allCleared(), "Contingencies are not all cleared");
+    status = EscrowStatus.Settled;
+    lifecycleRound.increment(1);
+}
+
+// Correction path #2 (resolver, only inside a dispute): erase a
+// contested attestation so the ORIGINAL attestor re-attests it.
+// The resolver chooses no value; a buyer waiver cannot be voided.
+// Preserves the old report commitment in `voidedReportHistory` for audit.
+export circuit voidContingencyResult(which: Contingency): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    const c = disclose(which);
+    const idx = correctionCount.read();
+    if (c == Contingency.Inspection) {
+        assert(inspectionSubmitted && !inspectionWaived, "No attested inspection to void");
+        voidedReportHistory.insert(idx, inspectionReport);
+        inspectionSubmitted = false;
+        inspectionPassed = false;
+        inspectionReport = pad(32, "");
+    } else if (c == Contingency.Financing) {
+        assert(financingSubmitted && !financingWaived, "No attested financing to void");
+        if (financingMode == FinancingMode.Deposited) {
+            // Only a refusal can be voided: a deposit is refunded, not erased,
+            // and a withdrawal is final.
+            assert(loanLost && !loanWithdrawn && !topUpHeld, "Only a loan refusal can be voided");
+            loanLost = false;
+            loanLostRefund = false;
+            topUpWindowEnd = 0;
+        }
+        voidedReportHistory.insert(idx, financingLetter);
+        financingSubmitted = false;
+        financingApproved = false;
+        financingLetter = pad(32, "");
+    } else {
+        assert(titleSubmitted && !titleWaived, "No attested title to void");
+        voidedReportHistory.insert(idx, titleCommitment);
+        titleSubmitted = false;
+        titleCleared = false;
+        titleCommitment = pad(32, "");
+    }
+    correctionCount.increment(1);
+    status = EscrowStatus.ContingenciesPending;
+    lifecycleRound.increment(1);
+}
+
+// The dispute was unfounded: return to the phase implied by the record.
+export circuit dismissDispute(): [] {
+    assert(status == EscrowStatus.Disputed, "Escrow is not disputed");
+    onlyDisputeResolver();
+    if (allCleared()) {
+        status = EscrowStatus.ReadyToClose;
+    } else {
+        status = EscrowStatus.ContingenciesPending;
+    }
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
+// CUSTODY: RELEASE / REFUND (the only exits to Closed)
+// ============================================================
+export circuit releaseToSeller(): [] {
+    assert(
+        status == EscrowStatus.ReadyToClose || status == EscrowStatus.Settled,
+        "Escrow is not releasable to seller"
+    );
+    assert(!buyerCoinPaid, "Funds already disbursed");
+    if (status == EscrowStatus.ReadyToClose) {
+        onlyBuyerOrSeller();
+    } else {
+        onlyDisputeResolver();
+    }
+    requireUsableSellerKyc();
+    const t = openTerms();
+    if (financingMode == FinancingMode.Deposited) {
+        // v2: the full price = buyer coin + the second coin (loan or top-up).
+        assert(secondCoinHeld(), "The loan (or the buyer's top-up) is not deposited");
+        payOutSecond(expectedSecondCoin(t), t.sellerPayout);
+        secondCoinPaid = true;
+    }
+    payOutVault(t, t.sellerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+circuit requireUsableSellerKyc(): [] {
+    assert(sellerKycVerified, "ERROR_SELLER_KYC_REQUIRED");
+    assert(kycIssuers.member(sellerKycIssuer), "ERROR_NOT_WHITELISTED: seller KYC issuer was revoked");
+    assert(!revokedKycRefs.member(sellerKycRef), "ERROR_KYC_REVOKED");
+    assert(blockTimeLt(sellerKycValidUntil), "ERROR_KYC_EXPIRED");
+}
+
+// Pays the buyer coin (and the buyer's top-up, if any) back to the buyer.
+// The escrow closes once every held coin is paid (see refundLender).
+export circuit refundBuyer(): [] {
+    assert(
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        "Escrow is not refundable"
+    );
+    assert(!buyerCoinPaid, "Funds already disbursed");
+    onlyParty();
+    const t = openTerms();
+    if (topUpHeld) {
+        payOutSecond(expectedTopUpCoin(t), t.buyerPayout);
+        secondCoinPaid = true;
+    }
+    payOutVault(t, t.buyerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// v2: pays the lender's loan coin back to the lender payout key on any
+// unwind. The lender (with its package) or any party may trigger it.
+export circuit refundLender(): [] {
+    assert(
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        "Escrow is not refundable"
+    );
+    assert(loanHeld && !secondCoinPaid, "No loan deposit to refund");
+    const id = roleId();
+    assert(
+        disclose(id == lenderId) || disclose(id == buyerId) ||
+        disclose(id == sellerId) || disclose(id == resolverId),
+        "Caller is not the lender, buyer, seller or resolver"
+    );
+    const t = openLenderTerms();
+    payOutSecond(expectedLoanCoin(t.lenderShare, t.lenderShareSalt, t.lenderPayoutSalt), t.lenderPayout);
+    secondCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// v2: loan lost with the refund term off and no top-up by the closing
+// deadline: the seller keeps the buyer's deposit (seller KYC required, as
+// for a release). Any loan coin was already withdrawn.
+export circuit claimForfeit(): [] {
+    assert(status == EscrowStatus.Forfeited, "Escrow is not forfeited");
+    assert(!buyerCoinPaid, "Funds already disbursed");
+    onlySeller();
+    requireUsableSellerKyc();
+    const t = openTerms();
+    payOutVault(t, t.sellerPayout);
+    buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
