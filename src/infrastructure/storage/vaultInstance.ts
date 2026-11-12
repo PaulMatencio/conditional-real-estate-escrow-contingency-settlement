@@ -9,6 +9,7 @@
  *    deploy, when the key is the contract's real authority;
  *  - keys found in plain localStorage from earlier versions are moved into the vault on unlock, then deleted.
  */
+import { signingKeyHex } from './signingKeyCodec';
 import type { KeyValueStore } from '@/application/ports';
 import { ADMIN_RECORD, type Vault } from '@/application/partyPorts';
 import { EncryptedVault, IdbStore } from './encryptedVault';
@@ -97,8 +98,8 @@ export async function migratePlaintextAdminKey(plain: KeyValueStore, vault: Vaul
 export interface SigningKeyStore {
   /** The persisted authority key, or null (also when the vault is locked). */
   load(contractAddress: string): Promise<string | null>;
-  /** Persists the authority key; throws when the vault is locked. */
-  save(contractAddress: string, key: string): Promise<void>;
+  /** Persists the authority key (either shape; stored as bare hex); throws when the vault is locked. */
+  save(contractAddress: string, key: unknown): Promise<void>;
   remove(contractAddress: string): Promise<void>;
 }
 
@@ -108,10 +109,25 @@ export function vaultSigningKeys(vault: Vault): SigningKeyStore {
   return {
     async load(a) {
       if (!vault.unlocked) return null;
-      return (await vault.load(norm(a))).authorityKey ?? null;
+      const addr = norm(a);
+      const r = await vault.load(addr);
+      const hex = signingKeyHex(r.authorityKey);
+      // Self-heal: midnight-js 5 handed us the tagged object at deploy ({ tag: 'schnorr', value }), and earlier builds
+      // stored it as is. Rewrite the record with the bare hex (history entries too) so every reader sees one shape.
+      const histOk = (r.authorityKeyHistory ?? []).every((h) => typeof h.key === 'string' && signingKeyHex(h.key) === h.key);
+      if ((r.authorityKey !== undefined && r.authorityKey !== hex) || !histOk) {
+        const history = (r.authorityKeyHistory ?? []).flatMap((h) => {
+          const k = signingKeyHex(h.key);
+          return k ? [{ ...h, key: k }] : [];
+        });
+        await vault.save(addr, { ...r, authorityKey: hex ?? undefined, authorityKeyHistory: history.length ? history : undefined }).catch(() => {});
+      }
+      return hex;
     },
-    async save(a, key) {
+    async save(a, raw) {
       if (!vault.unlocked) throw new Error('Unlock the vault: the contract authority key is only stored encrypted.');
+      const key = signingKeyHex(raw);
+      if (!key) throw new Error('Not a contract authority key (expected 64 hex characters).');
       const addr = norm(a);
       const r = await vault.load(addr);
       const history = r.authorityKey && r.authorityKey !== key ? [...(r.authorityKeyHistory ?? []), { key: r.authorityKey, replacedAt: Date.now() }] : r.authorityKeyHistory;

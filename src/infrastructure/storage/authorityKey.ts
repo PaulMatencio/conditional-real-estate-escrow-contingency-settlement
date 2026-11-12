@@ -10,7 +10,7 @@ const normalize = (a: string) => a.trim().replace(/^0x/, '').toLowerCase();
  */
 export async function exportAuthorityKey(vault: Vault, contractAddress: string): Promise<string | null> {
   if (!vault.unlocked) throw new Error('Unlock the vault first: the authority key is stored encrypted.');
-  return (await vault.load(normalize(contractAddress))).authorityKey ?? null;
+  return vaultSigningKeys(vault).load(normalize(contractAddress));
 }
 
 /** Restores an authority key into the vault; the previous one (if any) is kept in the record's history. */

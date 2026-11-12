@@ -9,6 +9,7 @@
 import type { VaultRecord } from './partyPorts';
 import { ADMIN_RECORD, IDENTITY_RECORD, TXLOG_RECORD } from './partyPorts';
 import { mergeTxLog } from './txLog';
+import { signingKeyHex } from '@/domain/signingKey';
 
 export const BACKUP_FORMAT = 'EscrowVaultBackupV1';
 
@@ -73,9 +74,21 @@ const unionBy = <T,>(a: T[] | undefined, b: T[] | undefined, key: (x: T) => stri
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Merges one backed-up record into the current one. Returns the merged record and what was kept or added. */
+function normalizeAuthorityKeys(r: VaultRecord): VaultRecord {
+  if (r.authorityKey === undefined && !r.authorityKeyHistory) return r;
+  const history = r.authorityKeyHistory?.flatMap((h) => {
+    const key = signingKeyHex(h.key);
+    return key ? [{ ...h, key }] : [];
+  });
+  return { ...r, authorityKey: signingKeyHex(r.authorityKey) ?? undefined, authorityKeyHistory: history };
+}
+
 export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: string): { record: VaultRecord; added: string[]; conflicts: string[] } {
   const added: string[] = [];
   const conflicts: string[] = [];
+  // Authority keys from older builds may be the ledger 9 tagged object: compare and store them as bare hex.
+  current = normalizeAuthorityKeys(current);
+  incoming = normalizeAuthorityKeys(incoming);
   const out: VaultRecord = { ...current };
 
   if (incoming.terms) {

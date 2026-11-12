@@ -1,5 +1,6 @@
 import type { PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
 import type { KeyValueStore } from '@/application/ports';
+import { signingKeyHex, toSigningKey } from './signingKeyCodec';
 import type { SigningKeyStore } from './vaultInstance';
 
 /** Legacy plaintext slot of a contract's authority key (read only by the vault migration). */
@@ -21,7 +22,7 @@ const unsupported = async (): Promise<never> => {
  * maintenance-authority (signing) key, which goes to the encrypted vault.
  */
 export function persistentPrivateStateProvider(store: KeyValueStore, keys: SigningKeyStore): PrivateStateProvider<string, unknown> {
-  const memory = new Map<string, string>();
+  const memory = new Map<string, string>(); // bare hex; handed to midnight-js as the ledger 9 tagged object
   const forContract = (address: string) => {
     const sKey = (id: string) => `ps:${address}:${id}`;
     return {
@@ -45,10 +46,15 @@ export function persistentPrivateStateProvider(store: KeyValueStore, keys: Signi
       for (const k of await store.keys('ps:')) await store.remove(k);
     },
     setSigningKey: async (a: string, key: unknown) => {
-      memory.set(a, key as string);
-      if (signingKeyCapture.on) await keys.save(a, key as string);
+      const hex = signingKeyHex(key);
+      if (!hex) throw new Error('midnight-js handed over a signing key in an unknown format.');
+      memory.set(a, hex);
+      if (signingKeyCapture.on) await keys.save(a, hex);
     },
-    getSigningKey: async (a: string) => (await keys.load(a).catch(() => null)) ?? memory.get(a) ?? null,
+    getSigningKey: async (a: string) => {
+      const hex = (await keys.load(a).catch(() => null)) ?? memory.get(a) ?? null;
+      return hex ? toSigningKey(hex) : null;
+    },
     removeSigningKey: async (a: string) => {
       memory.delete(a);
       await keys.remove(a).catch(() => {});

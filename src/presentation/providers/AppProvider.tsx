@@ -10,6 +10,7 @@ import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
 import { exportAuthorityKey, importAuthorityKey } from '@/infrastructure/storage/authorityKey';
+import { signingKeyHex } from '@/infrastructure/storage/signingKeyCodec';
 import { loadAdminKey, saveAdminKey, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
 import { WalletConnector, detectWallets, waitForWallets, type ConnectorState, type DetectedWallet } from '@/infrastructure/wallet/connector';
 import { createWalletProviders, type AppProviders } from '@/infrastructure/wallet/providers';
@@ -265,7 +266,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const saved = await guard(() => exportAuthorityKey(sharedVault(), contractAddress));
       if (saved) return saved;
       // Not in the vault (e.g. the vault save failed right after a deploy): last resort, the in-memory copy.
-      return providersRef.current ? ((await providersRef.current.privateStateProvider.getSigningKey(contractAddress)) as string | null) : null;
+      return providersRef.current ? signingKeyHex(await providersRef.current.privateStateProvider.getSigningKey(contractAddress)) : null;
     },
     importAuthority: async (key) => {
       await guard(async () => {

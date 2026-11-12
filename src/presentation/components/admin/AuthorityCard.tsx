@@ -48,7 +48,7 @@ export function AuthorityCard() {
           {status === 'mismatch' && <Alert tone="bad">{t('authority.keyMismatch')}</Alert>}
           {status === 'missing' && <Alert tone="warn">{t('authority.keyMissing')}</Alert>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-ghost" disabled={!contractAddress} onClick={() => void authorityKey().then((k) => setShown(k ?? ''))}>
+            <button type="button" className="btn-ghost" disabled={!contractAddress} onClick={() => void authorityKey().then((k) => setShown(typeof k === 'string' ? k : ''))}>
               {t('keys.export')}
             </button>
           </div>

@@ -33,17 +33,19 @@ describe('authority key storage', () => {
     const backing = new MemoryStore();
     const psp = persistentPrivateStateProvider(backing, vaultSigningKeys(vault));
     // findDeployedContract invents a key when none exists: memory only, never persisted.
-    await psp.setSigningKey(ADDR, 'junk' as never);
+    // midnight-js 5 (ledger 9) hands keys over as { tag: 'schnorr', value }; midnight-js gets that shape back.
+    await psp.setSigningKey(ADDR, { tag: 'schnorr', value: hex(0x22) } as never);
     expect(await vaultSigningKeys(vault).load(ADDR)).toBeNull();
-    expect(await psp.getSigningKey(ADDR)).toBe('junk');
+    expect(await psp.getSigningKey(ADDR)).toEqual({ tag: 'schnorr', value: hex(0x22) });
+    await expect(psp.setSigningKey(ADDR, 'junk' as never)).rejects.toThrow();
     // The deploy hands over the real authority key: persisted in the vault, nowhere else.
     signingKeyCapture.on = true;
     try {
-      await psp.setSigningKey(ADDR, hex(0x11) as never);
+      await psp.setSigningKey(ADDR, { tag: 'schnorr', value: hex(0x11) } as never);
     } finally {
       signingKeyCapture.on = false;
     }
-    expect(await psp.getSigningKey(ADDR)).toBe(hex(0x11));
+    expect(await psp.getSigningKey(ADDR)).toEqual({ tag: 'schnorr', value: hex(0x11) });
     expect(await backing.keys('')).toEqual([]);
     expect(await exportAuthorityKey(vault, ADDR)).toBe(hex(0x11));
   });

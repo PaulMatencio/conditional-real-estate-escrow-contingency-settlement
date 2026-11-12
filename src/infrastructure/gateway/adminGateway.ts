@@ -7,6 +7,7 @@ import { ContractMaintenanceAuthority, ContractOperationVersionedVerifierKey, In
 import { authorityLevel } from '@/domain/escrowView';
 import { maintenanceOf } from '../contract/view';
 import { signingKeyCapture } from '../storage/privateStateProvider';
+import { toSigningKey, verifyingKeyId } from '../storage/signingKeyCodec';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
 import { LedgerTransaction, SucceedEntirely } from '@midnight-ntwrk/midnight-js-types';
 import { operationNames, readContractState, type ChainContractState } from '../contract/chainState';
@@ -200,8 +201,9 @@ export class AdminGateway {
     if (authorityLevel(maintenanceOf(s)) === 'immutable') return 'renounced';
     const key = await vaultSigningKeys(sharedVault()).load(this.contractAddress);
     if (!key) return 'missing';
-    const vk = signatureVerifyingKey(key as never);
-    return s.maintenanceAuthority.committee.some((k: unknown) => String(k) === String(vk)) ? 'match' : 'mismatch';
+    // Compare by value: ledger 9 keys are tagged objects, and String() of two objects is always "[object Object]".
+    const vk = verifyingKeyId(signatureVerifyingKey(toSigningKey(key) as never));
+    return s.maintenanceAuthority.committee.some((k: unknown) => verifyingKeyId(k) === vk) ? 'match' : 'mismatch';
   }
 
   /**
@@ -230,7 +232,7 @@ export class AdminGateway {
     const key = (await vaultSigningKeys(sharedVault()).load(this.contractAddress))!;
     const counter = state.maintenanceAuthority.counter;
     const unsigned = new MaintenanceUpdate(this.contractAddress, [new ReplaceAuthority(new ContractMaintenanceAuthority([], 1, counter + 1n))], counter);
-    const update = unsigned.addSignature(0n, signData(key as never, unsigned.dataToSign));
+    const update = unsigned.addSignature(0n, signData(toSigningKey(key) as never, unsigned.dataToSign));
     const unprovenTx = this.maintenanceTx(update);
     try {
       const submit = (submitTx as unknown as (p: unknown, o: unknown) => Promise<{ status: string; txId?: string; txHash: string; blockHeight: number }>)(this.providers, { unprovenTx });
@@ -373,7 +375,7 @@ export class AdminGateway {
     );
     // The update is valid against the authority's current counter; index 0 = the single deploy-time committee key.
     const unsigned = new MaintenanceUpdate(this.contractAddress, updates, state.maintenanceAuthority.counter);
-    const update = unsigned.addSignature(0n, signData(signingKey as never, unsigned.dataToSign));
+    const update = unsigned.addSignature(0n, signData(toSigningKey(signingKey) as never, unsigned.dataToSign));
     const unprovenTx = this.maintenanceTx(update);
 
     const submit = (submitTx as unknown as (p: unknown, o: unknown) => Promise<{ status: string; txId?: string; txHash: string; blockHeight: number }>)(this.providers, { unprovenTx });
