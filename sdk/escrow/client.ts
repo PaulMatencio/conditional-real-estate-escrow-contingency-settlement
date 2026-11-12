@@ -181,6 +181,11 @@ export class EscrowClient {
     return toTxData(await this.found.callTx.refundBuyer());
   }
 
+  /** Calls circuit `refundTopUp`. */
+  async refundTopUp(): Promise<TxData> {
+    return toTxData(await this.found.callTx.refundTopUp());
+  }
+
   /** Calls circuit `refundLender`. */
   async refundLender(): Promise<TxData> {
     return toTxData(await this.found.callTx.refundLender());

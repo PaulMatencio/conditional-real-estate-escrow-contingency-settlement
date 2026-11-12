@@ -131,7 +131,7 @@ export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolv
   if (outcome === 'released' && f.loanHeld) coins.push({ label: t('settle.coinLoan'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: pkg.terms.sellerPayout });
   if (f.topUpHeld && outcome !== 'forfeited') coins.push({ label: t('settle.coinTopUp'), coin: payoutOfCoin(topUpCoinOf(addr, view.escrowColor, pkg.terms)), to: buyerTo });
   if (outcome === 'refunded' && f.loanHeld) coins.push({ label: t('settle.coinLoanBack'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: pkg.terms.lenderPayout });
-  const last = record.history?.filter((h) => ['releaseToSeller', 'refundBuyer', 'claimForfeit', 'refundLender'].includes(h.circuit)).at(-1);
+  const last = record.history?.filter((h) => ['releaseToSeller', 'refundBuyer', 'refundTopUp', 'claimForfeit', 'refundLender'].includes(h.circuit)).at(-1);
   const publicReceipt = { format: 'EscrowSettlementReceiptV2', network: networkConfig.networkId, contractAddress: view.contractAddress, outcome, status: view.status, lifecycleRound: view.lifecycleRound.toString(), txHash: last?.txHash, blockHeight: last?.blockHeight, at: new Date().toISOString() };
   const mine = coins.filter((c) => c.to === (party === 'seller' ? pkg.terms.sellerPayout : party === 'buyer' ? pkg.terms.buyerPayout : c.to));
   return (

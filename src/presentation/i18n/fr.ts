@@ -231,6 +231,7 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'circuit.dismissDispute': 'Rejeter le litige',
   'circuit.releaseToSeller': 'Libérer au vendeur',
   'circuit.refundBuyer': 'Rembourser l\'acquéreur',
+  'circuit.refundTopUp': 'Rembourser le complément',
   'circuit.revokeKycAttestation': 'Diffuser la révocation d\'attestation',
   'circuit.revokeKycIssuer': 'Diffuser la révocation d\'émetteur',
   'settle.title': 'Règlement',

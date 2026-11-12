@@ -522,9 +522,12 @@ console.log('Loan refused, refund term OFF: top up before the closing deadline o
   e.time = DL - 1; await expectOk('buyer tops up before the closing deadline', e, 'buyer', 'depositTopUp', TOPUP_COIN);
   e.time = DL; await expectOk('expire (inspection never came)', e, 'rando', 'expireEscrow');
   check('no forfeit after a top-up: Expired', st(e) === 'Expired');
+  await expectErr('rando refunds the top-up', e, 'rando', 'refundTopUp');
   await expectOk('refund to the buyer', e, 'buyer', 'refundBuyer');
-  check('buyer gets buyer share + top-up back, closed', st(e) === 'Closed' &&
-    sameOuts(outs(e), [{ to: h(LOAN.buyerPayout.bytes), value: 600n }, { to: h(LOAN.buyerPayout.bytes), value: 400n }]));
+  check('buyer share back, still open for the top-up', st(e) === 'Expired' && sameOuts(outs(e), [{ to: h(LOAN.buyerPayout.bytes), value: 600n }]));
+  await expectOk('top-up refund (seller triggers)', e, 'seller', 'refundTopUp');
+  check('top-up back to the buyer, closed', st(e) === 'Closed' && sameOuts(outs(e), [{ to: h(LOAN.buyerPayout.bytes), value: 400n }]));
+  await expectErr('top-up refunded twice', e, 'buyer', 'refundTopUp');
   SECOND_W = { ...LOAN_COIN, mt_index: 1n };
 
   e = await loanPending({ refund: false }); e.time = DL;
@@ -546,6 +549,7 @@ console.log('Loan withdrawal after the offer expiry');
     !L(e).loanHeld && L(e).loanLost && L(e).loanWithdrawn && L(e).topUpWindowEnd === BigInt(OE + WIN));
   await expectErr('lender withdraws twice', e, 'lender', 'withdrawLoan', BigInt(OE));
   await expectOk('buyer gives up the window', e, 'buyer', 'cancelAndRefund');
+  await expectErrMsg('no top-up to refund', e, 'buyer', 'refundTopUp', 'No top-up to refund');
   await expectOk('refund to the buyer', e, 'buyer', 'refundBuyer');
   check('closed after the buyer refund (loan already repaid)', st(e) === 'Closed');
 

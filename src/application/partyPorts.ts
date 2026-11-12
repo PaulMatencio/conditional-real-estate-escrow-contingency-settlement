@@ -48,6 +48,7 @@ export interface CircuitArgs {
   dismissDispute: [];
   releaseToSeller: [];
   refundBuyer: [];
+  refundTopUp: [];
   /** v2: the lender's commitment-letter hash (64 hex). */
   depositLoan: [letterHash: string];
   /** v2: the refusal letter hash. The current time is added by the gateway. */

@@ -82,8 +82,13 @@ describe('refusal with the refund term on: top-up window', () => {
     await act(inspector, 'inspector', 'submitInspection', [false, hex(0x51)]);
     await act(buyer, 'buyer', 'cancelAndRefund');
     const r = await act(buyer, 'buyer', 'refundBuyer');
+    expect(r.shielded!.outputs.map((o) => [o.recipient, o.value])).toEqual([[BUYER_KEY, '100000']]);
+    expect(sim.view().status).toBe('Refunded');
+    // The top-up comes back in its own transaction (one payout per circuit).
+    const r2 = await act(buyer, 'buyer', 'refundTopUp');
+    expect(r2.shielded!.outputs.map((o) => [o.recipient, o.value])).toEqual([[BUYER_KEY, '150000']]);
     expect(sim.view().status).toBe('Closed');
-    expect(r.shielded!.outputs.map((o) => [o.recipient, o.value]).sort()).toEqual([[BUYER_KEY, '100000'], [BUYER_KEY, '150000']]);
+    await expect(act(buyer, 'buyer', 'refundTopUp')).rejects.toThrow(/No top-up to refund|not refundable/);
   });
 
   it('refunds the buyer after the window when nobody tops up', async () => {

@@ -284,6 +284,7 @@ export const en = {
   'circuit.dismissDispute': 'Dismiss dispute',
   'circuit.releaseToSeller': 'Release to seller',
   'circuit.refundBuyer': 'Refund buyer',
+  'circuit.refundTopUp': 'Refund the top-up',
   'circuit.revokeKycAttestation': 'Broadcast attestation revocation',
   'circuit.revokeKycIssuer': 'Broadcast issuer revocation',
   'settle.title': 'Settlement',

@@ -1261,8 +1261,8 @@ circuit requireUsableSellerKyc(): [] {
     assert(blockTimeLt(sellerKycValidUntil), "ERROR_KYC_EXPIRED");
 }
 
-// Pays the buyer coin (and the buyer's top-up, if any) back to the buyer.
-// The escrow closes once every held coin is paid (see refundLender).
+// Pays the buyer coin back to the buyer (a top-up comes back with refundTopUp).
+// The escrow closes once every held coin is paid (see refundTopUp, refundLender).
 export circuit refundBuyer(): [] {
     assert(
         status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
@@ -1271,12 +1271,25 @@ export circuit refundBuyer(): [] {
     assert(!buyerCoinPaid, "Funds already disbursed");
     onlyParty();
     const t = openTerms();
-    if (topUpHeld) {
-        payOutSecond(expectedTopUpCoin(t), t.buyerPayout);
-        secondCoinPaid = true;
-    }
     payOutVault(t, t.buyerPayout);
     buyerCoinPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// v2: pays the buyer's top-up coin back to the buyer payout key on any
+// unwind. Kept apart from refundBuyer so that each refund pays one coin
+// (one shielded payout per circuit keeps both proofs at k=16).
+export circuit refundTopUp(): [] {
+    assert(
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        "Escrow is not refundable"
+    );
+    assert(topUpHeld && !secondCoinPaid, "No top-up to refund");
+    onlyParty();
+    const t = openTerms();
+    payOutSecond(expectedTopUpCoin(t), t.buyerPayout);
+    secondCoinPaid = true;
     closeIfAllPaid();
     lifecycleRound.increment(1);
 }

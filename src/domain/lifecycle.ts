@@ -27,6 +27,7 @@ export type PartyCircuit =
   | 'dismissDispute'
   | 'releaseToSeller'
   | 'refundBuyer'
+  | 'refundTopUp'
   | 'depositLoan'
   | 'declineLoan'
   | 'withdrawLoan'
@@ -64,7 +65,7 @@ export function refundableFailure(v: EscrowView): boolean {
 export function needsSecondCoin(circuit: PartyCircuit, v: EscrowView): boolean {
   if (circuit === 'withdrawLoan' || circuit === 'refundLender') return true;
   if (circuit === 'releaseToSeller') return isLoanMode(v);
-  if (circuit === 'refundBuyer') return v.financing.topUpHeld;
+  if (circuit === 'refundTopUp') return true;
   return false;
 }
 const loanMode = (v: EscrowView) => (isLoanMode(v) ? null : 'Not a loan-financed escrow');
@@ -248,9 +249,17 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
   refundBuyer: {
     circuit: 'refundBuyer',
     callers: ['buyer', 'seller', 'resolver'],
-    witnesses: ['localSecretKey', 'privateTerms', 'vaultCoin', 'secondCoin'],
+    witnesses: ['localSecretKey', 'privateTerms', 'vaultCoin'],
     irreversible: true,
     check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired'), v.financing.buyerCoinPaid ? 'Funds already disbursed' : null)
+  },
+  /** v2: the buyer's top-up comes back in its own transaction (one payout per circuit keeps the proofs at k=16). */
+  refundTopUp: {
+    circuit: 'refundTopUp',
+    callers: ['buyer', 'seller', 'resolver'],
+    witnesses: ['localSecretKey', 'privateTerms', 'secondCoin'],
+    irreversible: true,
+    check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired'), v.financing.topUpHeld && !v.financing.secondCoinPaid ? null : 'No top-up to refund')
   },
   // ---------------------------------------------------------------- v2: financing by deposit
   depositLoan: {
