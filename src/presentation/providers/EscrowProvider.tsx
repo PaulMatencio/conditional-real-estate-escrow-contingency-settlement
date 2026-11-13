@@ -8,6 +8,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { IDENTITY_RECORD, type CallReceipt, type CircuitArgs, type EscrowPartyGateway, type VaultRecord } from '@/application/partyPorts';
 import { runPartyAction, finalizeBlockers, trackVault } from '@/application/partyService';
 import { createTermsPackage, lenderPackageOf } from '@/application/termsService';
+import { deployedMeta, listDirectory, withPackageMeta } from '@/application/escrowDirectory';
+import type { DirectoryEntry, EscrowMeta } from '@/domain/escrowMeta';
 import { deployTracker } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
 import { DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
@@ -84,6 +86,14 @@ interface EscrowCtx {
   timeline: TimelineEvent[];
   casp: HttpCaspGateway;
   trackVaultIndex: (depositTxHash?: string) => Promise<void>;
+  // escrow directory (the vault is the registry)
+  /** Every escrow this vault holds a record for, with its name and the roles held here. Empty while locked. */
+  directory: DirectoryEntry[];
+  refreshDirectory: () => Promise<void>;
+  /** Opens an escrow on every page (party pages and the admin console). */
+  switchEscrow: (address: string) => Promise<void>;
+  /** Changes one escrow's directory metadata (rename, archive, cached status). */
+  saveMeta: (address: string, fn: (m: EscrowMeta | undefined) => EscrowMeta | undefined) => Promise<void>;
 }
 
 const Ctx = createContext<EscrowCtx | null>(null);
@@ -94,7 +104,7 @@ export const useEscrow = (): EscrowCtx => {
 };
 
 export function EscrowProvider({ children }: { children: ReactNode }) {
-  const { connector } = useApp();
+  const { connector, loadContract: adminLoadContract, contractAddress: adminAddress } = useApp();
   const session = connector.status === 'connected' ? connector.session : null;
   const prefs = useMemo(() => new LocalStorageStore('escrow'), []);
   const vault = useMemo(() => sharedVault(), []);
@@ -173,9 +183,36 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     async (fn: (r: VaultRecord) => VaultRecord) => {
       if (!activeAddress) throw new Error('Load an escrow first.');
       if (!vault.unlocked) throw new Error('Unlock the vault first.');
-      const next = fn(await vault.load(activeAddress));
+      // A package that carries a name (label, test case) names the escrow in this vault too, unless renamed here.
+      const next = withPackageMeta(fn(await vault.load(activeAddress)), Date.now());
       await vault.save(activeAddress, next);
       setRecord(next);
+      setDirTick((n) => n + 1);
+    },
+    [vault, activeAddress]
+  );
+
+  // ------------------------------------------------------------------ escrow directory
+  const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
+  const [dirTick, setDirTick] = useState(0);
+  const refreshDirectory = useCallback(async () => {
+    setDirectory(vault.unlocked ? await listDirectory(vault).catch(() => []) : []);
+  }, [vault]);
+  useEffect(() => {
+    void refreshDirectory();
+  }, [refreshDirectory, vaultUnlocked, activeAddress, dirTick]);
+  useEffect(() => vaultSignal.subscribe(() => setDirTick((n) => n + 1)), []);
+
+  const saveMeta = useCallback(
+    async (address: string, fn: (m: EscrowMeta | undefined) => EscrowMeta | undefined) => {
+      if (!vault.unlocked) throw new Error('Unlock the vault first.');
+      const r = await vault.load(address);
+      const meta = fn(r.meta);
+      if (meta === r.meta) return;
+      const next = { ...r, meta };
+      await vault.save(address, next);
+      if (address === activeAddress) setRecord(next);
+      setDirTick((n) => n + 1);
     },
     [vault, activeAddress]
   );
@@ -401,7 +438,14 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           for (const k of issuers.filter((i) => i.status === 'active')) await s.addKycIssuer(admin, k.issuerId, k.publicKey);
         }
         // One browser plays every role in Simulator Mode: the lender's package sits in the same vault record.
-        await vault.save(s.contractAddress, { terms: pkg, roleKeys: keys, lenderTerms: opts.loan ? lenderPackageOf(pkg) : undefined });
+        const label = `Simulation ${new Date(t0 * 1000).toLocaleString()}: ${opts.loan ? 'loan' : 'cash'}${opts.coolingOff ? ', cooling-off' : ''}`;
+        await vault.save(s.contractAddress, {
+          terms: pkg,
+          roleKeys: keys,
+          lenderTerms: opts.loan ? lenderPackageOf(pkg) : undefined,
+          meta: deployedMeta({ label, tags: ['simulator', opts.loan ? 'loan' : 'cash', ...(opts.coolingOff ? ['cooling-off'] : [])] }, 'simulator', Date.now())
+        });
+        setDirTick((n) => n + 1);
         lastRound.current = null;
         setTimeline([]);
         setSim(s);
@@ -436,6 +480,25 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     if (activeAddress) setRecord(await vault.load(activeAddress));
     vaultSignal.emit();
   }, [vault, activeAddress]);
+
+  const switchEscrow = useCallback(
+    async (address: string) => {
+      setError(null);
+      const r = vault.unlocked ? await vault.load(address) : {};
+      if (r.meta?.network === 'simulator') {
+        // A simulation lives in this tab's memory only: it can be reopened only while it still runs.
+        if (sim?.contractAddress !== address) throw new Error('This simulation has ended (simulations are not kept across reloads). Archive it, or create a new one.');
+        setMode('simulator');
+      } else {
+        if (mode === 'simulator') setMode('wallet');
+        await setContractAddress(address);
+        // The admin console follows, so admin and party pages always show the same escrow.
+        if (adminAddress !== address) await adminLoadContract(address);
+      }
+      if (vault.unlocked && r.meta) await saveMeta(address, (m) => (m ? { ...m, lastOpenedAt: Date.now() } : m));
+    },
+    [vault, sim, mode, setMode, setContractAddress, adminAddress, adminLoadContract, saveMeta]
+  );
 
   const eraseLocal = useCallback(async () => {
     if (!activeAddress) return;
@@ -476,7 +539,11 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     setSimTime: (sec) => sim?.setTime(sec),
     timeline,
     casp,
-    trackVaultIndex
+    trackVaultIndex,
+    directory,
+    refreshDirectory,
+    switchEscrow,
+    saveMeta
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -140,6 +140,8 @@ export interface CaspGateway {
 // ------------------------------------------------------------------ Vault
 
 export interface VaultRecord {
+  /** Directory metadata: name, test case, description (local and encrypted; see domain/escrowMeta). */
+  meta?: import('@/domain/escrowMeta').EscrowMeta;
   terms?: TermsPackage;
   /** Attestation bundles keyed by role (buyer, seller). */
   kyc?: Partial<Record<'buyer' | 'seller', AttestationBundle>>;

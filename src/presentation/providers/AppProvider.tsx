@@ -36,7 +36,8 @@ interface App {
   clearError: () => void;
   loadContract: (address: string) => Promise<void>;
   refresh: () => Promise<void>;
-  deploy: (p: DeployParams) => Promise<void>;
+  /** Resolves to the new contract address, or null when the deployment failed (the error is shown). */
+  deploy: (p: DeployParams) => Promise<string | null>;
   registerRemaining: () => Promise<void>;
   configure: (t: ConfigureTerms) => Promise<void>;
   /** v2: financing mode, financing commitments and loan dates. */
@@ -209,6 +210,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     refresh,
     deploy: async (params) => {
+      let deployed: string | null = null;
       await guard(async () => {
         const p = await providers();
         const out = await stagedDeploy(
@@ -217,8 +219,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         );
         gatewayRef.current = out.gateway as AdminGateway;
         await adoptAddress(out.gateway.contractAddress);
+        deployed = out.gateway.contractAddress;
         setState(await AdminGateway.readState(p, out.gateway.contractAddress));
       });
+      return deployed;
     },
     registerRemaining: async () => {
       await guard(async () => {

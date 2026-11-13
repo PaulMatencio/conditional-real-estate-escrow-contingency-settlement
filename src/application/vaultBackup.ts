@@ -27,7 +27,7 @@ export const isVaultBackup = (x: unknown): x is VaultBackup =>
 
 export interface BackupSummary {
   createdAt: string;
-  contracts: { address: string; terms: boolean; custody: boolean; lenderTerms?: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
+  contracts: { address: string; label?: string; caseId?: string; terms: boolean; custody: boolean; lenderTerms?: boolean; roleKeys: string[]; kyc: string[]; authorityKey: boolean; renounced: boolean; history: number }[];
   identity: boolean;
   adminKey: boolean;
   adminContract?: string;
@@ -42,6 +42,8 @@ export function summarize(b: VaultBackup): BackupSummary {
       .filter(([id]) => id !== IDENTITY_RECORD && id !== ADMIN_RECORD && id !== TXLOG_RECORD)
       .map(([address, r]) => ({
         address,
+        label: r.meta?.label,
+        caseId: r.meta?.caseId,
         terms: !!r.terms,
         custody: !!r.custody,
         lenderTerms: !!r.lenderTerms,
@@ -139,6 +141,9 @@ export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: 
     const cur = current.secondCoin;
     if (!cur || (cur.kind === incoming.secondCoin.kind && cur.index === undefined && incoming.secondCoin.index !== undefined)) (out.secondCoin = incoming.secondCoin), added.push(`${incoming.secondCoin.kind} coin index`);
   }
+  // Directory name: fill in a missing one; a different one is kept (the local name wins) and reported.
+  if (incoming.meta && !current.meta) (out.meta = incoming.meta), added.push('name');
+  else if (incoming.meta && current.meta && incoming.meta.label !== current.meta.label) conflicts.push(`name differs (kept "${current.meta.label}")`);
   if (incoming.penaltyCoin?.index !== undefined && current.penaltyCoin?.index === undefined) {
     out.penaltyCoin = incoming.penaltyCoin;
     added.push('penalty coin index');

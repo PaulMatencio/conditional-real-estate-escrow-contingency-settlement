@@ -5,6 +5,7 @@ import { DEFAULT_COOLING_OFF_DAYS, DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
 import { useApp } from '../../providers/AppProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
+import { PresetButton } from './usePreset';
 
 const DAY = 86_400;
 const fmtDate = (s: bigint) => (s > 0n ? new Date(Number(s) * 1000).toLocaleString() : '—');
@@ -53,6 +54,16 @@ export function FinancingCard() {
   return (
     <Card title={t('financing.title')} tip={t('tip.financing.title')} icon={<Landmark size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('financing.hint')}</p>
+      <PresetButton
+        onApply={(v) => {
+          setMode(v.mode);
+          // The offer expiry must not pass the closing deadline already on-chain (the preset assumes its own deadlines).
+          const exp = state.closingDeadline > 0n && v.loanOfferExpiry > state.closingDeadline ? state.closingDeadline : v.loanOfferExpiry;
+          setExpiry(v.mode === 'deposited' ? String(exp) : '');
+          setDays(String(v.topUpDays));
+          setCoolDays(String(v.coolingOffDays));
+        }}
+      />
       <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-300">
         {t('financing.onChain')}:{' '}
         {current?.mode ? <Badge tone="accent">{t(current.mode === 'deposited' ? 'financing.modeLoan' : 'financing.modeCash')}</Badge> : <Badge tone="warn">{t('financing.unset')}</Badge>}

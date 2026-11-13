@@ -141,7 +141,8 @@ export function lenderPackageOf(pkg: TermsPackage, now: number = Date.now()): Le
     refundOnLoss: t.refundOnLoss,
     loanTermsSalt: t.loanTermsSalt,
     commitments: { price: pkg.commitments.price, lenderShare: pkg.commitments.lenderShare, lenderPayout: pkg.commitments.lenderPayout, loanTerms: pkg.commitments.loanTerms },
-    createdAt: now
+    createdAt: now,
+    ...(pkg.meta ? { meta: pkg.meta } : {})
   };
 }
 

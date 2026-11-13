@@ -67,6 +67,8 @@ export interface TermsPackage {
   /** FR-FUND-03: vault coin Merkle index, filled in after the deposit confirms (shared by the depositor if needed). */
   vaultIndex?: string;
   depositTxHash?: string;
+  /** The deployment's name, test case and description, so every party's vault shows the same label. Not committed. */
+  meta?: import('./escrowMeta').WireMeta;
 }
 
 /**
@@ -88,6 +90,7 @@ export interface LenderPackage {
   loanTermsSalt: string;
   commitments: Pick<TermsCommitments, (typeof LENDER_COMMITMENT_KEYS)[number]>;
   createdAt: number;
+  meta?: import('./escrowMeta').WireMeta;
 }
 
 /** FR-TERMS-05 / FR-NOTARY-02: one opening handed to a third party, without the rest of the package. */

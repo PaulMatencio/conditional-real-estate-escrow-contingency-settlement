@@ -9,6 +9,7 @@ import { useApp } from '../providers/AppProvider';
 import { LOCALES, useT, type Locale } from '../i18n';
 import { Badge, Spinner } from './ui';
 import { DustBadge } from './DustCard';
+import { EscrowSwitcher } from './EscrowSwitcher';
 
 function WalletModal({ onClose }: { onClose: () => void }) {
   const { t } = useT();
@@ -128,6 +129,7 @@ export function Header() {
           </Link>
         </nav>
         <div className="ml-auto flex items-center gap-2">
+          <EscrowSwitcher />
           <select aria-label={t('common.language')} className="input !w-auto !py-1.5" value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
             {LOCALES.map((l) => (
               <option key={l.id} value={l.id}>

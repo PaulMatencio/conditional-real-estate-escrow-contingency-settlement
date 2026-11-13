@@ -11,11 +11,13 @@ import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sea
 import { COMMITMENT_KEYS, TERMS_PRE_COOLING_OFF_MESSAGE, TERMS_V1_MESSAGE, fmtRate, isPreCoolingOffPackage, isTermsPackage, isV1TermsPackage, penaltyOf, type TermsPackage } from '@/domain/terms';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
+import { wireMetaOf } from '@/domain/escrowMeta';
 import { useApp } from '../../providers/AppProvider';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { VaultGate } from '../party/PartySetup';
+import { PresetButton } from './usePreset';
 import { FilePick, downloadJson, readJsonFile } from '../party/helpers';
 
 const RECIPIENTS = ['buyer', 'seller', 'resolver', 'custodian', 'lender'] as const;
@@ -112,7 +114,9 @@ export function TermsKycTab() {
         escrowColor: view?.escrowColor,
         escrowTicker: view?.escrowTicker
       });
-      await esc.updateRecord((r) => ({ ...r, terms: p }));
+      // The deployment's name travels with the package (encrypted), so every party's vault shows the same label.
+      const meta = wireMetaOf(esc.record.meta);
+      await esc.updateRecord((r) => ({ ...r, terms: meta ? { ...p, meta } : p }));
       setMsg({ tone: 'ok', text: t('adminTerms.generated') });
     } catch (e) {
       setMsg({ tone: 'bad', text: (e as Error).message });
@@ -172,7 +176,12 @@ export function TermsKycTab() {
 
   /** Recipients this escrow needs: the lender only in a loan deal (and it gets the lender package, not the full terms). */
   const recipients = RECIPIENTS.filter((r) => r !== 'lender' || loanMode);
-  const sealFor = (r: Recipient, p: TermsPackage) => (r === 'lender' ? sealTo(lenderPackageOf(p), recip[r].trim(), r) : sealTo(p, recip[r].trim(), r));
+  /** Each copy carries the escrow's current name (a rename after generating the package is picked up here). */
+  const named = (p: TermsPackage): TermsPackage => {
+    const meta = wireMetaOf(esc.record.meta);
+    return meta ? { ...p, meta } : p;
+  };
+  const sealFor = (r: Recipient, p: TermsPackage) => (r === 'lender' ? sealTo(lenderPackageOf(named(p)), recip[r].trim(), r) : sealTo(named(p), recip[r].trim(), r));
 
   return (
     <div className="space-y-4">
@@ -204,6 +213,7 @@ export function TermsKycTab() {
             {t('financing.mode')}: <Badge tone="accent">{t(loanMode ? 'financing.modeLoan' : 'financing.modeCash')}</Badge>
           </p>
         )}
+        <PresetButton onApply={(v) => setForm((f) => ({ ...f, price: v.price, deposit: v.deposit, refund: v.refundOnLoss, rate: v.penaltyPct }))} />
         <div className="grid gap-x-4 sm:grid-cols-3">
           <Field label={`${t('adminTerms.price')} (${view?.escrowTicker ?? ''})`} hint={t(loanMode ? 'adminTerms.priceHint' : 'adminTerms.priceCashHint')} htmlFor="t-price">
             <input id="t-price" className="input" inputMode="numeric" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
@@ -329,7 +339,7 @@ export function TermsKycTab() {
               className="btn-ghost"
               disabled={pass.length < 8}
               onClick={() =>
-                void sealWithPassphrase(pkg, pass).then(async (s) => {
+                void sealWithPassphrase(named(pkg), pass).then(async (s) => {
                   downloadJson(`terms-backup-${addr.slice(0, 8)}.json`, s);
                   await esc.updateRecord((x) => ({ ...x, backups: [...(x.backups ?? []), { at: Date.now(), kind: 'file' }] }));
                 })

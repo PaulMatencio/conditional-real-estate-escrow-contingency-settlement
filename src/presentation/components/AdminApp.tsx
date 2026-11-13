@@ -2,7 +2,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Archive, Building2, FileLock2, KeyRound, ListChecks, Rocket, ScrollText } from 'lucide-react';
 import { EscrowStatus } from '@/infrastructure/contract/module';
-import { contractConfig } from '@/infrastructure/config/network';
+import { contractConfig, networkConfig } from '@/infrastructure/config/network';
 import { useApp } from '../providers/AppProvider';
 import { useT } from '../i18n';
 import { Alert, Badge, Card, Field, Mono, Spinner } from './ui';
@@ -12,10 +12,14 @@ import { TermsKycTab } from './admin/TermsKycTab';
 import { AuthorityCard } from './admin/AuthorityCard';
 import { VaultTab } from './admin/VaultTab';
 import { FinancingCard } from './admin/FinancingCard';
+import { PresetButton } from './admin/usePreset';
 import { DustCard } from './DustCard';
 import { TxLogPanel } from './TxLogPanel';
 import { VaultGate } from './party/PartySetup';
 import { useEscrow } from '../providers/EscrowProvider';
+import { deployedMeta } from '@/application/escrowDirectory';
+import { LABEL_MAX, normalizeWireMeta } from '@/domain/escrowMeta';
+import { TEST_CASES, metaForCase, testCase } from '@/domain/testCases';
 
 type Tab = 'deploy' | 'contract' | 'initialize' | 'terms' | 'keys' | 'vault' | 'log';
 
@@ -92,7 +96,16 @@ export function AdminApp() {
 function DeployTab() {
   const { t } = useT();
   const { connector, deploy, adminRoleId, progress } = useApp();
-  const { vaultUnlocked } = useEscrow();
+  const { vaultUnlocked, saveMeta, switchEscrow, setError } = useEscrow();
+  // Directory name for this deployment: kept in the vault and sent inside the encrypted terms packages, never on-chain.
+  const [name, setName] = useState({ caseId: '', label: '', description: '', tags: '' });
+  const pickCase = (id: string) => {
+    const c = testCase(id);
+    if (!c) return setName((n) => ({ ...n, caseId: '' }));
+    const m = metaForCase(c);
+    setName({ caseId: c.id, label: m.label, description: m.description ?? '', tags: (m.tags ?? []).join(', ') });
+  };
+  const wire = normalizeWireMeta({ label: name.label, caseId: name.caseId || undefined, description: name.description || undefined, tags: name.tags.split(',') });
   const [buyer, setBuyer] = useState('');
   const [seller, setSeller] = useState('');
   const [color, setColor] = useState('');
@@ -119,18 +132,55 @@ function DeployTab() {
           <input id="ticker" className="input" value={ticker} maxLength={12} onChange={(e) => setTicker(e.target.value)} />
         </Field>
       </div>
+      <fieldset className="mb-3 rounded-xl border border-midnight-700 p-3">
+        <legend className="label px-1">{t('dir.nameTitle')}</legend>
+        <p className="mb-2 text-xs text-slate-500">{t('dir.nameHint')}</p>
+        <div className="grid gap-x-4 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+          <Field label={t('dir.case')} hint={t('dir.caseHint')} htmlFor="d-case">
+            <select id="d-case" className="input" value={name.caseId} onChange={(e) => pickCase(e.target.value)}>
+              <option value="">{t('dir.noCase')}</option>
+              {TEST_CASES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} · {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('dir.label')} htmlFor="d-label">
+            <input id="d-label" className="input" maxLength={LABEL_MAX} value={name.label} onChange={(e) => setName({ ...name, label: e.target.value })} />
+          </Field>
+        </div>
+        <Field label={t('dir.description')} htmlFor="d-desc">
+          <textarea id="d-desc" className="input" rows={3} value={name.description} onChange={(e) => setName({ ...name, description: e.target.value })} />
+        </Field>
+        <Field label={t('dir.tags')} hint={t('dir.tagsHint')} htmlFor="d-tags">
+          <input id="d-tags" className="input" value={name.tags} onChange={(e) => setName({ ...name, tags: e.target.value })} />
+        </Field>
+        {name.caseId && <p className="text-xs text-slate-500">{t('dir.presetHint')}</p>}
+      </fieldset>
       <p className="mb-3 text-xs text-slate-500">
         {t('deploy.proofServer')} Core circuits in the deploy transaction: <span className="mono">{contractConfig.deployCircuits.join(', ')}</span>.
       </p>
       <button
         type="button"
         className="btn-primary"
-        disabled={connector.status !== 'connected' || !adminRoleId || busy || !vaultUnlocked}
-        onClick={() => adminRoleId && void deploy({ adminRoleId, buyerRoleId: buyer, sellerRoleId: seller, tokenColor: color, ticker })}
+        disabled={connector.status !== 'connected' || !adminRoleId || busy || !vaultUnlocked || !wire}
+        onClick={async () => {
+          if (!adminRoleId || !wire) return;
+          const addr = await deploy({ adminRoleId, buyerRoleId: buyer, sellerRoleId: seller, tokenColor: color, ticker });
+          if (!addr) return;
+          try {
+            await saveMeta(addr, () => deployedMeta(wire, networkConfig.networkId, Date.now()));
+            await switchEscrow(addr);
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }}
       >
         {busy ? <Spinner /> : <Rocket size={16} aria-hidden />} {t('deploy.start')}
       </button>
       {!vaultUnlocked && <p className="mt-2 text-xs text-warn">{t('authority.vaultForDeploy')}</p>}
+      {vaultUnlocked && !wire && <p className="mt-2 text-xs text-warn">{t('dir.needLabel')}</p>}
     </Card>
     <DustCard />
     </div>
@@ -225,6 +275,7 @@ function InitializeTab() {
     <div className="space-y-4">
     <Card title={t('init.title')} icon={<ListChecks size={16} aria-hidden />}>
       <p className="mb-2 text-sm text-slate-400">{t('init.hint')}</p>
+      <PresetButton onApply={(v) => setF((x) => ({ ...x, closing: String(v.closingDeadline), dispute: String(v.disputeDeadline) }))} />
       <p className="mb-3 text-sm">{t('init.missing')}: {state.missingAttributes.length ? state.missingAttributes.map((a) => <Badge key={a} tone="warn">{a}</Badge>) : '—'}</p>
       <div className="grid gap-x-4 sm:grid-cols-2">
         {(['inspector', 'lender', 'titleAgent', 'resolver'] as const).map((k) => (

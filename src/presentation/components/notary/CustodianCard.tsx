@@ -9,7 +9,8 @@ import { OpeningButtons, TermsAmounts, openingKindsFor } from '../OpeningButtons
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { MIN_BACKUP_PASSPHRASE } from '@/infrastructure/storage/vaultBackupStore';
-import { sharedVault } from '@/infrastructure/storage/vaultInstance';
+import { sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
+import { withPackageMeta } from '@/application/escrowDirectory';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
@@ -46,7 +47,9 @@ export function CustodianCard({ view, onOpening }: { view: EscrowView; onOpening
   const save = async (next: Custody | undefined) => {
     const v = sharedVault();
     const rec = await v.load(addr);
-    await v.save(addr, { ...rec, custody: next });
+    // The custodian copy may carry the escrow's name: adopt it for the directory (unless renamed here).
+    await v.save(addr, withPackageMeta({ ...rec, custody: next }, Date.now()));
+    vaultSignal.emit();
     setCustody(next ?? null);
   };
 
