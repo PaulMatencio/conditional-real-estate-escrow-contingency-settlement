@@ -27,7 +27,10 @@ export function termsFromWire(t: WirePrivateTerms): PrivateTerms {
     lenderPayout: { bytes: hex32ToBytes(t.lenderPayout, 'lender payout key') },
     lenderPayoutSalt: hex32ToBytes(t.lenderPayoutSalt, 'lender salt'),
     refundOnLoss: t.refundOnLoss,
-    loanTermsSalt: hex32ToBytes(t.loanTermsSalt, 'loan terms salt')
+    loanTermsSalt: hex32ToBytes(t.loanTermsSalt, 'loan terms salt'),
+    penaltyRate: BigInt(t.penaltyRate.trim()),
+    penalty: BigInt(t.penalty.trim()),
+    coolingOffSalt: hex32ToBytes(t.coolingOffSalt, 'cooling-off salt')
   };
 }
 
@@ -49,8 +52,10 @@ export const payoutCommitment = (keyHex: string, saltHex: string): string =>
 export const priceCommitment = (price: bigint, saltHex: string): string => bytesToHex(pureCircuits.priceCommitmentOf(price, hex32ToBytes(saltHex, 'salt')));
 export const lenderShareCommitment = (share: bigint, saltHex: string): string => bytesToHex(pureCircuits.lenderShareCommitmentOf(share, hex32ToBytes(saltHex, 'salt')));
 export const loanTermsCommitment = (refundOnLoss: boolean, saltHex: string): string => bytesToHex(pureCircuits.loanTermsCommitmentOf(refundOnLoss, hex32ToBytes(saltHex, 'salt')));
+export const coolingOffCommitment = (rate: bigint, penalty: bigint, saltHex: string): string =>
+  bytesToHex(pureCircuits.coolingOffCommitmentOf(rate, penalty, hex32ToBytes(saltHex, 'salt')));
 
-/** FR-TERMS-01: the seven salted commitments (`configure` takes three, `configureFinancing` the other four). */
+/** FR-TERMS-01: the eight salted commitments (`configure` takes three, `configureFinancing` the other five). */
 export function commitmentsOf(t: WirePrivateTerms): TermsCommitments {
   return {
     amount: amountCommitment(BigInt(t.amount.trim()), t.amountSalt),
@@ -59,7 +64,8 @@ export function commitmentsOf(t: WirePrivateTerms): TermsCommitments {
     price: priceCommitment(BigInt(t.price.trim()), t.priceSalt),
     lenderShare: lenderShareCommitment(BigInt(t.lenderShare.trim()), t.lenderShareSalt),
     lenderPayout: payoutCommitment(t.lenderPayout, t.lenderPayoutSalt),
-    loanTerms: loanTermsCommitment(t.refundOnLoss, t.loanTermsSalt)
+    loanTerms: loanTermsCommitment(t.refundOnLoss, t.loanTermsSalt),
+    coolingOff: coolingOffCommitment(BigInt(t.penaltyRate.trim()), BigInt(t.penalty.trim()), t.coolingOffSalt)
   };
 }
 
@@ -96,6 +102,25 @@ export function topUpCoinOf(contractAddress: string, escrowColorHex: string, t: 
 /** v2: the coin a payout of any held coin (vault, loan or top-up) creates for its recipient. */
 export function payoutOfCoin(coin: { nonce: Uint8Array; color: Uint8Array; value: bigint }): { nonce: string; color: string; value: string } {
   return { nonce: bytesToHex(pureCircuits.payoutNonceOf(coin.nonce)), color: bytesToHex(coin.color), value: coin.value.toString() };
+}
+
+/**
+ * Cooling-off withdrawal: refundWithdrawal pays deposit − penalty to the buyer (a coin {payoutNonceOf(vault nonce),
+ * color, deposit − penalty}) and keeps the penalty as the change coin {changeNonceOf(vault nonce), color, penalty},
+ * which claimPenalty later pays to the seller ({payoutNonceOf(change nonce), color, penalty}).
+ */
+export function withdrawalCoinsOf(contractAddress: string, escrowColorHex: string, t: WirePrivateTerms) {
+  const v = vaultCoinOf(contractAddress, escrowColorHex, t);
+  const penalty = BigInt(t.penalty);
+  const kept = { nonce: pureCircuits.changeNonceOf(v.nonce), color: v.color, value: penalty };
+  return {
+    /** What the buyer imports after refundWithdrawal. */
+    buyerRefund: { ...payoutOfCoin(v), value: (v.value - penalty).toString() },
+    /** The change coin the contract holds until claimPenalty (none when the penalty is 0). */
+    penaltyCoin: penalty > 0n ? kept : null,
+    /** What the seller imports after claimPenalty. */
+    sellerPenalty: penalty > 0n ? payoutOfCoin(kept) : null
+  };
 }
 
 /** FR-SETTLE-03: the coin a payout creates for its recipient. */

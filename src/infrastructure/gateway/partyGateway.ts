@@ -33,9 +33,10 @@ export async function findDepositTxHash(contractAddress: string, circuit: Deposi
   return deposit?.txHash ?? null;
 }
 
-/** Wallet Mode `now` for declineLoan / withdrawLoan: 2 minutes behind the wall clock, so the block time is past it. */
+/** Wallet Mode `now` for depositToEscrow / declineLoan / withdrawLoan: 2 minutes behind the wall clock, so the block time is past it. */
 const TIME_MARGIN = 120n;
-const DEPOSITS: readonly string[] = ['depositToEscrow', 'depositLoan', 'depositTopUp'];
+/** Circuits whose transaction leaves exactly one new coin in the contract (refundWithdrawal: the penalty change coin). */
+const DEPOSITS: readonly string[] = ['depositToEscrow', 'depositLoan', 'depositTopUp', 'refundWithdrawal'];
 
 type CallTx = Record<string, (...args: unknown[]) => Promise<{ public: { txId: string; txHash: string; blockHeight: number; blockHash?: string; tx?: unknown } }>>;
 interface Found {
@@ -68,7 +69,8 @@ export class PartyGateway implements EscrowPartyGateway {
       kycAttestation: () => (self.current.kycAttestation ?? fail('a KYC attestation'))(),
       vaultCoin: () => (self.current.vaultCoin ?? fail('the vault coin'))(),
       secondCoin: () => (self.current.secondCoin ?? fail('the loan or top-up coin'))(),
-      lenderTerms: () => (self.current.lenderTerms ?? fail('the lender terms'))()
+      lenderTerms: () => (self.current.lenderTerms ?? fail('the lender terms'))(),
+      penaltyCoin: () => (self.current.penaltyCoin ?? fail('the penalty coin'))()
     });
     this.found = (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(this.providers, { contractAddress: this.contractAddress, compiledContract: compiled })) as Found;
     return this.found;
@@ -146,7 +148,7 @@ export class PartyGateway implements EscrowPartyGateway {
     return this.locateCoinIndex('depositToEscrow', depositTxHash);
   }
 
-  /** Each deposit circuit puts exactly one coin into the contract: its transaction gives that coin's index. */
+  /** Each deposit circuit (and a withdrawal refund with a penalty) puts exactly one coin into the contract: its transaction gives that coin's index. */
   async locateCoinIndex(circuit: DepositCircuit, txHash: string | null): Promise<bigint | null> {
     const hash = txHash ?? (await findDepositTxHash(this.contractAddress, circuit).catch(() => null));
     if (!hash) return null;

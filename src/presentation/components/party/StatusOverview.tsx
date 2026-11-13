@@ -9,7 +9,7 @@ import { Countdown, fmtTime } from './helpers';
 
 const PATH: StatusName[] = ['Initializing', 'Created', 'Funded', 'ContingenciesPending', 'ReadyToClose', 'Closed'];
 const tone = (s: StatusName) =>
-  s === 'Closed' ? 'ok' : s === 'Cancelled' || s === 'Refunded' || s === 'Expired' || s === 'Forfeited' ? 'bad' : s === 'Disputed' ? 'warn' : s === 'Initializing' ? 'muted' : 'accent';
+  s === 'Closed' ? 'ok' : s === 'Cancelled' || s === 'Refunded' || s === 'Expired' || s === 'Forfeited' || s === 'Withdrawn' ? 'bad' : s === 'Disputed' ? 'warn' : s === 'Initializing' ? 'muted' : 'accent';
 
 /** Recommendation 3: who can still change this contract's rules, read from the chain. */
 export function AuthorityBadge({ maintenance }: { maintenance: MaintenanceStatus | null }) {
@@ -28,7 +28,7 @@ export function AuthorityBadge({ maintenance }: { maintenance: MaintenanceStatus
 /** Public state of one escrow. Shared by every role page and the notary portal; shows commitments, never values. */
 export function StatusOverview({ view, now, compact = false }: { view: EscrowView; now: bigint; compact?: boolean }) {
   const { t } = useT();
-  const d = nextDeadline(view);
+  const d = nextDeadline(view, now);
   const idx = PATH.indexOf(view.status);
   return (
     <div className="space-y-4">
@@ -56,6 +56,20 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
           <Stat label={t('deadline.closing')} tip={t('tip.deadline.closing')} value={<span className="text-sm">{fmtTime(view.closingDeadline)}</span>} />
           <Stat label={t('deadline.dispute')} tip={t('tip.deadline.dispute')} value={<span className="text-sm">{fmtTime(view.disputeDeadline)}</span>} />
         </div>
+        {view.coolingOff.period > 0n && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400" aria-live="polite">
+            <span>{t('cool.title')}:</span>
+            <Badge tone="accent">
+              {Number(view.coolingOff.period / 86_400n)} {t('financing.days')}
+            </Badge>
+            {view.coolingOff.end > 0n && (
+              <span>
+                {t('cool.ends')}: {fmtTime(view.coolingOff.end)}
+              </span>
+            )}
+            {view.coolingOff.buyerWithdrew && <Badge tone="warn">{t('cool.withdrew')}</Badge>}
+          </div>
+        )}
         {view.financing.mode && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400" aria-live="polite">
             <span>{t('financing.mode')}:</span>

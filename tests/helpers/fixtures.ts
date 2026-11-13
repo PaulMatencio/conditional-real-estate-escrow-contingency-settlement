@@ -56,9 +56,17 @@ export function makeCasp(secret = 0x1234567890abcdefn, issuerId = hex(0xc0)) {
 }
 
 /** A simulator escrow with every term configured and the CASP whitelisted (still Initializing), plus the terms package. */
-export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
+/** Cooling-off options: the period in days (0 = off, the default) and the penalty in basis points of the price. */
+export interface CoolingOffOpts {
+  coolingOffDays?: number;
+  penaltyRate?: string;
+}
+export const DAY = 86_400;
+
+export async function configuredEscrow(opts: CoolingOffOpts = {}): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
   const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
-  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, mode: 'attested' });
+  const days = opts.coolingOffDays ?? 0;
+  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, mode: 'attested', penaltyRate: opts.penaltyRate, coolingOff: days > 0 });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
   const casp = makeCasp();
   await sim.configure(K.admin, {
@@ -81,7 +89,9 @@ export async function configuredEscrow(): Promise<{ sim: EscrowSimulator; pkg: T
     lenderPayoutCommitment: pkg.commitments.lenderPayout,
     loanTermsCommitment: pkg.commitments.loanTerms,
     loanOfferExpiry: 0n,
-    topUpWindow: 0n
+    topUpWindow: 0n,
+    coolingOff: BigInt(days * DAY),
+    coolingOffCommitment: pkg.commitments.coolingOff
   });
   await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
   return { sim, pkg, casp };
@@ -93,9 +103,10 @@ export const OFFER_EXPIRY = 1_500_000n;
 export const WINDOW = 100_000n;
 
 /** v2: a loan-financed simulator escrow (price 250000 = buyer deposit 100000 + loan 150000), still Initializing. */
-export async function configuredLoanEscrow(refundOnLoss = true): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
+export async function configuredLoanEscrow(refundOnLoss = true, opts: CoolingOffOpts = {}): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
   const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
-  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerDeposit: '100000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, lenderPayout: LENDER_KEY, refundOnLoss, mode: 'deposited' });
+  const days = opts.coolingOffDays ?? 0;
+  const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerDeposit: '100000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, lenderPayout: LENDER_KEY, refundOnLoss, mode: 'deposited', penaltyRate: opts.penaltyRate, coolingOff: days > 0 });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
   const casp = makeCasp();
   await sim.configure(K.admin, {
@@ -117,7 +128,9 @@ export async function configuredLoanEscrow(refundOnLoss = true): Promise<{ sim: 
     lenderPayoutCommitment: pkg.commitments.lenderPayout,
     loanTermsCommitment: pkg.commitments.loanTerms,
     loanOfferExpiry: OFFER_EXPIRY,
-    topUpWindow: WINDOW
+    topUpWindow: WINDOW,
+    coolingOff: BigInt(days * DAY),
+    coolingOffCommitment: pkg.commitments.coolingOff
   });
   await sim.addKycIssuer(K.admin, casp.issuerId, casp.publicKey);
   return { sim, pkg, casp };

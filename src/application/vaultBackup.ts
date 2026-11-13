@@ -139,6 +139,10 @@ export function mergeRecord(current: VaultRecord, incoming: VaultRecord, label: 
     const cur = current.secondCoin;
     if (!cur || (cur.kind === incoming.secondCoin.kind && cur.index === undefined && incoming.secondCoin.index !== undefined)) (out.secondCoin = incoming.secondCoin), added.push(`${incoming.secondCoin.kind} coin index`);
   }
+  if (incoming.penaltyCoin?.index !== undefined && current.penaltyCoin?.index === undefined) {
+    out.penaltyCoin = incoming.penaltyCoin;
+    added.push('penalty coin index');
+  }
 
   out.roleKeyHistory = unionBy(current.roleKeyHistory, incoming.roleKeyHistory, (h) => `${h.role}:${h.key}`);
   out.backups = unionBy(current.backups, incoming.backups, (b) => `${b.at}:${b.kind}`);

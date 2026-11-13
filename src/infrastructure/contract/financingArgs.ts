@@ -18,6 +18,8 @@ export function maybeFinancingArgs(f: FinancingTerms): unknown[] {
     b(f.lenderPayoutCommitment, 'lender payout commitment'),
     b(f.loanTermsCommitment, 'loan terms commitment'),
     n(f.loanOfferExpiry),
-    n(f.topUpWindow)
+    n(f.topUpWindow),
+    n(f.coolingOff),
+    b(f.coolingOffCommitment, 'cooling-off commitment')
   ];
 }

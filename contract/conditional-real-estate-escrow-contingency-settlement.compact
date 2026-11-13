@@ -25,7 +25,16 @@ export { KycAttestation, SchnorrSignature, kycMessage, kycReference,
 //  - the release pays both coins to the seller; every unwind returns each
 //    coin to whoever deposited it.
 // Cash deals (FinancingMode.Attested) keep the v1 behaviour: one coin, and
-// the lender only attests. Design: "Escrow redesign — lender deposit and
+// the lender only attests.
+//
+// Cooling-off period (optional, off by default, cash and loan deals): for a
+// public number of seconds after the buyer's deposit (capped at the closing
+// deadline) the buyer may withdraw for any reason; it gets its deposit back
+// minus a private penalty (a rate of the total price, lower than the deposit,
+// possibly zero) that the seller claims. After the period (or with the term
+// off) a voluntary withdrawal forfeits the deposit to the seller. A failed
+// contingency still refunds in full (cancelAndRefund). No release before
+// the period ends. Design: same document, "Addendum: cooling-off period". Design: "Escrow redesign — lender deposit and
 // loan-refusal term" (revision 3).
 //
 // Custody model: SHIELDED tokens (e.g. a MiCA EMT stablecoin issued as a
@@ -67,7 +76,8 @@ export enum EscrowStatus {
     Expired,               // refundable to buyer, not yet paid
     Closed,                // every held coin paid out (terminal)
     Cancelled,             // abandoned before funding, no funds ever held (terminal)
-    Forfeited              // v2: loan lost, refund term off, no top-up by the closing deadline: buyer coin to the seller
+    Forfeited,             // v2: buyer coin to the seller (loan lost with the refund term off and no top-up, or a buyer withdrawal after the cooling-off period)
+    Withdrawn              // v2: the buyer withdrew inside the cooling-off period: deposit minus penalty to the buyer, penalty to the seller
 }
 
 // v2: how the financing contingency is met.
@@ -97,7 +107,9 @@ export enum InitAttribute {
     LenderPayout,    // commitment to the lender's shielded payout key
     LoanTerms,       // commitment to the loan refusal refund term
     LoanOfferExpiry, // date from which the lender may withdraw (loan mode)
-    TopUpWindow      // seconds the buyer has to top up after a lost loan, refund term on (loan mode)
+    TopUpWindow,     // seconds the buyer has to top up after a lost loan, refund term on (loan mode)
+    CoolingOff,      // cooling-off period in seconds (0 = off)
+    CoolingOffTerms  // commitment to the cooling-off penalty (rate, amount)
 }
 
 // ------------------------------------------------------------
@@ -128,7 +140,10 @@ export struct PrivateTerms {
     lenderPayout: ZswapCoinPublicKey,  // the loan is repaid here on any unwind
     lenderPayoutSalt: Bytes<32>,
     refundOnLoss: Boolean,             // loan refusal refund term
-    loanTermsSalt: Bytes<32>
+    loanTermsSalt: Bytes<32>,
+    penaltyRate: Uint<16>,             // cooling-off penalty, basis points of the price (0 = none)
+    penalty: Uint<128>,                // floor(price * penaltyRate / 10000), < amount
+    coolingOffSalt: Bytes<32>
 }
 
 // v2: what the lender receives (the "lender package"): only the parts it
@@ -238,6 +253,14 @@ export ledger topUpWindowEnd: Uint<64>;            // set when the loan is lost 
 export ledger buyerCoinPaid: Boolean;              // buyer coin (and top-up) paid out
 export ledger secondCoinPaid: Boolean;             // loan or top-up coin paid out
 
+// Cooling-off period
+export ledger coolingOffPeriod: Uint<64>;          // seconds after the deposit; 0 = off
+export ledger coolingOffCommitment: Bytes<32>;     // coolingOffCommitmentOf(penaltyRate, penalty, coolingOffSalt)
+export ledger coolingOffEnd: Uint<64>;             // set at deposit: min(deposit time + period, closing deadline); 0 when off
+export ledger buyerWithdrew: Boolean;              // the buyer withdrew (Withdrawn, or Forfeited after the period)
+export ledger penaltyDue: Boolean;                 // Withdrawn with a non-zero penalty (set by refundWithdrawal)
+export ledger penaltyPaid: Boolean;                // the penalty coin was paid to the seller
+
 witness localSecretKey(): Bytes<32>;
 // Openings of amountCommitment / buyerPayoutCommitment / sellerPayoutCommitment.
 witness privateTerms(): PrivateTerms;
@@ -248,6 +271,8 @@ witness vaultCoin(): QualifiedShieldedCoinInfo;
 witness secondCoin(): QualifiedShieldedCoinInfo;
 // v2: the lender package (lender circuits only).
 witness lenderTerms(): LenderTerms;
+// Cooling-off: the penalty coin (the change of the withdrawal refund) with its index.
+witness penaltyCoin(): QualifiedShieldedCoinInfo;
 // Buyer's private KYC attestation, the CASP signature and the issuer id.
 witness kycAttestation(): [KycAttestation, SchnorrSignature, Bytes<32>];
 
@@ -304,6 +329,9 @@ constructor(
     loanLostRefund = false;
     buyerCoinPaid = false;
     secondCoinPaid = false;
+    buyerWithdrew = false;
+    penaltyDue = false;
+    penaltyPaid = false;
 
     applyConfig(inspector, lender, titleAgent, resolver, buyerPayout,
                 sellerPayout, amount, deadline, disputeEnd, policy);
@@ -357,7 +385,7 @@ circuit onlyTitleAgent(): [] {
 // ============================================================
 // Number of InitAttribute members; keep in sync with the enum.
 circuit isFullyConfigured(): Boolean {
-    return configured.size() == 18;
+    return configured.size() == 20;
 }
 
 // Writes every attribute passed as some(v); none() leaves it unchanged.
@@ -445,7 +473,9 @@ export circuit configureFinancing(
     lenderPayout: Maybe<Bytes<32>>,
     loanTerms: Maybe<Bytes<32>>,
     offerExpiry: Maybe<Uint<64>>,
-    window: Maybe<Uint<64>>
+    window: Maybe<Uint<64>>,
+    coolingOff: Maybe<Uint<64>>,
+    coolingOffTerms: Maybe<Bytes<32>>
 ): [] {
     assert(status == EscrowStatus.Initializing, "Contract is already initialized");
     onlyAdmin();
@@ -479,6 +509,14 @@ export circuit configureFinancing(
     if (oe.is_some) { loanOfferExpiry = oe.value; configured.insert(InitAttribute.LoanOfferExpiry); }
     const w = disclose(window);
     if (w.is_some) { topUpWindow = w.value; configured.insert(InitAttribute.TopUpWindow); }
+    const co = disclose(coolingOff);
+    if (co.is_some) { coolingOffPeriod = co.value; configured.insert(InitAttribute.CoolingOff); }
+    const ct = disclose(coolingOffTerms);
+    if (ct.is_some) {
+        assert(ct.value != pad(32, ""), "Cooling-off commitment cannot be empty");
+        coolingOffCommitment = ct.value;
+        configured.insert(InitAttribute.CoolingOffTerms);
+    }
     configChanged();
 }
 
@@ -519,6 +557,9 @@ export circuit acceptConfiguration(expectedVersion: Uint<64>): [] {
     assert(status == EscrowStatus.Initializing, "Contract is already initialized");
     assert(isFullyConfigured(), "Configuration is incomplete");
     assert(configVersion.read() == disclose(expectedVersion), "Configuration changed since it was read");
+    // Each party proves its terms package opens the deposit, the price and
+    // the cooling-off penalty, so a later withdrawal can always be refunded.
+    openAcceptedTerms();
     const id = roleId();
     if (disclose(id == buyerId)) {
         buyerAccepted = true;
@@ -612,6 +653,9 @@ export pure circuit lenderShareCommitmentOf(share: Uint<128>, salt: Bytes<32>): 
 export pure circuit loanTermsCommitmentOf(refundOnLoss: Boolean, salt: Bytes<32>): Bytes<32> {
     return persistentHash<[Bytes<32>, Boolean, Bytes<32>]>([pad(32, "re-escrow:loan-terms:v2"), refundOnLoss, salt]);
 }
+export pure circuit coolingOffCommitmentOf(rate: Uint<16>, penalty: Uint<128>, salt: Bytes<32>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Uint<16>, Uint<128>, Bytes<32>]>([pad(32, "re-escrow:cooling-off:v2"), rate, penalty, salt]);
+}
 
 // Nonce of the single vault coin. Deterministic, so buyer, seller and
 // resolver-side tooling that know the terms can rebuild the coin without
@@ -637,6 +681,13 @@ export pure circuit topUpNonceOf(self: Bytes<32>, buyerSalt: Bytes<32>, sellerSa
 export pure circuit payoutNonceOf(vaultNonce: Bytes<32>): Bytes<32> {
     return upgradeFromTransient(transientHash<Vector<2, Field>>(
         [pad(28, "midnight:kernel:nonce_evolve") as Field, degradeToTransient(vaultNonce)]
+    ));
+}
+// Nonce of the change coin a partial sendShielded returns to the contract
+// (the cooling-off penalty kept back from the withdrawal refund).
+export pure circuit changeNonceOf(coinNonce: Bytes<32>): Bytes<32> {
+    return upgradeFromTransient(transientHash<Vector<2, Field>>(
+        [pad(30, "midnight:kernel:nonce_evolve/2") as Field, degradeToTransient(coinNonce)]
     ));
 }
 
@@ -666,6 +717,33 @@ circuit openTerms(): PrivateTerms {
         assert(disclose(t.lenderShare == 0), "ERROR_TERMS_MISMATCH: a cash deal has no lender share");
     }
     return t;
+}
+
+// Cooling-off penalty: opens its commitment and checks it is the committed
+// rate applied to the price (rounded down), strictly lower than the buyer
+// deposit, and zero when the period is off. `t` must come from openTerms.
+circuit checkCoolingOff(t: PrivateTerms): [] {
+    assert(disclose(coolingOffCommitmentOf(t.penaltyRate, t.penalty, t.coolingOffSalt)) == coolingOffCommitment,
+           "ERROR_TERMS_MISMATCH: cooling-off penalty");
+    assert(disclose(t.penaltyRate <= 10000), "ERROR_TERMS_MISMATCH: penalty rate above 100 %");
+    const scaled = (t.penalty * 10000) as Uint<160>;
+    const owed = (t.price * t.penaltyRate) as Uint<160>;
+    assert(disclose(scaled <= owed && owed < (scaled + 10000) as Uint<160>),
+           "ERROR_TERMS_MISMATCH: penalty is not the rate applied to the price");
+    assert(disclose(t.penalty < t.amount), "ERROR_TERMS_MISMATCH: penalty must be lower than the buyer deposit");
+    if (coolingOffPeriod == 0) {
+        assert(disclose(t.penaltyRate == 0 && t.penalty == 0), "ERROR_TERMS_MISMATCH: no penalty without a cooling-off period");
+    }
+}
+// acceptConfiguration: the parts of the terms a withdrawal depends on
+// (deposit, price, cooling-off penalty).
+circuit openAcceptedTerms(): [] {
+    const t = privateTerms();
+    assert(disclose(amountCommitmentOf(t.amount, t.amountSalt)) == amountCommitment,
+           "ERROR_TERMS_MISMATCH: amount");
+    assert(disclose(priceCommitmentOf(t.price, t.priceSalt)) == priceCommitment,
+           "ERROR_TERMS_MISMATCH: price");
+    checkCoolingOff(t);
 }
 
 // v2: opens the lender package (lender share, lender payout key, refund term).
@@ -742,7 +820,7 @@ circuit sendInFull(q: QualifiedShieldedCoinInfo, recipient: ZswapCoinPublicKey):
 }
 // v2: the escrow closes once every coin it holds has been paid out.
 circuit closeIfAllPaid(): [] {
-    if (buyerCoinPaid && (!secondCoinHeld() || secondCoinPaid)) {
+    if (buyerCoinPaid && (!secondCoinHeld() || secondCoinPaid) && (!penaltyDue || penaltyPaid)) {
         disbursed = true;
         status = EscrowStatus.Closed;
     }
@@ -789,7 +867,8 @@ export circuit submitSellerKyc(): [] {
         status == EscrowStatus.ReadyToClose ||
         status == EscrowStatus.Disputed ||
         status == EscrowStatus.Settled ||
-        status == EscrowStatus.Forfeited,   // v2: needed to claim a forfeited deposit
+        status == EscrowStatus.Forfeited ||  // v2: needed to claim a forfeited deposit
+        status == EscrowStatus.Withdrawn,   // ... or a cooling-off penalty
         "Seller KYC cannot be submitted in current state"
     );
     onlySeller();
@@ -873,10 +952,19 @@ export circuit cancelBeforeFunding(): [] {
 // The buyer's wallet creates ONE shielded output to this contract with
 // exactly expectedVaultCoin(terms): nonce from the terms, escrowColor and
 // the committed amount. The contract claims it with receiveShielded.
-export circuit depositToEscrow(coin: ShieldedCoinInfo): [] {
+// `now` (the caller's time, within 10 minutes of the block time) starts the
+// cooling-off period when the term is on.
+export circuit depositToEscrow(coin: ShieldedCoinInfo, now: Uint<64>): [] {
     assert(status == EscrowStatus.Created, "Escrow is not ready for funding");
     onlyBuyer();
     assert(blockTimeLt(closingDeadline), "Closing deadline has passed");
+    if (coolingOffPeriod > 0) {
+        const n = disclose(now);
+        assert(blockTimeGte(n), "Time is in the future");
+        assert(blockTimeLt((n + 600) as Uint<64>), "Time is too old");
+        const end = (n + coolingOffPeriod) as Uint<64>;
+        coolingOffEnd = end < closingDeadline ? end : closingDeadline;
+    }
     const t = openTerms();
     assert(disclose(t.amount > 0), "Escrow amount must be positive");
     verifyBuyerKyc(t);   // KYC/AML gate: reverts before any funds move
@@ -1106,6 +1194,81 @@ export circuit sellerWithdraw(): [] {
 }
 
 // ============================================================
+// COOLING-OFF: THE BUYER WITHDRAWS
+// ============================================================
+// The buyer walks away for any reason. Inside the cooling-off period the
+// escrow becomes Withdrawn (deposit minus penalty back, penalty to the
+// seller); after it (or with the term off) Forfeited (deposit to the
+// seller). A loan or top-up held goes back to its depositor either way.
+// Inside the period the buyer may withdraw from a dispute too, so a seller
+// cannot run out the clock by opening one. A failed contingency gives a
+// full refund instead: use cancelAndRefund.
+export circuit buyerWithdraw(): [] {
+    onlyBuyer();
+    const inside = coolingOffPeriod > 0 && blockTimeLt(coolingOffEnd);
+    assert(
+        status == EscrowStatus.Funded ||
+        status == EscrowStatus.ContingenciesPending ||
+        status == EscrowStatus.ReadyToClose ||
+        (status == EscrowStatus.Disputed && inside),
+        "Buyer cannot withdraw in current state"
+    );
+    assert(!refundableFailure(), "A contingency failed: cancel and get a full refund instead");
+    buyerWithdrew = true;
+    status = inside ? EscrowStatus.Withdrawn : EscrowStatus.Forfeited;
+    lifecycleRound.increment(1);
+}
+
+// Withdrawn: pays the deposit minus the penalty to the buyer key. The
+// penalty stays in the contract as the change coin, for claimPenalty.
+export circuit refundWithdrawal(): [] {
+    assert(status == EscrowStatus.Withdrawn, "Buyer has not withdrawn in the cooling-off period");
+    assert(!buyerCoinPaid, "Funds already disbursed");
+    onlyParty();
+    const t = openTerms();
+    checkCoolingOff(t);
+    const q = vaultCoin();
+    const e = expectedVaultCoin(t);
+    assert(
+        disclose(q.nonce == e.nonce && q.color == e.color && q.value == e.value),
+        "ERROR_VAULT_COIN_MISMATCH"
+    );
+    const due = disclose(t.penalty > 0);
+    const r = sendShielded(
+        disclose(q),
+        left<ZswapCoinPublicKey, ContractAddress>(disclose(t.buyerPayout)),
+        disclose((t.amount - t.penalty) as Uint<128>)
+    );
+    assert(disclose(r.change.is_some) == due, "Unexpected change coin");
+    buyerCoinPaid = true;
+    penaltyDue = due;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// Withdrawn, penalty kept back: the seller (with usable KYC, as for a
+// release) takes it.
+export circuit claimPenalty(): [] {
+    assert(status == EscrowStatus.Withdrawn, "Buyer has not withdrawn in the cooling-off period");
+    assert(buyerCoinPaid, "Refund the buyer first");
+    assert(penaltyDue && !penaltyPaid, "No penalty to claim");
+    onlySeller();
+    requireUsableSellerKyc();
+    const t = openTerms();
+    checkCoolingOff(t);
+    const v = expectedVaultCoin(t);
+    const q = penaltyCoin();
+    assert(
+        disclose(q.nonce == changeNonceOf(v.nonce) && q.color == v.color && q.value == t.penalty),
+        "ERROR_PENALTY_COIN_MISMATCH"
+    );
+    sendInFull(q, t.sellerPayout);
+    penaltyPaid = true;
+    closeIfAllPaid();
+    lifecycleRound.increment(1);
+}
+
+// ============================================================
 // EXPIRATION (permissionless keeper call, time-gated)
 // ============================================================
 // Before closing: past closingDeadline the deal is dead -> refundable.
@@ -1241,6 +1404,7 @@ export circuit releaseToSeller(): [] {
         onlyDisputeResolver();
     }
     requireUsableSellerKyc();
+    assert(blockTimeGte(coolingOffEnd), "Cooling-off period is not over");
     const t = openTerms();
     if (financingMode == FinancingMode.Deposited) {
         // v2: the full price = buyer coin + the second coin (loan or top-up).
@@ -1282,7 +1446,8 @@ export circuit refundBuyer(): [] {
 // (one shielded payout per circuit keeps both proofs at k=16).
 export circuit refundTopUp(): [] {
     assert(
-        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired ||
+        status == EscrowStatus.Withdrawn || status == EscrowStatus.Forfeited,
         "Escrow is not refundable"
     );
     assert(topUpHeld && !secondCoinPaid, "No top-up to refund");
@@ -1298,7 +1463,8 @@ export circuit refundTopUp(): [] {
 // unwind. The lender (with its package) or any party may trigger it.
 export circuit refundLender(): [] {
     assert(
-        status == EscrowStatus.Refunded || status == EscrowStatus.Expired,
+        status == EscrowStatus.Refunded || status == EscrowStatus.Expired ||
+        status == EscrowStatus.Withdrawn || status == EscrowStatus.Forfeited,
         "Escrow is not refundable"
     );
     assert(loanHeld && !secondCoinPaid, "No loan deposit to refund");

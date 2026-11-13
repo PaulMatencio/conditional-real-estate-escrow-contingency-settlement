@@ -16,7 +16,8 @@ export const STATUS = [
   'Expired',
   'Closed',
   'Cancelled',
-  'Forfeited'
+  'Forfeited',
+  'Withdrawn'
 ] as const;
 export type StatusName = (typeof STATUS)[number];
 
@@ -39,7 +40,9 @@ export const INIT_ATTRIBUTES = [
   'LenderPayout',
   'LoanTerms',
   'LoanOfferExpiry',
-  'TopUpWindow'
+  'TopUpWindow',
+  'CoolingOff',
+  'CoolingOffTerms'
 ] as const;
 
 /** Mirrors the contract's `FinancingMode`. */
@@ -67,6 +70,19 @@ export interface FinancingState {
   secondCoinPaid: boolean;
 }
 export type InitAttributeName = (typeof INIT_ATTRIBUTES)[number];
+
+/** Cooling-off period: the public part (the penalty itself stays private). */
+export interface CoolingOffState {
+  /** Seconds after the deposit; 0 = off. */
+  period: bigint;
+  /** Unix seconds, set at the deposit: min(deposit time + period, closing deadline). 0 when off or not funded. */
+  end: bigint;
+  /** The buyer withdrew (Withdrawn inside the period, Forfeited after). */
+  buyerWithdrew: boolean;
+  /** Withdrawn with a non-zero penalty, known once the withdrawal refund ran. */
+  penaltyDue: boolean;
+  penaltyPaid: boolean;
+}
 
 /** Mirrors the contract's `Contingency`. */
 export const CONTINGENCIES = ['Inspection', 'Financing', 'Title'] as const;
@@ -140,8 +156,10 @@ export interface EscrowView {
     lenderShare: string | null;
     lenderPayout: string | null;
     loanTerms: string | null;
+    coolingOff: string | null;
   };
   financing: FinancingState;
+  coolingOff: CoolingOffState;
   closingDeadline: bigint;
   disputeDeadline: bigint;
   kycIssuers: { issuerId: string; publicKey: { x: string; y: string } }[];
@@ -171,3 +189,8 @@ export function hasUsableSellerKyc(v: EscrowView, nowSec: bigint): boolean {
 /** FR-NOTARY / §3.1.4 AC-4: the committed amount is locked while one of these holds and nothing was disbursed. */
 export const LOCKED_STATES: readonly StatusName[] = ['Funded', 'ContingenciesPending', 'ReadyToClose', 'Disputed', 'Settled'];
 export const fundsLocked = (v: EscrowView): boolean => LOCKED_STATES.includes(v.status) && !v.disbursed;
+
+/** The buyer may still withdraw without forfeiting (cooling-off on, deposit made, before the end). */
+export const insideCoolingOff = (v: EscrowView, nowSec: bigint): boolean => v.coolingOff.period > 0n && v.coolingOff.end > 0n && nowSec < v.coolingOff.end;
+/** No release before the cooling-off period ends. */
+export const coolingOffOver = (v: EscrowView, nowSec: bigint): boolean => nowSec >= v.coolingOff.end;

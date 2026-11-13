@@ -20,13 +20,15 @@ export interface CallMaterial {
   lenderTerms?: LenderTerms;
   /** v2: the second coin the contract holds (loan or buyer top-up) and its Merkle index. */
   secondCoin?: { kind: 'loan' | 'topup'; index: bigint };
+  /** Cooling-off: Merkle index of the penalty coin (the change of the withdrawal refund). */
+  penaltyIndex?: bigint;
 }
 
 /** The lender-package fields the contract's `lenderTerms` witness opens. */
 export type LenderTerms = Pick<LenderPackage, 'lenderShare' | 'lenderShareSalt' | 'lenderPayout' | 'lenderPayoutSalt' | 'refundOnLoss' | 'loanTermsSalt'>;
 
 /** v2: the circuits that put a coin into the contract (their transaction locates the coin's index). */
-export type DepositCircuit = 'depositToEscrow' | 'depositLoan' | 'depositTopUp';
+export type DepositCircuit = 'depositToEscrow' | 'depositLoan' | 'depositTopUp' | 'refundWithdrawal';
 
 export interface CircuitArgs {
   acceptConfiguration: [expectedVersion: bigint];
@@ -58,6 +60,10 @@ export interface CircuitArgs {
   endTopUpWindow: [];
   refundLender: [];
   claimForfeit: [];
+  /** Cooling-off: the buyer walks away (Withdrawn inside the period, Forfeited after). */
+  buyerWithdraw: [];
+  refundWithdrawal: [];
+  claimPenalty: [];
   revokeKycAttestation: [issuerId: string, ref: string, sig: WireSignature];
   revokeKycIssuer: [issuerId: string, sig: WireSignature];
 }
@@ -147,6 +153,8 @@ export interface VaultRecord {
   lenderTerms?: LenderPackage;
   /** v2: where the second coin (loan or buyer top-up) sits, once deposited: needed by refunds, withdrawals and the release. */
   secondCoin?: { kind: 'loan' | 'topup'; index?: string; txHash?: string };
+  /** Cooling-off: the penalty coin the withdrawal refund left in the contract (read from that transaction). */
+  penaltyCoin?: { index?: string; txHash?: string };
   /** Salt + metadata of documents this party committed (FR-ATTEST-02). */
   documents?: { contingency: ContingencyName; reportHash: string; salt: string; fileName: string; at: number }[];
   /** Contract maintenance-authority (signing) key, admin only; removed once the authority is renounced. */

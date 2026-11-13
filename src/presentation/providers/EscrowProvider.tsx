@@ -78,7 +78,7 @@ interface EscrowCtx {
   // simulator
   sim: EscrowSimulator | null;
   /** `loan`: a loan-financed escrow (contract v2: buyer deposit 40 %, loan 60 %), lender terms stored in the vault too. */
-  createSimulation: (opts?: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean }) => Promise<void>;
+  createSimulation: (opts?: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean; coolingOff?: boolean }) => Promise<void>;
   simFinalize: () => Promise<void>;
   setSimTime: (sec: number) => void;
   timeline: TimelineEvent[];
@@ -342,7 +342,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
 
   /** Simulator Mode: a ready-to-use escrow with every role key in the vault and the live CASP simulator whitelisted. */
   const createSimulation = useCallback(
-    async (opts: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean } = {}) => {
+    async (opts: { amount?: string; useCasp?: boolean; loan?: boolean; refundOnLoss?: boolean; coolingOff?: boolean } = {}) => {
       setError(null);
       try {
         if (!vault.unlocked) throw new Error('Unlock the vault first: role keys and terms are kept encrypted.');
@@ -362,6 +362,9 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
             sellerPayout: bytesToHex(generateSecretKey()),
             lenderPayout: opts.loan ? bytesToHex(generateSecretKey()) : undefined,
             refundOnLoss: opts.refundOnLoss ?? true,
+            // Simulator option: a 10-day cooling-off period with a 1.5 % penalty (off by default, like a real escrow).
+            penaltyRate: opts.coolingOff ? '150' : '0',
+            coolingOff: !!opts.coolingOff,
             mode: opts.loan ? 'deposited' : 'attested'
           }),
           contractAddress: s.contractAddress,
@@ -389,7 +392,9 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           lenderPayoutCommitment: pkg.commitments.lenderPayout,
           loanTermsCommitment: pkg.commitments.loanTerms,
           loanOfferExpiry: BigInt(t0 + 20 * 86400),
-          topUpWindow: BigInt(DEFAULT_TOP_UP_DAYS * 86400)
+          topUpWindow: BigInt(DEFAULT_TOP_UP_DAYS * 86400),
+          coolingOff: BigInt(opts.coolingOff ? 10 * 86400 : 0),
+          coolingOffCommitment: pkg.commitments.coolingOff
         });
         if (opts.useCasp !== false) {
           const { keys: issuers } = await casp.issuerKeys();

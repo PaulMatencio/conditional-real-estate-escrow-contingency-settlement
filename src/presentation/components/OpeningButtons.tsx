@@ -1,5 +1,5 @@
 'use client';
-import { LOAN_OPENING_KINDS, OPENING_KINDS, type Opening, type WirePrivateTerms } from '@/domain/terms';
+import { LOAN_OPENING_KINDS, OPENING_KINDS, fmtRate, type Opening, type WirePrivateTerms } from '@/domain/terms';
 import { useT, type MessageKey } from '../i18n';
 import { downloadJson } from './party/helpers';
 
@@ -22,7 +22,7 @@ export function OpeningButtons({ kinds, make }: { kinds: readonly Opening['kind'
 }
 
 /** Price · buyer deposit · loan, as the terms package states them. */
-export function TermsAmounts({ terms, ticker }: { terms: Pick<WirePrivateTerms, 'price' | 'amount' | 'lenderShare' | 'refundOnLoss'>; ticker?: string }) {
+export function TermsAmounts({ terms, ticker }: { terms: Pick<WirePrivateTerms, 'price' | 'amount' | 'lenderShare' | 'refundOnLoss' | 'penaltyRate' | 'penalty'>; ticker?: string }) {
   const { t } = useT();
   const loan = BigInt(terms.lenderShare) > 0n;
   return (
@@ -32,6 +32,12 @@ export function TermsAmounts({ terms, ticker }: { terms: Pick<WirePrivateTerms, 
         <>
           {' '}
           · {t('adminTerms.deposit')}: <strong>{terms.amount}</strong> · {t('adminTerms.loan')}: <strong>{terms.lenderShare}</strong> · {t(terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}
+        </>
+      )}
+      {BigInt(terms.penaltyRate ?? '0') > 0n && (
+        <>
+          {' '}
+          · {t('cool.penalty')}: <strong>{terms.penalty}</strong> ({fmtRate(terms.penaltyRate)})
         </>
       )}
     </p>

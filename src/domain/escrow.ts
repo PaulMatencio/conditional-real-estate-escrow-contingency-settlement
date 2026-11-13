@@ -43,7 +43,14 @@ export interface FinancingTerms {
   loanOfferExpiry?: bigint;
   /** Seconds (loan mode, refund term on): how long the buyer has to top up after a lost loan. */
   topUpWindow?: bigint;
+  /** Cooling-off period in seconds after the buyer's deposit (0 = off, the default). Cash and loan deals. */
+  coolingOff?: bigint;
+  /** Commitment to the cooling-off penalty (from the terms package). */
+  coolingOffCommitment?: string;
 }
+
+/** Default cooling-off period: off. */
+export const DEFAULT_COOLING_OFF_DAYS = 0;
 
 /** Days → seconds for the top-up window (default 7 days). */
 export const DEFAULT_TOP_UP_DAYS = 7;
@@ -76,8 +83,8 @@ export interface AdminState {
   missingAttributes: string[];
   registeredCircuits: string[];
   missingCircuits: string[];
-  /** v2: financing mode (null until configured), loan offer expiry (unix s) and top-up window (s). */
-  financing: { mode: 'attested' | 'deposited' | null; loanOfferExpiry: bigint; topUpWindow: bigint };
+  /** v2: financing mode (null until configured), loan offer expiry (unix s), top-up window (s) and cooling-off period (s, 0 = off; null until configured). */
+  financing: { mode: 'attested' | 'deposited' | null; loanOfferExpiry: bigint; topUpWindow: bigint; coolingOff: bigint | null };
   /** On-chain maintenance authority (null if not reported). */
   maintenance: import('./escrowView').MaintenanceStatus | null;
 }

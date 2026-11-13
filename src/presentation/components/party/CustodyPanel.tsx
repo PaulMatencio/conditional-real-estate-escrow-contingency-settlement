@@ -4,7 +4,7 @@ import { Coins, Gavel, Receipt } from 'lucide-react';
 import { bytesToHex, shortHex } from '@/domain/hex';
 import { hasUsableSellerKyc } from '@/domain/escrowView';
 import { availableActions, type PartyCircuit } from '@/domain/lifecycle';
-import { loanCoinOf, payoutOfCoin, topUpCoinOf, vaultCoinOf } from '@/infrastructure/crypto/escrowCrypto';
+import { loanCoinOf, payoutOfCoin, topUpCoinOf, vaultCoinOf, withdrawalCoinsOf } from '@/infrastructure/crypto/escrowCrypto';
 import { networkConfig } from '@/infrastructure/config/network';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
@@ -123,15 +123,28 @@ export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolv
   if (!view || view.status !== 'Closed' || !pkg?.contractAddress) return null;
   const f = view.financing;
   const ran = new Set([...(record.history ?? []).map((h) => h.circuit), ...(sim?.log.map((l) => l.circuit) ?? [])]);
-  const outcome: 'released' | 'forfeited' | 'refunded' = ran.has('releaseToSeller') ? 'released' : ran.has('claimForfeit') ? 'forfeited' : 'refunded';
+  const outcome: 'released' | 'forfeited' | 'refunded' | 'withdrawn' = ran.has('releaseToSeller')
+    ? 'released'
+    : ran.has('claimForfeit')
+      ? 'forfeited'
+      : ran.has('refundWithdrawal') || ran.has('claimPenalty') || view.coolingOff.penaltyDue
+        ? 'withdrawn'
+        : 'refunded';
   const addr = pkg.contractAddress;
   const coins: { label: string; coin: ReturnType<typeof payoutOfCoin>; to: string }[] = [];
-  const buyerTo = outcome === 'refunded' ? pkg.terms.buyerPayout : pkg.terms.sellerPayout;
-  coins.push({ label: t('settle.coinDeposit'), coin: payoutOfCoin(vaultCoinOf(addr, view.escrowColor, pkg.terms)), to: buyerTo });
-  if (outcome === 'released' && f.loanHeld) coins.push({ label: t('settle.coinLoan'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: pkg.terms.sellerPayout });
-  if (f.topUpHeld && outcome !== 'forfeited') coins.push({ label: t('settle.coinTopUp'), coin: payoutOfCoin(topUpCoinOf(addr, view.escrowColor, pkg.terms)), to: buyerTo });
-  if (outcome === 'refunded' && f.loanHeld) coins.push({ label: t('settle.coinLoanBack'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: pkg.terms.lenderPayout });
-  const last = record.history?.filter((h) => ['releaseToSeller', 'refundBuyer', 'refundTopUp', 'claimForfeit', 'refundLender'].includes(h.circuit)).at(-1);
+  const { buyerPayout, sellerPayout, lenderPayout } = pkg.terms;
+  if (outcome === 'withdrawn') {
+    // Cooling-off: deposit − penalty to the buyer, the penalty to the seller.
+    const w = withdrawalCoinsOf(addr, view.escrowColor, pkg.terms);
+    coins.push({ label: t('cool.refundCoin'), coin: w.buyerRefund, to: buyerPayout });
+    if (w.sellerPenalty) coins.push({ label: t('cool.penaltyCoin'), coin: w.sellerPenalty, to: sellerPayout });
+  } else {
+    coins.push({ label: t('settle.coinDeposit'), coin: payoutOfCoin(vaultCoinOf(addr, view.escrowColor, pkg.terms)), to: outcome === 'refunded' ? buyerPayout : sellerPayout });
+  }
+  // The second coin: to the seller on a release, otherwise back to whoever deposited it.
+  if (f.loanHeld) coins.push(outcome === 'released' ? { label: t('settle.coinLoan'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: sellerPayout } : { label: t('settle.coinLoanBack'), coin: payoutOfCoin(loanCoinOf(addr, view.escrowColor, pkg.terms)), to: lenderPayout });
+  if (f.topUpHeld) coins.push({ label: t('settle.coinTopUp'), coin: payoutOfCoin(topUpCoinOf(addr, view.escrowColor, pkg.terms)), to: outcome === 'released' ? sellerPayout : buyerPayout });
+  const last = record.history?.filter((h) => ['releaseToSeller', 'refundBuyer', 'refundTopUp', 'claimForfeit', 'refundLender', 'refundWithdrawal', 'claimPenalty'].includes(h.circuit)).at(-1);
   const publicReceipt = { format: 'EscrowSettlementReceiptV2', network: networkConfig.networkId, contractAddress: view.contractAddress, outcome, status: view.status, lifecycleRound: view.lifecycleRound.toString(), txHash: last?.txHash, blockHeight: last?.blockHeight, at: new Date().toISOString() };
   const mine = coins.filter((c) => c.to === (party === 'seller' ? pkg.terms.sellerPayout : party === 'buyer' ? pkg.terms.buyerPayout : c.to));
   return (
@@ -167,7 +180,7 @@ export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolv
               onClick={() =>
                 downloadJson('settlement-receipt-private.json', {
                   ...publicReceipt,
-                  private: { price: pkg.terms.price, buyerDeposit: pkg.terms.amount, loanAmount: pkg.terms.lenderShare, ticker: view.escrowTicker, payoutCoins: coins.map((c) => ({ ...c.coin, recipient: c.to, label: c.label })) }
+                  private: { price: pkg.terms.price, buyerDeposit: pkg.terms.amount, loanAmount: pkg.terms.lenderShare, coolingOffPenalty: pkg.terms.penalty, ticker: view.escrowTicker, payoutCoins: coins.map((c) => ({ ...c.coin, recipient: c.to, label: c.label })) }
                 })
               }
             >

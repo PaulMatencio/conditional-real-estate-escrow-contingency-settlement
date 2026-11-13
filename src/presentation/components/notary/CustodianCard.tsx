@@ -165,7 +165,7 @@ export function CustodianCard({ view, onOpening }: { view: EscrowView; onOpening
                   <button
                     type="button"
                     className="btn-primary mt-2"
-                    onClick={() => openingKindsFor(custody.terms.terms).filter((k) => k === 'price' || k === 'amount' || k === 'lenderShare' || k === 'loanTerms').forEach((k) => onOpening(selectiveOpening(custody.terms, k)))}
+                    onClick={() => openingKindsFor(custody.terms.terms).filter((k) => k === 'price' || k === 'amount' || k === 'lenderShare' || k === 'loanTerms' || k === 'coolingOff').forEach((k) => onOpening(selectiveOpening(custody.terms, k)))}
                   >
                     {t('custody.verifyPrice')}
                   </button>

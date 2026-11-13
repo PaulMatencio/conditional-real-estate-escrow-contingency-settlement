@@ -74,7 +74,8 @@ export class EscrowSimulator {
         kycAttestation: () => (self.inputs.kycAttestation ?? missing('a KYC attestation'))(),
         vaultCoin: () => (self.inputs.vaultCoin ?? missing('the vault coin'))(),
         secondCoin: () => (self.inputs.secondCoin ?? missing('the loan or top-up coin'))(),
-        lenderTerms: () => (self.inputs.lenderTerms ?? missing('the lender terms'))()
+        lenderTerms: () => (self.inputs.lenderTerms ?? missing('the lender terms'))(),
+        penaltyCoin: () => (self.inputs.penaltyCoin ?? missing('the penalty coin'))()
       })
     );
   }
@@ -190,13 +191,15 @@ export class EscrowSimulator {
         const v = sim.view();
         const ctx = { contractAddress: sim.contractAddress, escrowColor: v.escrowColor, material, now: BigInt(sim.time) };
         const receipt = await sim.run(circuit, contractArgs(circuit, args, ctx), witnessInputs(ctx));
-        // The simulator has no Merkle tree: the buyer's coin is index 0, the second coin (loan or top-up) index 1.
+        // The simulator has no Merkle tree: the buyer's coin is index 0, the second coin (loan or top-up) index 1, the
+        // cooling-off penalty (change) coin index 2.
         if (circuit === 'depositToEscrow') return { ...receipt, vaultIndex: 0n };
         if (circuit === 'depositLoan' || circuit === 'depositTopUp') return { ...receipt, vaultIndex: 1n };
+        if (circuit === 'refundWithdrawal') return { ...receipt, vaultIndex: 2n };
         return receipt;
       },
       locateVaultIndex: async () => 0n,
-      locateCoinIndex: async (c) => (c === 'depositToEscrow' ? 0n : 1n),
+      locateCoinIndex: async (c) => (c === 'depositToEscrow' ? 0n : c === 'refundWithdrawal' ? 2n : 1n),
       coinPublicKey: async () => coinPublicKey,
       shieldedBalance: async () => null
     };

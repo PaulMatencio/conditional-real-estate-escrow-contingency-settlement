@@ -23,7 +23,11 @@ const DEDICATED: PartyCircuit[] = [
   'declineLoan',
   'withdrawLoan',
   'depositTopUp',
-  'claimForfeit'
+  'claimForfeit',
+  // cooling-off: buyer page (Withdraw card) and seller page (Penalty card)
+  'buyerWithdraw',
+  'refundWithdrawal',
+  'claimPenalty'
 ];
 /** Permissionless circuits: called as 'anyone'. */
 const OPEN: PartyCircuit[] = ['expireEscrow', 'endTopUpWindow'];
@@ -50,7 +54,8 @@ export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; o
     secondCoin: true
   };
   const actions = availableActions(view, role, now, material)
-    .filter((a) => !DEDICATED.includes(a.circuit))
+    // The resolver has no withdrawal card: it can still trigger the buyer's withdrawal refund from here.
+    .filter((a) => !DEDICATED.includes(a.circuit) || (role === 'resolver' && a.circuit === 'refundWithdrawal'))
     .filter((a) => !onlyEnabled || a.enabled);
   const needsWhich = (c: PartyCircuit) => c === 'waiveContingency' || c === 'voidContingencyResult';
 

@@ -17,6 +17,7 @@ import { TimelinePanel } from './TimelinePanel';
 import { TxLogPanel } from '../TxLogPanel';
 import { LenderTermsCard, LoanCard } from './LenderPanel';
 import { TopUpCard } from './TopUpCard';
+import { PenaltyCard, WithdrawCard } from './CoolingOffCard';
 import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 
 /**
@@ -71,6 +72,8 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {view && vaultUnlocked && role === 'buyer' && view.status !== 'Initializing' && <FundingPanel />}
           {view && vaultUnlocked && role === 'buyer' && loanMode && ['ContingenciesPending', 'ReadyToClose', 'Refunded', 'Expired', 'Forfeited'].includes(view.status) && <TopUpCard />}
           {view && vaultUnlocked && (role === 'seller' || role === 'resolver') && <VaultTrackingCard />}
+          {view && vaultUnlocked && role === 'buyer' && <WithdrawCard />}
+          {view && vaultUnlocked && role === 'seller' && <PenaltyCard />}
           {view && role === 'seller' && view.status === 'Forfeited' && <ForfeitCard />}
           {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <SettlementPanel party={role} />}
         </div>

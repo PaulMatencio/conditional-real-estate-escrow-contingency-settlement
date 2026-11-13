@@ -32,8 +32,8 @@ export class EscrowClient {
   }
 
   /** Calls circuit `configureFinancing`. */
-  async configureFinancing(mode: { is_some: boolean; value: FinancingMode }, price: { is_some: boolean; value: Uint8Array }, lenderShare: { is_some: boolean; value: Uint8Array }, lenderPayout: { is_some: boolean; value: Uint8Array }, loanTerms: { is_some: boolean; value: Uint8Array }, offerExpiry: { is_some: boolean; value: bigint }, window: { is_some: boolean; value: bigint }): Promise<TxData> {
-    return toTxData(await this.found.callTx.configureFinancing(mode, price, lenderShare, lenderPayout, loanTerms, offerExpiry, window));
+  async configureFinancing(mode: { is_some: boolean; value: FinancingMode }, price: { is_some: boolean; value: Uint8Array }, lenderShare: { is_some: boolean; value: Uint8Array }, lenderPayout: { is_some: boolean; value: Uint8Array }, loanTerms: { is_some: boolean; value: Uint8Array }, offerExpiry: { is_some: boolean; value: bigint }, window: { is_some: boolean; value: bigint }, coolingOff: { is_some: boolean; value: bigint }, coolingOffTerms: { is_some: boolean; value: Uint8Array }): Promise<TxData> {
+    return toTxData(await this.found.callTx.configureFinancing(mode, price, lenderShare, lenderPayout, loanTerms, offerExpiry, window, coolingOff, coolingOffTerms));
   }
 
   /** Calls circuit `addKycIssuer`. */
@@ -77,8 +77,8 @@ export class EscrowClient {
   }
 
   /** Calls circuit `depositToEscrow`. */
-  async depositToEscrow(coin: { nonce: Uint8Array; color: Uint8Array; value: bigint }): Promise<TxData> {
-    return toTxData(await this.found.callTx.depositToEscrow(coin));
+  async depositToEscrow(coin: { nonce: Uint8Array; color: Uint8Array; value: bigint }, now: bigint): Promise<TxData> {
+    return toTxData(await this.found.callTx.depositToEscrow(coin, now));
   }
 
   /** Calls circuit `depositLoan`. */
@@ -139,6 +139,21 @@ export class EscrowClient {
   /** Calls circuit `sellerWithdraw`. */
   async sellerWithdraw(): Promise<TxData> {
     return toTxData(await this.found.callTx.sellerWithdraw());
+  }
+
+  /** Calls circuit `buyerWithdraw`. */
+  async buyerWithdraw(): Promise<TxData> {
+    return toTxData(await this.found.callTx.buyerWithdraw());
+  }
+
+  /** Calls circuit `refundWithdrawal`. */
+  async refundWithdrawal(): Promise<TxData> {
+    return toTxData(await this.found.callTx.refundWithdrawal());
+  }
+
+  /** Calls circuit `claimPenalty`. */
+  async claimPenalty(): Promise<TxData> {
+    return toTxData(await this.found.callTx.claimPenalty());
   }
 
   /** Calls circuit `expireEscrow`. */

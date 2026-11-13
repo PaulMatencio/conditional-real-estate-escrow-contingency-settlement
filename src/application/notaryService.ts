@@ -34,6 +34,18 @@ export interface NotaryCertificate {
     buyerCoinPaid: boolean;
     secondCoinPaid: boolean;
   };
+  /** Cooling-off period: public length and end; the penalty itself only via a coolingOff opening. */
+  coolingOff: {
+    /** Days; 0 = no cooling-off period. */
+    days: number;
+    /** Unix seconds, null when off or before the deposit. */
+    end: string | null;
+    buyerWithdrew: boolean;
+    /** Verified from a coolingOff opening ("none" = rate 0), else "undisclosed". */
+    penalty: string;
+    penaltyDue: boolean;
+    penaltyPaid: boolean;
+  };
   verifiedOpenings: { kind: Opening['kind']; ok: boolean; detail: string }[];
   kyc: {
     buyer: { verified: boolean; issuerId: string; ref: string; travelRuleRef: string };
@@ -60,7 +72,17 @@ export function lockedFundsStatement(v: EscrowView): { locked: boolean; statemen
     };
   }
   if (v.status === 'Refunded' || v.status === 'Expired') return { locked: true, statement: `Funds are still held but are only payable back to whoever deposited them (status ${v.status}).${second}` };
-  if (v.status === 'Forfeited') return { locked: true, statement: 'The loan was lost, the loan refusal refund term is off and the buyer did not replace the loan before the closing deadline: the buyer deposit is payable only to the seller.' };
+  if (v.status === 'Forfeited') {
+    return v.coolingOff.buyerWithdrew
+      ? { locked: true, statement: `The buyer withdrew after the cooling-off period (or with none): the buyer deposit is payable only to the seller.${second ? ' Any loan or top-up coin goes back to whoever deposited it.' : ''}` }
+      : { locked: true, statement: 'The loan was lost, the loan refusal refund term is off and the buyer did not replace the loan before the closing deadline: the buyer deposit is payable only to the seller.' };
+  }
+  if (v.status === 'Withdrawn') {
+    return {
+      locked: true,
+      statement: `The buyer withdrew inside the cooling-off period: the buyer deposit minus the committed penalty is payable only to the buyer, and the penalty only to the seller.${v.financing.buyerCoinPaid ? (v.coolingOff.penaltyDue && !v.coolingOff.penaltyPaid ? ' The buyer was refunded; the penalty is still held for the seller.' : ' The buyer was refunded.') : ''}${second ? ' Any loan or top-up coin goes back to whoever deposited it.' : ''}`
+    };
+  }
   if (v.status === 'Closed') return { locked: false, statement: 'Funds were disbursed; the escrow is closed.' };
   return { locked: false, statement: `No funds are locked (status ${v.status}).` };
 }
@@ -71,6 +93,14 @@ function refundTermOf(crypto: TermsCrypto, view: EscrowView, openings: Opening[]
   const o = openings.find((x) => x.kind === 'loanTerms');
   if (o && o.kind === 'loanTerms' && verifyOpening(crypto, o, view).ok) return o.refundOnLoss ? 'on' : 'off';
   return 'undisclosed';
+}
+
+/** The cooling-off penalty, from a verified coolingOff opening. */
+function penaltyOf(crypto: TermsCrypto, view: EscrowView, openings: Opening[]): string {
+  if (view.coolingOff.period === 0n) return 'none';
+  const o = openings.find((x) => x.kind === 'coolingOff');
+  if (!o || o.kind !== 'coolingOff' || !verifyOpening(crypto, o, view).ok) return 'undisclosed';
+  return BigInt(o.penaltyRate) === 0n ? 'none' : `${(Number(o.penaltyRate) / 100).toString()} % = ${o.penalty} ${view.escrowTicker}`;
 }
 
 export function buildCertificate(
@@ -101,6 +131,14 @@ export function buildCertificate(
       topUpWindowEnd: view.financing.loanLost && view.financing.loanLostRefund ? view.financing.topUpWindowEnd.toString() : null,
       buyerCoinPaid: view.financing.buyerCoinPaid,
       secondCoinPaid: view.financing.secondCoinPaid
+    },
+    coolingOff: {
+      days: Number(view.coolingOff.period / 86_400n),
+      end: view.coolingOff.end > 0n ? view.coolingOff.end.toString() : null,
+      buyerWithdrew: view.coolingOff.buyerWithdrew,
+      penalty: penaltyOf(crypto, view, input.openings),
+      penaltyDue: view.coolingOff.penaltyDue,
+      penaltyPaid: view.coolingOff.penaltyPaid
     },
     verifiedOpenings: input.openings.map((o) => ({ kind: o.kind, ...verifyOpening(crypto, o, view) })),
     kyc: {

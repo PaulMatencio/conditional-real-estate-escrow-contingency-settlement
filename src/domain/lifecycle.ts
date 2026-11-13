@@ -4,7 +4,7 @@
  * and as a cheap pre-flight before proving (FR-FUND-04). The contract stays the authority: this table only
  * avoids sending transactions that are bound to fail.
  */
-import { CONTINGENCIES, allCleared, anyFailed, hasUsableSellerKyc, isFullyConfigured, type ContingencyName, type EscrowView, type StatusName } from './escrowView';
+import { CONTINGENCIES, allCleared, anyFailed, coolingOffOver, hasUsableSellerKyc, insideCoolingOff, isFullyConfigured, type ContingencyName, type EscrowView, type StatusName } from './escrowView';
 import type { Caller, PartyRole } from './roles';
 
 export type PartyCircuit =
@@ -35,10 +35,13 @@ export type PartyCircuit =
   | 'endTopUpWindow'
   | 'refundLender'
   | 'claimForfeit'
+  | 'buyerWithdraw'
+  | 'refundWithdrawal'
+  | 'claimPenalty'
   | 'revokeKycAttestation'
   | 'revokeKycIssuer';
 
-export type Witness = 'localSecretKey' | 'privateTerms' | 'kycAttestation' | 'vaultCoin' | 'lenderTerms' | 'secondCoin';
+export type Witness = 'localSecretKey' | 'privateTerms' | 'kycAttestation' | 'vaultCoin' | 'lenderTerms' | 'secondCoin' | 'penaltyCoin';
 
 /** Local, private material the caller's browser holds (never on-chain). */
 export interface LocalMaterial {
@@ -49,6 +52,8 @@ export interface LocalMaterial {
   lenderTerms?: boolean;
   /** v2: the second coin's index is known (or can be located). */
   secondCoin?: boolean;
+  /** Cooling-off: the penalty coin's index is known (or can be located). */
+  penaltyCoin?: boolean;
 }
 
 // ------------------------------------------------------------------ v2 financing helpers (mirror the contract)
@@ -90,7 +95,8 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
   acceptConfiguration: {
     circuit: 'acceptConfiguration',
     callers: ['buyer', 'seller'],
-    witnesses: ['localSecretKey'],
+    // Each party proves its package opens the deposit, price and cooling-off commitments.
+    witnesses: ['localSecretKey', 'privateTerms'],
     check: (v, caller) =>
       first(
         phase(v, 'Contract is already initialized', 'Initializing'),
@@ -118,7 +124,7 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     circuit: 'submitSellerKyc',
     callers: ['seller'],
     witnesses: ['localSecretKey', 'privateTerms', 'kycAttestation'],
-    check: (v) => phase(v, 'Seller KYC cannot be submitted in current state', 'Created', 'Funded', 'ContingenciesPending', 'ReadyToClose', 'Disputed', 'Settled', 'Forfeited')
+    check: (v) => phase(v, 'Seller KYC cannot be submitted in current state', 'Created', 'Funded', 'ContingenciesPending', 'ReadyToClose', 'Disputed', 'Settled', 'Forfeited', 'Withdrawn')
   },
   openContingencyReview: {
     circuit: 'openContingencyReview',
@@ -241,6 +247,7 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
         v.status === 'ReadyToClose' && caller !== 'buyer' && caller !== 'seller' ? 'Caller is not buyer or seller' : null,
         v.status === 'Settled' && caller !== 'resolver' ? 'Caller is not the dispute resolver' : null,
         v.sellerKyc.verified ? null : 'ERROR_SELLER_KYC_REQUIRED',
+        coolingOffOver(v, now) ? null : 'Cooling-off period is not over',
         v.kycIssuers.some((i) => i.issuerId === v.sellerKyc.issuerId) ? null : 'ERROR_NOT_WHITELISTED: seller KYC issuer was revoked',
         v.revokedKycRefs.includes(v.sellerKyc.ref) ? 'ERROR_KYC_REVOKED' : null,
         now < v.sellerKyc.validUntil ? null : 'ERROR_KYC_EXPIRED'
@@ -259,7 +266,7 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     callers: ['buyer', 'seller', 'resolver'],
     witnesses: ['localSecretKey', 'privateTerms', 'secondCoin'],
     irreversible: true,
-    check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired'), v.financing.topUpHeld && !v.financing.secondCoinPaid ? null : 'No top-up to refund')
+    check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired', 'Withdrawn', 'Forfeited'), v.financing.topUpHeld && !v.financing.secondCoinPaid ? null : 'No top-up to refund')
   },
   // ---------------------------------------------------------------- v2: financing by deposit
   depositLoan: {
@@ -336,7 +343,42 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     callers: ['lender', 'buyer', 'seller', 'resolver'],
     witnesses: ['localSecretKey', 'lenderTerms', 'secondCoin'],
     irreversible: true,
-    check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired'), v.financing.loanHeld && !v.financing.secondCoinPaid ? null : 'No loan deposit to refund')
+    check: (v) => first(phase(v, 'Escrow is not refundable', 'Refunded', 'Expired', 'Withdrawn', 'Forfeited'), v.financing.loanHeld && !v.financing.secondCoinPaid ? null : 'No loan deposit to refund')
+  },
+  // ---------------------------------------------------------------- cooling-off: the buyer withdraws
+  buyerWithdraw: {
+    circuit: 'buyerWithdraw',
+    callers: ['buyer'],
+    witnesses: ['localSecretKey'],
+    irreversible: true,
+    check: (v, _c, now) =>
+      first(
+        inStatus(v, 'Funded', 'ContingenciesPending', 'ReadyToClose') || (v.status === 'Disputed' && insideCoolingOff(v, now)) ? null : 'Buyer cannot withdraw in current state',
+        refundableFailure(v) ? 'A contingency failed: cancel and get a full refund instead' : null
+      )
+  },
+  refundWithdrawal: {
+    circuit: 'refundWithdrawal',
+    callers: ['buyer', 'seller', 'resolver'],
+    witnesses: ['localSecretKey', 'privateTerms', 'vaultCoin'],
+    irreversible: true,
+    check: (v) => first(phase(v, 'Buyer has not withdrawn in the cooling-off period', 'Withdrawn'), v.financing.buyerCoinPaid ? 'Funds already disbursed' : null)
+  },
+  claimPenalty: {
+    circuit: 'claimPenalty',
+    callers: ['seller'],
+    witnesses: ['localSecretKey', 'privateTerms', 'penaltyCoin'],
+    irreversible: true,
+    check: (v, _c, now) =>
+      first(
+        phase(v, 'Buyer has not withdrawn in the cooling-off period', 'Withdrawn'),
+        v.financing.buyerCoinPaid ? null : 'Refund the buyer first',
+        v.coolingOff.penaltyDue && !v.coolingOff.penaltyPaid ? null : 'No penalty to claim',
+        v.sellerKyc.verified ? null : 'ERROR_SELLER_KYC_REQUIRED',
+        v.kycIssuers.some((i) => i.issuerId === v.sellerKyc.issuerId) ? null : 'ERROR_NOT_WHITELISTED: seller KYC issuer was revoked',
+        v.revokedKycRefs.includes(v.sellerKyc.ref) ? 'ERROR_KYC_REVOKED' : null,
+        now < v.sellerKyc.validUntil ? null : 'ERROR_KYC_EXPIRED'
+      )
   },
   claimForfeit: {
     circuit: 'claimForfeit',
@@ -381,6 +423,7 @@ const missingMaterial = (spec: ActionSpec, m: LocalMaterial, v: EscrowView): str
   if (spec.witnesses.includes('kycAttestation') && !m.kycAttestation) return 'Needs a CASP KYC attestation (Compliance)';
   if (spec.witnesses.includes('vaultCoin') && !m.vaultCoin) return 'Needs the vault coin index (Funding → vault tracking)';
   if (spec.witnesses.includes('secondCoin') && needsSecondCoin(spec.circuit, v) && m.secondCoin === false) return 'Needs the loan or top-up coin index';
+  if (spec.witnesses.includes('penaltyCoin') && m.penaltyCoin === false) return 'Needs the penalty coin index';
   return null;
 };
 
@@ -402,7 +445,9 @@ export const enabledActions = (v: EscrowView, role: PartyRole, nowSec: bigint, m
   availableActions(v, role, nowSec, m).filter((a) => a.enabled);
 
 /** FR-DISPUTE-03 / FR-AUDIT-02: the next deadline that matters in the current phase, if any. */
-export function nextDeadline(v: EscrowView): { kind: 'closing' | 'dispute' | 'sellerKyc' | 'topUp'; at: bigint } | null {
+export function nextDeadline(v: EscrowView, nowSec?: bigint): { kind: 'closing' | 'dispute' | 'sellerKyc' | 'topUp' | 'coolingOff'; at: bigint } | null {
+  // Cooling-off: until it ends, the buyer may withdraw with at most the penalty, and no release is possible.
+  if (nowSec !== undefined && insideCoolingOff(v, nowSec) && ['Funded', 'ContingenciesPending', 'ReadyToClose', 'Disputed'].includes(v.status)) return { kind: 'coolingOff', at: v.coolingOff.end };
   switch (v.status) {
     case 'Created':
     case 'Funded':

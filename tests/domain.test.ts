@@ -15,7 +15,9 @@ const { sim } = await configuredEscrow();
 describe('lifecycle table', () => {
   const init = sim.view();
   it('offers acceptConfiguration to buyer and seller only while initializing', () => {
-    expect(availableActions(init, 'buyer', 0n, none).find((a) => a.circuit === 'acceptConfiguration')?.enabled).toBe(true);
+    expect(availableActions(init, 'buyer', 0n, all).find((a) => a.circuit === 'acceptConfiguration')?.enabled).toBe(true);
+    // Accepting proves the package opens the deposit, price and cooling-off commitments: it needs the terms.
+    expect(availableActions(init, 'buyer', 0n, none).find((a) => a.circuit === 'acceptConfiguration')?.reason).toMatch(/private terms/);
     expect(availableActions(init, 'inspector', 0n, none).some((a) => a.circuit === 'acceptConfiguration')).toBe(false);
   });
   it('requires local material for the deposit', () => {

@@ -55,6 +55,77 @@ A dismissed dispute returns the escrow to where it was. Cancelling before fundin
 | Funded → ReadyToClose | — | opens review, waives or cancels and refunds, may dispute | may open review, withdraw or dispute | **submit results** with report hashes | decides disputes | verifies openings and reports |
 | Closing | — | releases or claims the refund | releases, receives the price | — | executes a settled payout | issues the certificate |
 
+### Memo: cancelling before funding once the contract is immutable
+
+The buyer or the seller can walk away before any money is locked, even after the admin has renounced the maintenance authority. Renouncing freezes the contract's code, not its rules: it is only allowed once every circuit is registered, **Cancel before funding** included, so that action keeps working.
+
+**When it is allowed**
+
+- **Buyer or seller:** while the escrow is *Initializing* or *Created*, that is, up to the buyer's deposit. **Cancel before funding** is on the *Actions* card of the buyer and seller pages.
+- **Admin:** only while the escrow is *Initializing*.
+- Once the buyer has deposited (*Funded*), cancelling is refused; the way out is then the contingency rules, a refund or a dispute.
+
+**What happens**
+
+- The status becomes **Cancelled** and the lifecycle round increases by one.
+- **No funds move:** nothing was deposited, so there is nothing to refund. The only cost is the network fee of the cancel transaction, paid by whoever cancels.
+- *Cancelled* is final. No circuit accepts a cancelled escrow: no deposit, review, dispute, release or refund can follow.
+- It cannot be undone. With the authority renounced, no one (the admin included) can change the contract's code to reopen it. Before renouncing, the admin could in principle have installed changed circuits; that power is exactly what the parties are protected from once it is gone.
+- The contract stays on-chain as a public record that the deal was abandoned before funding. The notary portal shows it as *Cancelled*, with no funds locked.
+
+**To continue the deal**
+
+- The admin deploys a **new escrow** and everyone goes through the steps again: new configuration, a new terms package, new acceptances.
+- Role ids, payout keys and envelope keys can be reused. KYC attestations cannot: each one is anchored to its escrow, so request new ones.
+
+**The parties' vaults**
+
+- The old escrow's role keys, terms package, attestations and log entries stay in each vault, but no longer do anything.
+- Keep them as a record of what was agreed, or remove them: back up first (*Vault backup and restore*), then **Erase locally** on the *Private terms vault* card (buyer, seller and resolver pages; type **ERASE**). The notary removes its copy with **Remove custodian copy**.
+
+## Contract v2: loan financing
+
+A v2 escrow can be a **cash deal** (the lender only attests the financing, as in v1) or a **loan deal**: the buyer deposits its own share, and the lender deposits the loan into the same escrow. The release pays the seller both coins, so the seller receives the full price. The contract checks that price = buyer deposit + loan amount, and only accepts coins equal to their committed amounts. v1 terms packages are refused by the v2 dApp.
+
+### Admin: financing and terms
+
+1. **Initialize** tab → *Financing* card: choose **Cash deal** or **Loan**. For a loan, enter the **loan offer expiry** (Unix seconds, no later than the closing deadline) and the **top-up window** in days (default 7), then **Apply**. Like the other settings, this can only change while the escrow is *Initializing*.
+2. **Terms & KYC** tab → *Private terms*: enter the **total price**, the **buyer deposit** (the loan amount is the difference), the **lender payout key**, and the optional **loan refusal refund term**. The commitments are written in two transactions.
+3. Distribute the packages: buyer and seller get the full terms package; the lender gets a **lender package** holding only what it needs (price, loan amount, refund term, its payout key).
+
+### Lender guide
+
+On the **Lender** page, load the contract and import your lender package. The *Lender terms* card checks its four commitments against the ledger. During the contingency review, the *Loan* card offers:
+
+- **Fund the loan**: deposits exactly the committed loan amount from your wallet.
+- **Refuse the loan**: attach your refusal letter; only its hash goes on-chain.
+- **Withdraw the loan deposit**: once the loan offer expiry has passed and the deal is still in review, you can take your deposit back. This counts as a refusal. You cannot extend the delay.
+- **Refund the lender**: if the deal unwinds after you funded it (refund, expiry), the loan coin is payable only to your committed key. The card shows the repayment coin to import into your wallet.
+
+You can also export openings (price, loan amount, refund term, your payout key) for the notary.
+
+### Buyer: top-up
+
+The *Top-up* card appears on the buyer page for a loan deal.
+
+- While neither the loan nor a top-up is held, you can deposit the loan amount yourself (**Top up the loan amount**) and keep the deal going without the lender.
+- **Loan refused or withdrawn, refund term on**: a top-up window opens, ending at the earlier of now + window and the closing deadline. Top up inside it, or **Give up and get refunded at once**. When the window ends without a top-up, anyone can **End the top-up window** and you are refunded.
+- **Loan refused or withdrawn, refund term off**: you must top up before the closing deadline. Otherwise the escrow becomes **Forfeited** and your deposit goes to the seller.
+
+### Seller: claiming a forfeited deposit
+
+When the status is **Forfeited**, the seller page shows the *Forfeited deposit* card. Submit your seller KYC if it is missing or expired, then **Claim the forfeited deposit**. The buyer deposit is paid to your committed payout key and the escrow closes. The *Settlement* card lists each coin (deposit, loan, top-up, loan repaid to the lender) and the outcome: released, refunded or forfeited.
+
+### Notary: separate verifications
+
+Each amount has its own commitment, so the notary verifies them separately: **total price**, **buyer deposit**, **loan amount** and **loan refusal refund term** (plus each payout key). The parties export the openings they hold with the opening buttons; the custodian card verifies all amounts at once. The *Locked funds* card shows one verified line for each. The certificate is now *EuNotarialEscrowCertificateV2*, with a financing section: mode, which coins are held or paid, loan lost or withdrawn, the top-up window end, and the refund term (on, off, or undisclosed when no opening was given and the loan was not lost).
+
+### New statuses and outcomes
+
+- **Forfeited**: loan lost, refund term off, no top-up by the closing deadline. Only the seller can claim the buyer deposit.
+- **Released**: the seller receives two coins, the buyer deposit and the loan (or top-up).
+- **Refunded / Expired**: each coin goes back to whoever deposited it: buyer deposit and top-up to the buyer, loan to the lender. Each coin is paid back in its own transaction: Refund buyer (the deposit), Refund the top-up (if the buyer topped up) and Refund the lender (the loan). The escrow closes once every held coin is paid.
+
 ## Admin guide
 
 The admin sets the escrow up and then steps away: once **Finalize initialization** succeeds, the admin has no power over the funds. Work through the admin console's tabs in this order.

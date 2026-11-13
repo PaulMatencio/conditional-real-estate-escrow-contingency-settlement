@@ -194,7 +194,8 @@ export class AdminGateway {
       financing: {
         mode: configured.has(InitAttribute.Financing) ? (L.financingMode === FinancingMode.Deposited ? 'deposited' : 'attested') : null,
         loanOfferExpiry: L.loanOfferExpiry,
-        topUpWindow: L.topUpWindow
+        topUpWindow: L.topUpWindow,
+        coolingOff: configured.has(InitAttribute.CoolingOff) ? L.coolingOffPeriod : null
       },
       maintenance: maintenanceOf(s)
     };

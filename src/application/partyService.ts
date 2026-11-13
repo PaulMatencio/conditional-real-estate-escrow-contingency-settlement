@@ -78,6 +78,9 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
   if (needsSecondCoin(circuit, view) && ctx.record.secondCoin?.index === undefined) {
     problems.push('Index of the loan or top-up coin unknown: it is read from its deposit transaction, which was not found yet.');
   }
+  if (spec.witnesses.includes('penaltyCoin') && ctx.record.penaltyCoin?.index === undefined) {
+    problems.push('Index of the penalty coin unknown: it is read from the withdrawal refund transaction, which was not found yet.');
+  }
   if (spec.witnesses.includes('kycAttestation')) {
     const role = circuit === 'depositToEscrow' || circuit === 'depositTopUp' ? 'buyer' : 'seller';
     const b = ctx.record.kyc?.[role];
@@ -130,7 +133,8 @@ export function materialFor(ctx: PartyContext, circuit: PartyCircuit, role: Call
       (spec.witnesses.includes('lenderTerms') || usesSecond) && lt
         ? { lenderShare: lt.lenderShare, lenderShareSalt: lt.lenderShareSalt, lenderPayout: lt.lenderPayout, lenderPayoutSalt: lt.lenderPayoutSalt, refundOnLoss: lt.refundOnLoss, loanTermsSalt: lt.loanTermsSalt }
         : undefined,
-    secondCoin: usesSecond && sc?.index !== undefined ? { kind: sc.kind, index: BigInt(sc.index) } : undefined
+    secondCoin: usesSecond && sc?.index !== undefined ? { kind: sc.kind, index: BigInt(sc.index) } : undefined,
+    penaltyIndex: spec.witnesses.includes('penaltyCoin') && ctx.record.penaltyCoin?.index !== undefined ? BigInt(ctx.record.penaltyCoin.index) : undefined
   };
 }
 
@@ -149,6 +153,9 @@ export async function runPartyAction<C extends PartyCircuit>(ctx: PartyContext, 
   }
   if (needsSecondCoin(circuit, view) && ctx.record.secondCoin?.index === undefined) {
     ctx = { ...ctx, record: await trackSecondCoin(ctx, view) };
+  }
+  if (ACTIONS[circuit].witnesses.includes('penaltyCoin') && ctx.record.penaltyCoin?.index === undefined) {
+    ctx = { ...ctx, record: await trackPenaltyCoin(ctx) };
   }
   const pf = await preflight(ctx, view, caller, circuit, args, now);
   if (!pf.ok) throw new AppError('PREFLIGHT', pf.problems.join(' · '));
@@ -169,6 +176,14 @@ export async function runPartyAction<C extends PartyCircuit>(ctx: PartyContext, 
     if (index === null) index = await ctx.gateway.locateCoinIndex(circuit, receipt.txHash).catch(() => null);
     record.secondCoin = { kind: circuit === 'depositLoan' ? 'loan' : 'topup', txHash: receipt.txHash, index: index === null ? undefined : index.toString() };
   }
+  if (circuit === 'refundWithdrawal') {
+    const after = await ctx.gateway.readView().catch(() => null);
+    if (after?.coolingOff.penaltyDue) {
+      let index = receipt.vaultIndex ?? null;
+      if (index === null) index = await ctx.gateway.locateCoinIndex('refundWithdrawal', receipt.txHash).catch(() => null);
+      record.penaltyCoin = { txHash: receipt.txHash, index: index === null ? undefined : index.toString() };
+    }
+  }
   return { receipt, record };
 }
 
@@ -180,6 +195,13 @@ export async function trackSecondCoin(ctx: PartyContext, view: EscrowView): Prom
   const known = ctx.record.secondCoin?.kind === kind ? ctx.record.secondCoin : undefined;
   const index = await ctx.gateway.locateCoinIndex(kind === 'loan' ? 'depositLoan' : 'depositTopUp', known?.txHash ?? null).catch(() => null);
   return index === null ? ctx.record : { ...ctx.record, secondCoin: { kind, txHash: known?.txHash, index: index.toString() } };
+}
+
+/** Cooling-off: locate the penalty coin from the withdrawal refund transaction, from any party's browser (the seller's). */
+export async function trackPenaltyCoin(ctx: PartyContext): Promise<VaultRecord> {
+  const known = ctx.record.penaltyCoin;
+  const index = await ctx.gateway.locateCoinIndex('refundWithdrawal', known?.txHash ?? null).catch(() => null);
+  return index === null ? ctx.record : { ...ctx.record, penaltyCoin: { txHash: known?.txHash, index: index.toString() } };
 }
 
 /** FR-FUND-03: derive the vault coin index on this party's own (no dependency on the depositor) and store it. */

@@ -47,7 +47,8 @@ export function toEscrowView(contractAddress: string, data: LedgerInput, mainten
       price: has('Price') ? commit(L.priceCommitment) : null,
       lenderShare: has('LenderShare') ? commit(L.lenderShareCommitment) : null,
       lenderPayout: has('LenderPayout') ? commit(L.lenderPayoutCommitment) : null,
-      loanTerms: has('LoanTerms') ? commit(L.loanTermsCommitment) : null
+      loanTerms: has('LoanTerms') ? commit(L.loanTermsCommitment) : null,
+      coolingOff: has('CoolingOffTerms') ? commit(L.coolingOffCommitment) : null
     },
     financing: {
       mode: has('Financing') ? (FINANCING_MODES[L.financingMode] ?? null) : null,
@@ -61,6 +62,13 @@ export function toEscrowView(contractAddress: string, data: LedgerInput, mainten
       topUpWindowEnd: L.topUpWindowEnd,
       buyerCoinPaid: L.buyerCoinPaid,
       secondCoinPaid: L.secondCoinPaid
+    },
+    coolingOff: {
+      period: L.coolingOffPeriod,
+      end: L.coolingOffEnd,
+      buyerWithdrew: L.buyerWithdrew,
+      penaltyDue: L.penaltyDue,
+      penaltyPaid: L.penaltyPaid
     },
     closingDeadline: L.closingDeadline,
     disputeDeadline: L.disputeDeadline,

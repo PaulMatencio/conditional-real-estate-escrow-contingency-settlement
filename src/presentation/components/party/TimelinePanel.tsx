@@ -13,7 +13,7 @@ export function TimelinePanel() {
   const { t } = useT();
   const { timeline, record, view, now, mode } = useEscrow();
   if (!view) return null;
-  const d = nextDeadline(view);
+  const d = nextDeadline(view, now);
   const left = d ? Number(d.at) - Number(now) : null;
   return (
     <Card title={t('audit.title')} icon={<History size={16} aria-hidden />}>

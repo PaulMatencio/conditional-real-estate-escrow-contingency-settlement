@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { FileLock2 } from 'lucide-react';
 import { checkTermsAgainstLedger, selectiveOpening } from '@/application/termsService';
-import { COMMITMENT_KEYS, TERMS_V1_MESSAGE, isLenderPackage, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
+import { COMMITMENT_KEYS, TERMS_PRE_COOLING_OFF_MESSAGE, TERMS_V1_MESSAGE, isLenderPackage, isPreCoolingOffPackage, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
@@ -39,6 +39,7 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
       }
       if (isV1TermsPackage(raw) || isV1TermsPackage(p)) throw new Error(TERMS_V1_MESSAGE);
       if (isLenderPackage(p)) throw new Error(t('lender.lenderPackageHere'));
+      if (isPreCoolingOffPackage(p)) throw new Error(TERMS_PRE_COOLING_OFF_MESSAGE);
       if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
       if (p.contractAddress && contractAddress && p.contractAddress !== contractAddress) throw new Error(t('terms.otherContract'));
       const bound: TermsPackage = { ...p, contractAddress: contractAddress ?? p.contractAddress, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };

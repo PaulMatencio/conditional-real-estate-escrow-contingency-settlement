@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Landmark } from 'lucide-react';
-import { DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
+import { DEFAULT_COOLING_OFF_DAYS, DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
 import { useApp } from '../../providers/AppProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
@@ -22,6 +22,8 @@ export function FinancingCard() {
   const [mode, setMode] = useState<'attested' | 'deposited'>(current?.mode ?? 'deposited');
   const [expiry, setExpiry] = useState('');
   const [days, setDays] = useState(String(DEFAULT_TOP_UP_DAYS));
+  // Cooling-off period: off (0) unless the admin sets it, for cash and loan deals alike.
+  const [coolDays, setCoolDays] = useState(current?.coolingOff ? String(Number(current.coolingOff / BigInt(DAY))) : String(DEFAULT_COOLING_OFF_DAYS));
   const [err, setErr] = useState<string | null>(null);
   const busy = progress?.status === 'running';
   if (!state || state.status !== 0) return null;
@@ -29,6 +31,7 @@ export function FinancingCard() {
   const loan = mode === 'deposited';
   const expiryNum = /^\d+$/.test(expiry.trim()) ? BigInt(expiry.trim()) : null;
   const daysNum = /^\d+$/.test(days.trim()) ? Number(days.trim()) : null;
+  const coolNum = /^\d+$/.test(coolDays.trim()) ? Number(coolDays.trim()) : null;
 
   const apply = () => {
     setErr(null);
@@ -37,11 +40,13 @@ export function FinancingCard() {
       if (state.closingDeadline > 0n && expiryNum > state.closingDeadline) return setErr(t('financing.expiryAfterClosing'));
       if (!daysNum || daysNum < 1) return setErr(t('financing.needWindow'));
     }
+    if (coolNum === null) return setErr(t('cool.needDays'));
     // A cash deal does not use the dates; the contract still counts them as configured, so zeros are committed.
     void configureFinancing({
       mode,
       loanOfferExpiry: loan ? expiryNum! : 0n,
-      topUpWindow: loan ? BigInt(daysNum! * DAY) : 0n
+      topUpWindow: loan ? BigInt(daysNum! * DAY) : 0n,
+      coolingOff: BigInt(coolNum * DAY)
     });
   };
 
@@ -55,6 +60,11 @@ export function FinancingCard() {
           <span className="text-slate-400">
             {t('financing.expiry')}: {fmtDate(current.loanOfferExpiry)} · {t('financing.window')}: {Number(current.topUpWindow / BigInt(DAY))} {t('financing.days')}
           </span>
+        )}
+        {current?.coolingOff !== null && current?.coolingOff !== undefined && (
+          <Badge tone={current.coolingOff > 0n ? 'accent' : 'muted'}>
+            {t('cool.title')}: {current.coolingOff > 0n ? `${Number(current.coolingOff / BigInt(DAY))} ${t('financing.days')}` : t('cool.off')}
+          </Badge>
         )}
       </p>
       <fieldset className="mb-3">
@@ -79,6 +89,9 @@ export function FinancingCard() {
           </Field>
         </div>
       )}
+      <Field label={t('cool.daysField')} hint={t('cool.daysHint')} htmlFor="fin-cool">
+        <input id="fin-cool" inputMode="numeric" className="input !w-32" value={coolDays} onChange={(e) => setCoolDays(e.target.value)} />
+      </Field>
       {err && (
         <div className="mb-3">
           <Alert tone="bad" onClose={() => setErr(null)}>

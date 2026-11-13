@@ -233,7 +233,7 @@ export function LoanCard() {
         </div>
       )}
       {f.loanHeld && !f.secondCoinPaid && view.status === 'ContingenciesPending' && <div className="mt-2">{button('withdrawLoan', true)}</div>}
-      {f.loanHeld && !f.secondCoinPaid && (view.status === 'Refunded' || view.status === 'Expired') && <div className="mt-2">{button('refundLender', false)}</div>}
+      {f.loanHeld && !f.secondCoinPaid && ['Refunded', 'Expired', 'Withdrawn', 'Forfeited'].includes(view.status) && <div className="mt-2">{button('refundLender', false)}</div>}
       {pkg && view.contractAddress && (f.loanWithdrawn || (f.loanHeld && f.secondCoinPaid)) && (
         <div className="mt-3 space-y-2 text-sm">
           <p className="text-slate-400">{t(f.loanWithdrawn ? 'lender.repaidWithdrawn' : 'lender.repaidMaybe')}</p>

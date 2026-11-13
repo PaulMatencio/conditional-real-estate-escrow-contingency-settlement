@@ -7,7 +7,7 @@ import { AppError } from '@/domain/errors';
 import { CONTINGENCIES, type ContingencyName } from '@/domain/escrowView';
 import { hex32ToBytes } from '@/domain/hex';
 import type { PartyCircuit } from '@/domain/lifecycle';
-import { bundleToWitness, lenderTermsFromWire, loanCoinOf, sigFromWire, termsFromWire, topUpCoinOf, vaultCoinOf } from '../crypto/escrowCrypto';
+import { bundleToWitness, lenderTermsFromWire, loanCoinOf, sigFromWire, termsFromWire, topUpCoinOf, vaultCoinOf, withdrawalCoinsOf } from '../crypto/escrowCrypto';
 import { Contingency } from './module';
 import type { PrivateInputs } from './witnesses';
 
@@ -16,7 +16,7 @@ const contingency = (c: ContingencyName): Contingency => {
   return Contingency[c];
 };
 
-/** Per-call context. `now` (unix s) is what declineLoan / withdrawLoan pass as the current time (block time ± 10 min). */
+/** Per-call context. `now` (unix s) is what depositToEscrow / declineLoan / withdrawLoan pass as the current time (block time ± 10 min). */
 export interface CallContext {
   contractAddress: string;
   escrowColor: string;
@@ -52,7 +52,7 @@ export function contractArgs<C extends PartyCircuit>(circuit: C, args: CircuitAr
     case 'depositToEscrow': {
       const t = ctx.material.terms;
       if (!t) throw new AppError('MISSING_MATERIAL', 'The deposit coin is built from the private terms, which this browser does not hold.');
-      return [vaultCoinOf(ctx.contractAddress, ctx.escrowColor, t)];
+      return [vaultCoinOf(ctx.contractAddress, ctx.escrowColor, t), needNow(ctx)];
     }
     case 'depositLoan': {
       const lt = lenderPart(ctx.material);
@@ -105,6 +105,14 @@ export function witnessInputs(ctx: CallContext): PrivateInputs {
           if (!m.terms) throw new AppError('MISSING_MATERIAL', 'The top-up coin is built from the private terms, which this browser does not hold.');
           return { ...topUpCoinOf(ctx.contractAddress, ctx.escrowColor, m.terms), mt_index: second.index };
         }
-      : undefined
+      : undefined,
+    penaltyCoin:
+      m.terms && m.penaltyIndex !== undefined
+        ? () => {
+            const c = withdrawalCoinsOf(ctx.contractAddress, ctx.escrowColor, m.terms!).penaltyCoin;
+            if (!c) throw new AppError('VALIDATION', 'These terms have no cooling-off penalty.');
+            return { ...c, mt_index: m.penaltyIndex! };
+          }
+        : undefined
   };
 }

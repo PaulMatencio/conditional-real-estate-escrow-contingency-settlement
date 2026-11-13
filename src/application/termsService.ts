@@ -9,6 +9,8 @@ import {
   LENDER_COMMITMENT_KEYS,
   type LENDER_OPENING_KINDS,
   norm,
+  penaltyOf,
+  fmtRate,
   validateTerms,
   type AttestationBundle,
   type LenderPackage,
@@ -26,6 +28,7 @@ export interface TermsCrypto {
   priceCommitment(price: bigint, salt: string): string;
   lenderShareCommitment(share: bigint, salt: string): string;
   loanTermsCommitment(refundOnLoss: boolean, salt: string): string;
+  coolingOffCommitment(rate: bigint, penalty: bigint, salt: string): string;
   /** Schnorr check of a CASP bundle against the given issuer public key. */
   verifyBundleSignature(b: AttestationBundle, publicKey: { x: string; y: string }): boolean;
   kycReference(b: AttestationBundle): string;
@@ -42,6 +45,10 @@ export interface TermsInput {
   lenderPayout?: string;
   /** Loan refusal refund term (default true). */
   refundOnLoss?: boolean;
+  /** Cooling-off penalty, basis points of the price (default 0). Only with a cooling-off period. */
+  penaltyRate?: string;
+  /** Whether the escrow has a cooling-off period, when known: without one the rate must be 0. */
+  coolingOff?: boolean;
   /** The escrow's financing mode, when known: the shares are checked against it. */
   mode?: 'attested' | 'deposited';
   contractAddress?: string;
@@ -57,6 +64,8 @@ export function createTermsPackage(crypto: TermsCrypto, input: TermsInput, now: 
   const loan = BigInt(price) - BigInt(deposit);
   if (loan < 0n) throw new AppError('VALIDATION', 'The buyer deposit cannot exceed the price.');
   if (loan > 0n && !input.lenderPayout?.trim()) throw new AppError('VALIDATION', 'A loan needs the lender payout key.');
+  const rate = (input.penaltyRate ?? '0').trim() || '0';
+  if (!/^\d+$/.test(rate)) throw new AppError('VALIDATION', 'The cooling-off penalty rate must be a whole number of basis points (150 = 1.5 %).');
   const terms: WirePrivateTerms = {
     amount: deposit,
     amountSalt: crypto.newSalt(),
@@ -72,9 +81,12 @@ export function createTermsPackage(crypto: TermsCrypto, input: TermsInput, now: 
     lenderPayout: loan > 0n ? norm(input.lenderPayout!) : crypto.newSalt(),
     lenderPayoutSalt: crypto.newSalt(),
     refundOnLoss: input.refundOnLoss ?? true,
-    loanTermsSalt: crypto.newSalt()
+    loanTermsSalt: crypto.newSalt(),
+    penaltyRate: rate,
+    penalty: penaltyOf(BigInt(price), BigInt(rate)).toString(),
+    coolingOffSalt: crypto.newSalt()
   };
-  const problem = validateTerms(terms, input.mode);
+  const problem = validateTerms(terms, input.mode, input.coolingOff);
   if (problem) throw new AppError('VALIDATION', problem);
   return {
     format: 'EscrowTermsV2',
@@ -92,7 +104,7 @@ export type CommitmentCheck = Record<keyof TermsCommitments, CommitmentState> & 
 
 const cmp = (local: string, onchain: string | null): CommitmentState => (onchain === null ? 'unset' : local === onchain ? 'match' : 'mismatch');
 
-/** FR-TERMS-03: recompute all seven commitments from the local copy and compare them with the ledger. */
+/** FR-TERMS-03: recompute all eight commitments from the local copy and compare them with the ledger. */
 export function checkTermsAgainstLedger(crypto: TermsCrypto, pkg: TermsPackage, view: EscrowView): CommitmentCheck {
   const mine = crypto.commitmentsOf(pkg.terms);
   const r = Object.fromEntries(COMMITMENT_KEYS.map((k) => [k, cmp(mine[k], view.commitments[k])])) as Record<keyof TermsCommitments, CommitmentState>;
@@ -106,7 +118,7 @@ export function checkLenderPackage(crypto: TermsCrypto, pkg: LenderPackage, view
     lenderShare: crypto.lenderShareCommitment(BigInt(pkg.lenderShare), pkg.lenderShareSalt),
     lenderPayout: crypto.payoutCommitment(pkg.lenderPayout, pkg.lenderPayoutSalt),
     loanTerms: crypto.loanTermsCommitment(pkg.refundOnLoss, pkg.loanTermsSalt)
-  };
+  } as const;
   const r = Object.fromEntries(LENDER_COMMITMENT_KEYS.map((k) => [k, cmp(mine[k], view.commitments[k])])) as Record<(typeof LENDER_COMMITMENT_KEYS)[number], CommitmentState>;
   return { ...r, ok: LENDER_COMMITMENT_KEYS.every((k) => r[k] === 'match') };
 }
@@ -155,6 +167,8 @@ export function selectiveOpening(pkg: TermsPackage, kind: Opening['kind']): Open
       return { ...base, kind, amount: t.lenderShare, salt: t.lenderShareSalt, ticker: pkg.escrowTicker };
     case 'loanTerms':
       return { ...base, kind, refundOnLoss: t.refundOnLoss, salt: t.loanTermsSalt };
+    case 'coolingOff':
+      return { ...base, kind, penaltyRate: t.penaltyRate, penalty: t.penalty, salt: t.coolingOffSalt, ticker: pkg.escrowTicker };
     case 'buyerPayout':
       return { ...base, kind, key: t.buyerPayout, salt: t.buyerSalt };
     case 'sellerPayout':
@@ -178,6 +192,7 @@ const OPENING_LABEL: Record<Opening['kind'], string> = {
   amount: 'Buyer deposit',
   lenderShare: 'Loan amount',
   loanTerms: 'Loan refusal refund term',
+  coolingOff: 'Cooling-off penalty',
   buyerPayout: 'Buyer payout key',
   sellerPayout: 'Seller payout key',
   lenderPayout: 'Lender payout key'
@@ -198,6 +213,14 @@ export function verifyOpening(crypto: TermsCrypto, o: Opening, view: EscrowView)
       return result(crypto.lenderShareCommitment(BigInt(o.amount), o.salt), view.commitments.lenderShare, `${label} verified: ${o.amount} ${view.escrowTicker}`);
     case 'loanTerms':
       return result(crypto.loanTermsCommitment(o.refundOnLoss, o.salt), view.commitments.loanTerms, `${label} verified: ${o.refundOnLoss ? 'on (a refused loan refunds the buyer)' : 'off (a refused loan can forfeit the buyer deposit)'}`);
+    case 'coolingOff':
+      return result(
+        crypto.coolingOffCommitment(BigInt(o.penaltyRate), BigInt(o.penalty), o.salt),
+        view.commitments.coolingOff,
+        BigInt(o.penaltyRate) === 0n
+          ? `${label} verified: none (a withdrawal inside the cooling-off period refunds the whole deposit)`
+          : `${label} verified: ${fmtRate(o.penaltyRate)} of the price = ${o.penalty} ${view.escrowTicker}`
+      );
     default: {
       const onchain = o.kind === 'buyerPayout' ? view.commitments.buyerPayout : o.kind === 'sellerPayout' ? view.commitments.sellerPayout : view.commitments.lenderPayout;
       return result(crypto.payoutCommitment(o.key, o.salt), onchain, `${label} verified`);

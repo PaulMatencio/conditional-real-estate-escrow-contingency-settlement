@@ -30,6 +30,11 @@ export interface WirePrivateTerms {
   /** Loan refusal refund term: a lost loan opens a top-up window, then refunds the buyer. */
   refundOnLoss: boolean;
   loanTermsSalt: string;
+  /** Cooling-off penalty rate, basis points of the price ("0" = no penalty; always "0" when the period is off). */
+  penaltyRate: string;
+  /** Cooling-off penalty = floor(price × rate / 10 000), strictly lower than the buyer deposit. */
+  penalty: string;
+  coolingOffSalt: string;
 }
 
 export interface TermsCommitments {
@@ -40,10 +45,12 @@ export interface TermsCommitments {
   lenderShare: string;
   lenderPayout: string;
   loanTerms: string;
+  /** Cooling-off penalty (rate and amount). */
+  coolingOff: string;
 }
 
-/** The seven commitment names, in display order. */
-export const COMMITMENT_KEYS = ['price', 'amount', 'lenderShare', 'buyerPayout', 'sellerPayout', 'lenderPayout', 'loanTerms'] as const satisfies readonly (keyof TermsCommitments)[];
+/** The eight commitment names, in display order. */
+export const COMMITMENT_KEYS = ['price', 'amount', 'lenderShare', 'buyerPayout', 'sellerPayout', 'lenderPayout', 'loanTerms', 'coolingOff'] as const satisfies readonly (keyof TermsCommitments)[];
 /** The ones the lender package opens. */
 export const LENDER_COMMITMENT_KEYS = ['price', 'lenderShare', 'lenderPayout', 'loanTerms'] as const satisfies readonly (keyof TermsCommitments)[];
 
@@ -89,10 +96,12 @@ export type Opening =
   | { format: 'EscrowOpeningV1'; kind: 'amount' | 'price' | 'lenderShare'; contractAddress?: string; amount: string; salt: string; ticker?: string }
   | { format: 'EscrowOpeningV1'; kind: 'buyerPayout' | 'sellerPayout' | 'lenderPayout'; contractAddress?: string; key: string; salt: string }
   /** v2: the loan refusal refund term. */
-  | { format: 'EscrowOpeningV1'; kind: 'loanTerms'; contractAddress?: string; refundOnLoss: boolean; salt: string };
+  | { format: 'EscrowOpeningV1'; kind: 'loanTerms'; contractAddress?: string; refundOnLoss: boolean; salt: string }
+  /** Cooling-off penalty: the rate (basis points of the price) and the amount. */
+  | { format: 'EscrowOpeningV1'; kind: 'coolingOff'; contractAddress?: string; penaltyRate: string; penalty: string; salt: string; ticker?: string };
 
 /** Opening kinds in display order. The loan ones exist only in a loan deal. */
-export const OPENING_KINDS = ['price', 'amount', 'lenderShare', 'loanTerms', 'buyerPayout', 'sellerPayout', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
+export const OPENING_KINDS = ['price', 'amount', 'lenderShare', 'loanTerms', 'coolingOff', 'buyerPayout', 'sellerPayout', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
 export const LOAN_OPENING_KINDS: readonly Opening['kind'][] = ['lenderShare', 'loanTerms', 'lenderPayout'];
 /** What the lender package can open. */
 export const LENDER_OPENING_KINDS = ['price', 'lenderShare', 'loanTerms', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
@@ -138,8 +147,18 @@ const U128_MAX = (1n << 128n) - 1n;
 
 const whole = (v: string) => /^\d+$/.test(v.trim());
 
-/** Mirrors the contract's openTerms() rules, so a package that would fail on-chain is refused here first. */
-export function validateTerms(t: WirePrivateTerms, mode?: 'attested' | 'deposited'): string | null {
+/** Basis points in 100 %. */
+export const RATE_SCALE = 10_000n;
+/** The cooling-off penalty for a rate: floor(price × rate / 10 000), exactly as the contract checks it. */
+export const penaltyOf = (price: bigint, rate: bigint): bigint => (price * rate) / RATE_SCALE;
+/** "1.5 %" from 150 basis points. */
+export const fmtRate = (bps: string | bigint): string => `${(Number(bps) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })} %`;
+
+/**
+ * Mirrors the contract's openTerms() and checkCoolingOff() rules, so a package that would fail on-chain is refused here
+ * first. `coolingOff` (when known) says whether the escrow has a cooling-off period: without one the penalty must be 0.
+ */
+export function validateTerms(t: WirePrivateTerms, mode?: 'attested' | 'deposited', coolingOff?: boolean): string | null {
   for (const [label, v] of [
     ['Price', t.price],
     ['Buyer deposit', t.amount],
@@ -168,6 +187,13 @@ export function validateTerms(t: WirePrivateTerms, mode?: 'attested' | 'deposite
     if (!isHex32(v)) return `${label} must be 64 hex characters.`;
   }
   if (typeof t.refundOnLoss !== 'boolean') return 'The loan refusal refund term must be yes or no.';
+  if (!whole(t.penaltyRate ?? '') || !whole(t.penalty ?? '')) return 'The cooling-off penalty rate and amount must be whole numbers.';
+  const rate = BigInt(t.penaltyRate), penalty = BigInt(t.penalty);
+  if (rate > RATE_SCALE) return 'The cooling-off penalty rate cannot exceed 100 %.';
+  if (penalty !== penaltyOf(price, rate)) return 'The cooling-off penalty must be the rate applied to the price, rounded down.';
+  if (penalty >= amount) return 'The cooling-off penalty must be lower than the buyer deposit.';
+  if (coolingOff === false && rate !== 0n) return 'Without a cooling-off period there is no penalty: set the rate to 0.';
+  if (!isHex32(t.coolingOffSalt ?? '')) return 'Cooling-off salt must be 64 hex characters.';
   if (norm(t.buyerPayout) === norm(t.sellerPayout)) return 'Buyer and seller payout keys must differ.';
   if (loan > 0n && (norm(t.lenderPayout) === norm(t.sellerPayout) || norm(t.lenderPayout) === norm(t.buyerPayout))) return 'The lender payout key must differ from the buyer and seller keys.';
   return null;
@@ -177,8 +203,15 @@ export const norm = (h: string): string => h.trim().toLowerCase().replace(/^0x/,
 
 export function isTermsPackage(x: unknown): x is TermsPackage {
   const p = x as TermsPackage;
-  return !!p && p.format === 'EscrowTermsV2' && typeof p.terms === 'object' && typeof p.commitments === 'object';
+  return !!p && p.format === 'EscrowTermsV2' && typeof p.terms === 'object' && typeof p.commitments === 'object' && typeof p.terms.coolingOffSalt === 'string';
 }
+
+/** A v2 package made before the cooling-off term (no 8th commitment): refused, re-issue it. */
+export function isPreCoolingOffPackage(x: unknown): boolean {
+  const p = x as TermsPackage;
+  return !!p && p.format === 'EscrowTermsV2' && typeof p.terms === 'object' && typeof p.terms.coolingOffSalt !== 'string';
+}
+export const TERMS_PRE_COOLING_OFF_MESSAGE = 'This terms package predates the cooling-off term (it has 7 commitments, the contract now has 8). Ask the admin to issue a new package.';
 
 /** A package made for a version 1 escrow: refused by this dApp with a clear message (see TERMS_V1_MESSAGE). */
 export function isV1TermsPackage(x: unknown): boolean {

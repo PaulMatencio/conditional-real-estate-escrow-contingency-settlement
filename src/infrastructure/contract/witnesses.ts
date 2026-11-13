@@ -11,6 +11,8 @@ export interface PrivateInputs {
   secondCoin?: () => { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint };
   /** v2: the lender package (lender circuits, and parties refunding the lender). */
   lenderTerms?: () => LenderTerms;
+  /** Cooling-off: the penalty coin kept back by the withdrawal refund. */
+  penaltyCoin?: () => { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint };
   kycAttestation?: () => [KycAttestation, SchnorrSignature, Uint8Array];
 }
 
@@ -30,6 +32,7 @@ export function createWitnesses(inputs: PrivateInputs): Witnesses<undefined> {
     vaultCoin: (ctx) => [ctx.privateState, (inputs.vaultCoin ?? missing('the vault coin'))()],
     secondCoin: (ctx) => [ctx.privateState, (inputs.secondCoin ?? missing('the loan or top-up coin'))()],
     lenderTerms: (ctx) => [ctx.privateState, (inputs.lenderTerms ?? missing('the lender terms'))()],
+    penaltyCoin: (ctx) => [ctx.privateState, (inputs.penaltyCoin ?? missing('the penalty coin'))()],
     kycAttestation: (ctx) => [ctx.privateState, (inputs.kycAttestation ?? missing('a KYC attestation'))()]
   };
 }

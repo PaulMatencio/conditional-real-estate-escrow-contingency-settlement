@@ -22,6 +22,7 @@ export function ModeBar() {
   const [err, setErr] = useState<string | null>(null);
   const [simLoan, setSimLoan] = useState(false);
   const [simRefund, setSimRefund] = useState(true);
+  const [simCool, setSimCool] = useState(false);
   useEffect(() => {
     if (mode === 'wallet' && contractAddress) setAddr(contractAddress);
   }, [mode, contractAddress]);
@@ -63,7 +64,7 @@ export function ModeBar() {
       ) : (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-primary" disabled={!vaultUnlocked || busy} onClick={() => void createSimulation({ loan: simLoan, refundOnLoss: simRefund })}>
+            <button type="button" className="btn-primary" disabled={!vaultUnlocked || busy} onClick={() => void createSimulation({ loan: simLoan, refundOnLoss: simRefund, coolingOff: simCool })}>
               {t('sim.create')}
             </button>
             <label className="flex items-center gap-2 text-sm">
@@ -74,6 +75,9 @@ export function ModeBar() {
                 <input type="checkbox" checked={simRefund} onChange={(e) => setSimRefund(e.target.checked)} /> {t('adminTerms.refund')}
               </label>
             )}
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={simCool} onChange={(e) => setSimCool(e.target.checked)} /> {t('sim.coolingOff')}
+            </label>
             {sim && view?.status === 'Initializing' && (
               <button type="button" className="btn-ghost" onClick={() => void simFinalize()}>
                 {t('sim.finalize')}

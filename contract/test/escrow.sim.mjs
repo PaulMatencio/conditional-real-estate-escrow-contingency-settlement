@@ -41,6 +41,7 @@ const c = new Contract({
   vaultCoin: ({ privateState }) => [privateState, VAULT_W],
   secondCoin: ({ privateState }) => [privateState, SECOND_W],
   lenderTerms: ({ privateState }) => [privateState, LTERMS_W],
+  penaltyCoin: ({ privateState }) => [privateState, PENALTY_W],
 });
 const CPK = '00'.repeat(32);
 const CADDR = rt.sampleContractAddress();
@@ -54,12 +55,15 @@ const TERMS = { amount: 1000n, amountSalt: new Uint8Array(32).fill(21), buyerPay
   sellerPayout: addr(2), sellerSalt: new Uint8Array(32).fill(23),
   // v2 cash deal: price = buyer share, no loan
   price: 1000n, priceSalt: new Uint8Array(32).fill(24), lenderShare: 0n, lenderShareSalt: new Uint8Array(32).fill(25),
-  lenderPayout: addr(4), lenderPayoutSalt: new Uint8Array(32).fill(26), refundOnLoss: true, loanTermsSalt: new Uint8Array(32).fill(27) };
+  lenderPayout: addr(4), lenderPayoutSalt: new Uint8Array(32).fill(26), refundOnLoss: true, loanTermsSalt: new Uint8Array(32).fill(27),
+  // cooling-off penalty (none by default: the term is off)
+  penaltyRate: 0n, penalty: 0n, coolingOffSalt: new Uint8Array(32).fill(28) };
 const lenderPart = (t) => ({ lenderShare: t.lenderShare, lenderShareSalt: t.lenderShareSalt, lenderPayout: t.lenderPayout,
   lenderPayoutSalt: t.lenderPayoutSalt, refundOnLoss: t.refundOnLoss, loanTermsSalt: t.loanTermsSalt });
-const financingOf = (t, mode, offerExpiry, window) => [some(mode), some(pureCircuits.priceCommitmentOf(t.price, t.priceSalt)),
+const financingOf = (t, mode, offerExpiry, window, coolingOff = 0) => [some(mode), some(pureCircuits.priceCommitmentOf(t.price, t.priceSalt)),
   some(pureCircuits.lenderShareCommitmentOf(t.lenderShare, t.lenderShareSalt)), some(pureCircuits.payoutCommitmentOf(t.lenderPayout, t.lenderPayoutSalt)),
-  some(pureCircuits.loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)), some(BigInt(offerExpiry)), some(BigInt(window))];
+  some(pureCircuits.loanTermsCommitmentOf(t.refundOnLoss, t.loanTermsSalt)), some(BigInt(offerExpiry)), some(BigInt(window)),
+  some(BigInt(coolingOff)), some(pureCircuits.coolingOffCommitmentOf(t.penaltyRate, t.penalty, t.coolingOffSalt))];
 const COMMIT = { amount: pureCircuits.amountCommitmentOf(TERMS.amount, TERMS.amountSalt),
   buyer: pureCircuits.payoutCommitmentOf(TERMS.buyerPayout, TERMS.buyerSalt),
   seller: pureCircuits.payoutCommitmentOf(TERMS.sellerPayout, TERMS.sellerSalt) };
@@ -70,6 +74,7 @@ let TERMS_W = TERMS;                       // what the caller's dApp supplies as
 let VAULT_W = { ...VAULT, mt_index: 0n };  // vault coin + Merkle index (from the indexer on a real network)
 let SECOND_W = { ...VAULT, mt_index: 1n };  // v2: second coin (loan or top-up), set per test
 let LTERMS_W = lenderPart(TERMS);           // v2: the lender package
+let PENALTY_W = null;                       // cooling-off: the penalty (change) coin, set per test
 
 const some = (v) => ({ is_some: true, value: v });
 const NONE32 = { is_some: false, value: new Uint8Array(32) };
@@ -100,6 +105,7 @@ async function deploy() {
 }
 async function call(env, who, circuit, ...args) {
   if (circuit === 'depositToEscrow' && args.length === 0) args = [VAULT];   // default: the correct vault coin
+  if (circuit === 'depositToEscrow' && args.length === 1) args = [...args, BigInt(env.time)];   // `now` = the block time
   // compact-runtime 0.21 (Compact 0.36): options object, async circuits, per-contract query contexts.
   const ctx = rt.createCircuitContext({ circuitId: circuit, contractAddress: CADDR, coinPublicKeyOrZswapState: CPK, contractState: env.state, privateState: { sk: K[who] }, time: env.time });
   const r = await c.circuits[circuit](ctx, ...args);
@@ -619,6 +625,158 @@ console.log('Disputes over the loan decision');
   e = await loanPending();
   await call(e, 'lender', 'depositLoan', LOAN_COIN, LETTER); await call(e, 'buyer', 'openDispute');
   await expectErr('an approval (deposit) cannot be voided', e, 'resolver', 'voidContingencyResult', Contingency.Financing);
+}
+TERMS_W = TERMS; LTERMS_W = lenderPart(TERMS); VAULT_W = { ...VAULT, mt_index: 0n };
+
+// =====================================================================
+// COOLING-OFF PERIOD
+// =====================================================================
+const DAY = 86_400, P = 10 * DAY;
+const COOL = { ...TERMS, penaltyRate: 150n, penalty: 15n };        // 1.5 % of 1000 = 15
+const LOAN_COOL = { ...LOAN, penaltyRate: 150n, penalty: 15n };
+const penaltyCoinOf = (t) => ({ nonce: pureCircuits.changeNonceOf(VAULT_NONCE), color: COLOR, value: t.penalty, mt_index: 1n });
+/** Configures a deal with a cooling-off period (0 = off), accepted and finalized; funded at T0 unless fund = false. */
+async function coolDeal({ terms = COOL, period = P, mode = FinancingMode.Attested, fund = true } = {}) {
+  TERMS_W = terms; LTERMS_W = lenderPart(terms);
+  const coin = { nonce: VAULT_NONCE, color: COLOR, value: terms.amount };
+  VAULT_W = { ...coin, mt_index: 0n }; SECOND_W = { ...LOAN_COIN, mt_index: 1n }; PENALTY_W = penaltyCoinOf(terms);
+  setKyc(goodAtt());
+  const f = fullTerms(); f[6] = some(pureCircuits.amountCommitmentOf(terms.amount, terms.amountSalt));
+  const e = await deployRaw(f, K.seller, true, false);
+  await call(e, 'seller', 'configureFinancing', ...financingOf(terms, mode, mode === FinancingMode.Deposited ? OE : DL, mode === FinancingMode.Deposited ? WIN : 1, period));
+  if (!fund) return e;
+  const v = L(e).configVersion;
+  await call(e, 'buyer', 'acceptConfiguration', v); await call(e, 'seller', 'acceptConfiguration', v);
+  await call(e, 'seller', 'finalizeInitialization');
+  await call(e, 'buyer', 'depositToEscrow', coin);
+  return e;
+}
+const cashCleared = async (e) => { await call(e, 'seller', 'openContingencyReview'); await clearOthers(e); await call(e, 'lender', 'submitFinancing', true, DOC.fin); };
+
+console.log('Cooling-off off (default): a buyer withdrawal forfeits the deposit');
+{
+  const e = await deploy(); await call(e, 'buyer', 'depositToEscrow');
+  check('no cooling-off end recorded', L(e).coolingOffEnd === 0n);
+  await expectErr('seller cannot use buyerWithdraw', e, 'seller', 'buyerWithdraw');
+  await expectOk('buyer withdraws', e, 'buyer', 'buyerWithdraw');
+  check('Forfeited, withdrawal recorded', st(e) === 'Forfeited' && L(e).buyerWithdrew);
+  await expectErr('no withdrawal refund after a forfeit', e, 'buyer', 'refundWithdrawal');
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  await expectOk('seller claims the forfeited deposit', e, 'seller', 'claimForfeit');
+  check('seller receives the whole deposit, closed', st(e) === 'Closed' && sameOuts(outs(e), [{ to: h(TERMS.sellerPayout.bytes), value: 1000n }]));
+}
+
+console.log('Cooling-off penalty terms are checked at acceptance');
+{
+  for (const [label, t, period, needle] of [
+    ['rounding that is not the rate applied to the price', { ...COOL, penalty: 14n }, P, 'penalty is not the rate applied to the price'],
+    ['penalty equal to the buyer deposit', { ...COOL, penaltyRate: 10000n, penalty: 1000n }, P, 'lower than the buyer deposit'],
+    ['rate above 100 %', { ...COOL, penaltyRate: 10001n, penalty: 1000n }, P, 'penalty rate above 100 %'],
+    ['a penalty with the period off', COOL, 0, 'no penalty without a cooling-off period']]) {
+    const e = await coolDeal({ terms: t, period, fund: false });
+    await expectErrMsg(label, e, 'buyer', 'acceptConfiguration', needle, L(e).configVersion);
+  }
+  const e = await coolDeal({ fund: false });
+  TERMS_W = { ...COOL, penalty: 16n };
+  await expectErrMsg('a package with another penalty', e, 'seller', 'acceptConfiguration', 'ERROR_TERMS_MISMATCH: cooling-off penalty', L(e).configVersion);
+  TERMS_W = COOL;
+  await expectOk('the committed penalty is accepted', e, 'seller', 'acceptConfiguration', L(e).configVersion);
+}
+
+console.log('Cooling-off on: withdraw inside the period, deposit minus penalty back, the seller claims the penalty');
+{
+  let e = await coolDeal();
+  check('period ends at deposit + period', L(e).coolingOffEnd === BigInt(T0 + P));
+  e.time = T0 + P - 1; await expectOk('buyer withdraws one second before the end', e, 'buyer', 'buyerWithdraw');
+  check('status Withdrawn', st(e) === 'Withdrawn' && L(e).buyerWithdrew);
+  await expectErrMsg('penalty claimed before the refund', e, 'seller', 'claimPenalty', 'Refund the buyer first');
+  await expectErr('rando refunds', e, 'rando', 'refundWithdrawal');
+  VAULT_W = { ...VAULT, value: 999n, mt_index: 0n };
+  await expectErrMsg('refund with another vault coin', e, 'seller', 'refundWithdrawal', 'ERROR_VAULT_COIN_MISMATCH');
+  VAULT_W = { ...VAULT, mt_index: 0n };
+  await expectOk('seller triggers the withdrawal refund', e, 'seller', 'refundWithdrawal');
+  check('985 to the buyer, the 15 penalty stays in the contract', sameOuts(outs(e), [{ to: h(TERMS.buyerPayout.bytes), value: 985n }, { to: 'contract', value: 15n }]) &&
+    h(e.zswap.outputs.find((o) => !o.recipient.is_left).coinInfo.nonce) === h(pureCircuits.changeNonceOf(VAULT_NONCE)));
+  check('penalty due, not closed yet', L(e).penaltyDue && !L(e).penaltyPaid && st(e) === 'Withdrawn');
+  await expectErr('refunded twice', e, 'buyer', 'refundWithdrawal');
+  await expectErrMsg('seller claims without KYC', e, 'seller', 'claimPenalty', 'ERROR_SELLER_KYC_REQUIRED');
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  await expectErr('buyer claims the penalty', e, 'buyer', 'claimPenalty');
+  PENALTY_W = { ...penaltyCoinOf(COOL), value: 16n };
+  await expectErrMsg('penalty coin with another value', e, 'seller', 'claimPenalty', 'ERROR_PENALTY_COIN_MISMATCH');
+  PENALTY_W = penaltyCoinOf(COOL);
+  await expectOk('seller claims the penalty', e, 'seller', 'claimPenalty');
+  check('15 to the seller, closed', st(e) === 'Closed' && sameOuts(outs(e), [{ to: h(TERMS.sellerPayout.bytes), value: 15n }]));
+  await expectErr('penalty claimed twice', e, 'seller', 'claimPenalty');
+
+  e = await coolDeal({ terms: { ...COOL, penaltyRate: 0n, penalty: 0n } });
+  await expectOk('withdraw with a zero penalty', e, 'buyer', 'buyerWithdraw');
+  await expectOk('refund', e, 'buyer', 'refundWithdrawal');
+  check('the whole deposit back, closed, nothing to claim', st(e) === 'Closed' && !L(e).penaltyDue && sameOuts(outs(e), [{ to: h(TERMS.buyerPayout.bytes), value: 1000n }]));
+  await expectErr('no penalty to claim', e, 'seller', 'claimPenalty');
+}
+
+console.log('Cooling-off on: after the period a withdrawal forfeits; no release before the end');
+{
+  let e = await coolDeal();
+  e.time = T0 + P; await expectOk('buyer withdraws at the end', e, 'buyer', 'buyerWithdraw');
+  check('Forfeited', st(e) === 'Forfeited');
+
+  e = await coolDeal(); await cashCleared(e);
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  check('ReadyToClose', st(e) === 'ReadyToClose');
+  e.time = T0 + P - 1; await expectErrMsg('release before the end', e, 'seller', 'releaseToSeller', 'Cooling-off period is not over');
+  await expectOk('buyer may still withdraw from ReadyToClose', { ...e }, 'buyer', 'buyerWithdraw');
+  e.time = T0 + P; await expectOk('release at the end', e, 'seller', 'releaseToSeller');
+
+  e = await coolDeal({ period: 100 * DAY });
+  check('period capped at the closing deadline', L(e).coolingOffEnd === BigInt(DL));
+}
+
+console.log('Cooling-off and failed contingencies, disputes');
+{
+  let e = await coolDeal(); await call(e, 'seller', 'openContingencyReview');
+  await call(e, 'inspector', 'submitInspection', false, DOC.insp);
+  await expectErrMsg('withdraw after a failed inspection', e, 'buyer', 'buyerWithdraw', 'cancel and get a full refund');
+  e.time = T0 + P + 1; await expectOk('after the period: cancel and refund', e, 'buyer', 'cancelAndRefund');
+  await expectOk('full refund', e, 'buyer', 'refundBuyer');
+  check('the whole deposit back', st(e) === 'Closed' && sameOuts(outs(e), [{ to: h(TERMS.buyerPayout.bytes), value: 1000n }]));
+
+  e = await coolDeal(); await call(e, 'seller', 'openContingencyReview');
+  await call(e, 'seller', 'openDispute');
+  await expectOk('inside the period the buyer withdraws from a dispute', e, 'buyer', 'buyerWithdraw');
+  check('Withdrawn', st(e) === 'Withdrawn');
+  e = await coolDeal(); await call(e, 'seller', 'openContingencyReview');
+  await call(e, 'seller', 'openDispute'); e.time = T0 + P;
+  await expectErrMsg('after the period a dispute blocks the withdrawal', e, 'buyer', 'buyerWithdraw', 'Buyer cannot withdraw in current state');
+}
+
+console.log('Cooling-off with a loan or a top-up held');
+{
+  let e = await coolDeal({ terms: LOAN_COOL, mode: FinancingMode.Deposited });
+  await call(e, 'seller', 'openContingencyReview');
+  await call(e, 'lender', 'depositLoan', LOAN_COIN, LETTER);
+  await expectOk('buyer withdraws inside the period, loan held', e, 'buyer', 'buyerWithdraw');
+  await expectOk('loan back to the lender', e, 'lender', 'refundLender');
+  check('400 to the lender', sameOuts(outs(e), [{ to: h(LOAN.lenderPayout.bytes), value: 400n }]));
+  await call(e, 'buyer', 'refundWithdrawal');
+  check('585 to the buyer, 15 kept', sameOuts(outs(e), [{ to: h(LOAN.buyerPayout.bytes), value: 585n }, { to: 'contract', value: 15n }]));
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  await expectOk('seller claims the penalty', e, 'seller', 'claimPenalty');
+  check('closed once all three coins are paid', st(e) === 'Closed');
+
+  e = await coolDeal({ terms: LOAN_COOL, mode: FinancingMode.Deposited });
+  await call(e, 'seller', 'openContingencyReview');
+  SECOND_W = { ...TOPUP_COIN, mt_index: 1n };
+  await call(e, 'buyer', 'depositTopUp', TOPUP_COIN);
+  e.time = T0 + P; await expectOk('buyer withdraws after the period, top-up held', e, 'buyer', 'buyerWithdraw');
+  check('Forfeited', st(e) === 'Forfeited');
+  await expectOk('top-up back to the buyer', e, 'seller', 'refundTopUp');
+  check('400 to the buyer', sameOuts(outs(e), [{ to: h(LOAN.buyerPayout.bytes), value: 400n }]));
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  await expectOk('seller claims the forfeited deposit', e, 'seller', 'claimForfeit');
+  check('600 to the seller, closed', st(e) === 'Closed' && sameOuts(outs(e), [{ to: h(LOAN.sellerPayout.bytes), value: 600n }]));
+  SECOND_W = { ...LOAN_COIN, mt_index: 1n };
 }
 TERMS_W = TERMS; LTERMS_W = lenderPart(TERMS); VAULT_W = { ...VAULT, mt_index: 0n };
 

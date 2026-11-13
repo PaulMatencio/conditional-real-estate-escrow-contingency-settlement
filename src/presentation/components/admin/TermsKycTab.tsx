@@ -8,7 +8,7 @@ import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { isHex32, shortHex } from '@/domain/hex';
 import { isEnvelope, isSealedJson, openEnvelope, openWithPassphrase, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
-import { COMMITMENT_KEYS, TERMS_V1_MESSAGE, isTermsPackage, isV1TermsPackage, type TermsPackage } from '@/domain/terms';
+import { COMMITMENT_KEYS, TERMS_PRE_COOLING_OFF_MESSAGE, TERMS_V1_MESSAGE, fmtRate, isPreCoolingOffPackage, isTermsPackage, isV1TermsPackage, penaltyOf, type TermsPackage } from '@/domain/terms';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useApp } from '../../providers/AppProvider';
@@ -31,7 +31,7 @@ export function TermsKycTab() {
   const app = useApp();
   const esc = useEscrow();
   const [view, setView] = useState<EscrowView | null>(null);
-  const [form, setForm] = useState({ price: '', deposit: '', buyer: '', seller: '', lender: '', refund: true });
+  const [form, setForm] = useState({ price: '', deposit: '', buyer: '', seller: '', lender: '', refund: true, rate: '0' });
   const [recip, setRecip] = useState<Record<Recipient, string>>({ buyer: '', seller: '', resolver: '', custodian: '', lender: '' });
   const [pass, setPass] = useState('');
   const [restorePass, setRestorePass] = useState('');
@@ -78,9 +78,26 @@ export function TermsKycTab() {
     return BigInt(form.price.trim()) - BigInt(form.deposit.trim());
   })();
 
+  // Cooling-off: the period is public (Financing card); the penalty, a rate of the price, is a private term.
+  const coolingOff = view?.coolingOff.period ?? null;
+  const coolOn = !!coolingOff && coolingOff > 0n;
+  /** "1.5" (%) → "150" (basis points); null when not a number with at most two decimals. */
+  const rateBps = (() => {
+    const v = form.rate.trim().replace(',', '.');
+    if (!/^\d+(\.\d{1,2})?$/.test(v)) return null;
+    const [i, d = ''] = v.split('.');
+    return (BigInt(i) * 100n + BigInt((d + '00').slice(0, 2))).toString();
+  })();
+  const penaltyPreview = (() => {
+    if (!coolOn || rateBps === null || !/^\d+$/.test(form.price.trim())) return null;
+    return penaltyOf(BigInt(form.price.trim()), BigInt(rateBps));
+  })();
+
   const generate = async () => {
     try {
       if (!mode) throw new Error(t('adminTerms.needMode'));
+      if (coolingOff === null) throw new Error(t('cool.needFinancing'));
+      if (coolOn && rateBps === null) throw new Error(t('cool.badRate'));
       const p = createTermsPackage(termsCrypto, {
         price: form.price,
         buyerDeposit: loanMode ? form.deposit : form.price,
@@ -88,6 +105,8 @@ export function TermsKycTab() {
         sellerPayout: form.seller,
         lenderPayout: loanMode ? form.lender : undefined,
         refundOnLoss: loanMode ? form.refund : true,
+        penaltyRate: coolOn ? rateBps! : '0',
+        coolingOff: coolOn,
         mode: loanMode ? 'deposited' : 'attested',
         contractAddress: addr,
         escrowColor: view?.escrowColor,
@@ -120,6 +139,7 @@ export function TermsKycTab() {
         p = await openWithPassphrase(raw, restorePass);
       }
       if (isV1TermsPackage(p)) throw new Error(TERMS_V1_MESSAGE);
+      if (isPreCoolingOffPackage(p)) throw new Error(TERMS_PRE_COOLING_OFF_MESSAGE);
       if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
       if (p.contractAddress && p.contractAddress !== addr) throw new Error(t('terms.otherContract'));
       const bound: TermsPackage = { ...p, contractAddress: addr, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };
@@ -137,14 +157,15 @@ export function TermsKycTab() {
   };
   const committedButMissing = !pkg && !!view?.commitments.amount;
 
-  /** The seven commitments go on-chain in two transactions: configure (3) and configureFinancing (4). */
+  /** The eight commitments go on-chain in two transactions: configure (3) and configureFinancing (5). */
   const commit = async (p: TermsPackage) => {
     await app.configure({ amountCommitment: p.commitments.amount, buyerPayoutCommitment: p.commitments.buyerPayout, sellerPayoutCommitment: p.commitments.sellerPayout });
     await app.configureFinancing({
       priceCommitment: p.commitments.price,
       lenderShareCommitment: p.commitments.lenderShare,
       lenderPayoutCommitment: p.commitments.lenderPayout,
-      loanTermsCommitment: p.commitments.loanTerms
+      loanTermsCommitment: p.commitments.loanTerms,
+      coolingOffCommitment: p.commitments.coolingOff
     });
     await reload();
   };
@@ -213,6 +234,22 @@ export function TermsKycTab() {
             </Field>
           )}
         </div>
+        {coolOn && (
+          <div className="grid gap-x-4 sm:grid-cols-3">
+            <Field label={t('cool.rateField')} hint={t('cool.rateHint')} htmlFor="t-rate">
+              <input id="t-rate" className="input" inputMode="decimal" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} />
+            </Field>
+            <Field label={`${t('cool.penalty')} (${view?.escrowTicker ?? ''})`} hint={t('cool.penaltyFieldHint')}>
+              <p
+                className={`input !border-transparent ${penaltyPreview !== null && /^\d+$/.test((loanMode ? form.deposit : form.price).trim()) && penaltyPreview >= BigInt((loanMode ? form.deposit : form.price).trim()) ? 'text-bad' : ''}`}
+                aria-live="polite"
+              >
+                {penaltyPreview === null ? '—' : penaltyPreview.toString()}
+              </p>
+            </Field>
+          </div>
+        )}
+        {coolingOff === 0n && <p className="mb-3 text-xs text-slate-500">{t('cool.offHint')}</p>}
         {loanMode && (
           <label className="mb-3 flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" checked={form.refund} onChange={(e) => setForm({ ...form, refund: e.target.checked })} />
@@ -241,6 +278,12 @@ export function TermsKycTab() {
             <p className="text-slate-300">
               {t('adminTerms.price')}: <strong>{pkg.terms.price}</strong> · {t('adminTerms.deposit')}: <strong>{pkg.terms.amount}</strong> · {t('adminTerms.loan')}: <strong>{pkg.terms.lenderShare}</strong>
               {BigInt(pkg.terms.lenderShare) > 0n && <> · {t(pkg.terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</>}
+              {BigInt(pkg.terms.penaltyRate) > 0n && (
+                <>
+                  {' '}
+                  · {t('cool.penalty')}: <strong>{pkg.terms.penalty}</strong> ({fmtRate(pkg.terms.penaltyRate)})
+                </>
+              )}
             </p>
             {COMMITMENT_KEYS.map((k) => (
               <div key={k} className="flex flex-wrap items-center gap-2">

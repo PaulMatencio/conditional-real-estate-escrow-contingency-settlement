@@ -6,7 +6,7 @@ import { buildCertificate, lockedFundsStatement } from '@/application/notaryServ
 import { openingLabel, verifyOpening } from '@/application/termsService';
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
-import { isAttestationBundle, type Opening } from '@/domain/terms';
+import { fmtRate, isAttestationBundle, type Opening } from '@/domain/terms';
 import { shortHex } from '@/domain/hex';
 import { networkConfig } from '@/infrastructure/config/network';
 import { documentCommitment } from '@/infrastructure/crypto/escrowCrypto';
@@ -128,6 +128,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                   return o && 'amount' in o ? o.amount : null;
                 };
                 const terms = openings.find((o) => o.kind === 'loanTerms');
+                const cool = openings.find((o) => o.kind === 'coolingOff');
                 const lines: [MessageKey, string | null][] = [
                   ['notary.priceVerified', amountOf('price')],
                   ['notary.depositVerified', amountOf('amount')],
@@ -137,6 +138,12 @@ export function NotaryPortal({ address }: { address?: string }) {
                   <>
                     <Alert tone={l.locked ? 'ok' : 'warn'}>{l.statement}</Alert>
                     {lines.map(([k, v]) => v !== null && <Alert key={k} tone="ok">{t(k)}: {v} {view.escrowTicker}</Alert>)}
+                    {cool && cool.kind === 'coolingOff' && (
+                      <Alert tone="ok">
+                        {t('notary.coolingOffVerified')}: {BigInt(cool.penaltyRate) === 0n ? t('cool.noPenaltyShort') : `${fmtRate(cool.penaltyRate)} = ${cool.penalty} ${view.escrowTicker}`}
+                        {view.coolingOff.period > 0n && ` · ${Number(view.coolingOff.period / 86_400n)} ${t('financing.days')}`}
+                      </Alert>
+                    )}
                     {terms && terms.kind === 'loanTerms' && <Alert tone="ok">{t('notary.refundVerified')}: {t(terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</Alert>}
                   </>
                 );
