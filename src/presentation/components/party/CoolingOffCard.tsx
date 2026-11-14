@@ -8,6 +8,7 @@ import { fmtRate } from '@/domain/terms';
 import { withdrawalCoinsOf } from '@/infrastructure/crypto/escrowCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
+import { useAmount } from '../useAmount';
 import { Alert, Card, Field, Mono, Spinner, Stat } from '../ui';
 import { ConfirmDialog, Countdown, fmtTime } from './helpers';
 
@@ -29,8 +30,9 @@ function ActionButton({ circuit, acts, danger, onClick, busy, label }: { circuit
 }
 
 /** A payout coin the recipient imports into its wallet. */
-function CoinBox({ label, coin, to, ticker }: { label: string; coin: { nonce: string; color: string; value: string }; to: string; ticker: string }) {
+function CoinBox({ label, coin, to }: { label: string; coin: { nonce: string; color: string; value: string }; to: string }) {
   const { t } = useT();
+  const { fmt } = useAmount();
   return (
     <div className="rounded-xl border border-midnight-700 p-3 text-sm">
       <p className="mb-1 font-medium text-slate-200">{label}</p>
@@ -38,7 +40,7 @@ function CoinBox({ label, coin, to, ticker }: { label: string; coin: { nonce: st
         <Mono value={coin.nonce} />
       </Field>
       <p className="text-slate-300">
-        color <span className="mono">{shortHex(coin.color)}</span> · value {coin.value} {ticker} · {t('settle.to')} <span className="mono">{shortHex(to)}</span>
+        color <span className="mono">{shortHex(coin.color)}</span> · {fmt(coin.value)} · {t('settle.to')} <span className="mono">{shortHex(to)}</span>
       </p>
     </div>
   );
@@ -52,17 +54,17 @@ function CoinBox({ label, coin, to, ticker }: { label: string; coin: { nonce: st
 export function WithdrawCard() {
   const { t } = useT();
   const { view, now, record, run, busy } = useEscrow();
+  const { fmt } = useAmount();
   const [pending, setPending] = useState<'buyerWithdraw' | 'refundWithdrawal' | null>(null);
   if (!view || !(LIVE.includes(view.status) || view.status === 'Withdrawn')) return null;
   const pkg = record.terms;
   const c = view.coolingOff;
-  const ticker = view.escrowTicker;
   const inside = insideCoolingOff(view, now);
   const deposit = pkg ? BigInt(pkg.terms.amount) : null;
   const penalty = pkg ? BigInt(pkg.terms.penalty) : null;
   const material = { terms: !!pkg, kycAttestation: false, vaultCoin: true };
   const acts = Object.fromEntries(availableActions(view, 'buyer', now, material).map((a) => [a.circuit, a])) as Acts;
-  const amt = (v: bigint | null) => (v === null ? '—' : `${v} ${ticker}`);
+  const amt = (v: bigint | null) => (v === null ? '—' : fmt(v));
 
   if (view.status === 'Withdrawn') {
     const coins = pkg?.contractAddress ? withdrawalCoinsOf(pkg.contractAddress, view.escrowColor, pkg.terms) : null;
@@ -74,7 +76,7 @@ export function WithdrawCard() {
           <Stat label={t('cool.penalty')} value={amt(penalty)} sub={pkg ? fmtRate(pkg.terms.penaltyRate) : undefined} />
         </div>
         {view.financing.buyerCoinPaid ? (
-          coins && <CoinBox label={t('cool.refundCoin')} coin={coins.buyerRefund} to={pkg!.terms.buyerPayout} ticker={ticker} />
+          coins && <CoinBox label={t('cool.refundCoin')} coin={coins.buyerRefund} to={pkg!.terms.buyerPayout} />
         ) : (
           <ActionButton circuit="refundWithdrawal" acts={acts} busy={busy} onClick={() => setPending('refundWithdrawal')} />
         )}
@@ -140,14 +142,14 @@ export function WithdrawCard() {
 export function PenaltyCard() {
   const { t } = useT();
   const { view, now, record, run, busy } = useEscrow();
+  const { fmt } = useAmount();
   const [pending, setPending] = useState<'claimPenalty' | null>(null);
   if (!view || view.coolingOff.period === 0n) return null;
   const pkg = record.terms;
   const c = view.coolingOff;
-  const ticker = view.escrowTicker;
   const inside = insideCoolingOff(view, now);
   const penalty = pkg ? BigInt(pkg.terms.penalty) : null;
-  const amt = (v: bigint | null) => (v === null ? '—' : `${v} ${ticker}`);
+  const amt = (v: bigint | null) => (v === null ? '—' : fmt(v));
 
   if (view.status !== 'Withdrawn') {
     if (!LIVE.includes(view.status) || !inside) return null;
@@ -181,7 +183,7 @@ export function PenaltyCard() {
       ) : !c.penaltyDue ? (
         <Alert tone="ok">{t('cool.noPenalty')}</Alert>
       ) : c.penaltyPaid ? (
-        coins?.sellerPenalty && <CoinBox label={t('cool.penaltyCoin')} coin={coins.sellerPenalty} to={pkg!.terms.sellerPayout} ticker={ticker} />
+        coins?.sellerPenalty && <CoinBox label={t('cool.penaltyCoin')} coin={coins.sellerPenalty} to={pkg!.terms.sellerPayout} />
       ) : (
         <div className="flex flex-wrap gap-3">
           {!kycOk && <ActionButton circuit="submitSellerKyc" acts={acts} busy={busy} onClick={() => void run('seller', 'submitSellerKyc', [] as never)} />}

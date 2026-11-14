@@ -126,6 +126,39 @@ Each amount has its own commitment, so the notary verifies them separately: **to
 - **Released**: the seller receives two coins, the buyer deposit and the loan (or top-up).
 - **Refunded / Expired**: each coin goes back to whoever deposited it: buyer deposit and top-up to the buyer, loan to the lender. Each coin is paid back in its own transaction: Refund buyer (the deposit), Refund the top-up (if the buyer topped up) and Refund the lender (the loan). The escrow closes once every held coin is paid.
 
+## Cooling-off period
+
+An optional **cooling-off period** lets the buyer walk away for any reason for a few days after the deposit, paying at most a penalty to the seller. It is **off by default** and works for cash and loan deals alike.
+
+### Admin: setting it up
+
+1. **Initialize** tab → *Financing* card → **Cooling-off period (days)**: 0 = off. The period is public, and both parties accept it with the rest of the configuration. Apply this card before generating the terms.
+2. **Terms & KYC** tab → **Cooling-off penalty (% of the price)**, shown only when the period is above 0. The penalty is the rate applied to the price, rounded down, and must stay lower than the buyer deposit (the field turns red otherwise). 0 % means no penalty. It is private: only a commitment goes on-chain, as the 8th commitment.
+3. Parties now need their terms package imported **before** they accept the configuration. Accepting proves the package opens the deposit, price and penalty commitments.
+
+### Buyer: withdrawing
+
+The *Withdraw from the purchase* card shows the end of the period, the penalty and what you would get back.
+
+- **Inside the period**: **Withdraw from the purchase** sets the status to **Withdrawn**. Then **Refund the withdrawal** pays your deposit minus the penalty to your committed key; the seller can trigger it too. The card shows the refund coin to import.
+- **After the period, or with no period**: withdrawing sets **Forfeited**, and the seller can claim your whole deposit. The card warns you in red before you confirm.
+- **A failed contingency** (inspection, title, or a lost loan with the refund term on) always gives a full refund through *Cancel and refund*, never a penalty. The withdraw button is blocked in that case.
+- Inside the period you can also withdraw from a *Disputed* escrow. After the period, a dispute blocks the withdrawal.
+- A loan or top-up already deposited goes back to whoever deposited it: *Refund the lender* and *Refund the top-up*.
+
+### Seller: the penalty, and no release before the end
+
+- While the period runs, the seller page shows when it ends. **No release is possible before then**, even with every contingency cleared.
+- After a withdrawal inside the period, the *Cooling-off penalty* card asks for the buyer's refund first (either of you can run it), then **Claim the cooling-off penalty**. Claiming needs your usable seller KYC, as for a release. With a 0 % penalty there is nothing to claim.
+
+### Notary
+
+The penalty has its own opening, **Export cooling-off penalty opening**. A verified opening shows as, for example, "Cooling-off penalty verified: 1.5 % = 3,750 EURe". The certificate has a cooling-off section: days, end date, whether the buyer withdrew, the penalty (or *undisclosed* without an opening), and whether it has been paid.
+
+### Simulator
+
+Tick **Cooling-off period (10 days, 1.5 %)** before **Create simulation** to try it, and move the clock with the simulator time controls.
+
 ## Admin guide
 
 The admin sets the escrow up and then steps away: once **Finalize initialization** succeeds, the admin has no power over the funds. Work through the admin console's tabs in this order.
@@ -219,6 +252,22 @@ Your vault now holds keys you cannot get back from anyone else. Open **Vault bac
 ### Before depositing: get your KYC attestation
 
 *Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored in your vault and pre-checked at once: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**.
+
+### Making the deposit
+
+The deposit is one button, **Deposit into escrow** in the *Actions* card. It stays disabled, with the reason shown next to it, until every point below is met (buyer page, Wallet Mode):
+
+1. **Escrow finalized**: the status shows *Created*.
+2. **Contract immutable**: the admin has renounced the maintenance authority. While it is still active the deposit is blocked on purpose.
+3. **Vault unlocked and buyer role key loaded** (*Role key* card).
+4. **Terms package imported**: the *Terms* panel shows **match** for all eight commitments. The deposit coin is built from these terms.
+5. **Buyer KYC imported**: *Buyer KYC* card → **Request attestation** (test persona `buyer-clean`) → **Import**. It must come from a CASP the admin whitelisted before finalizing.
+6. **Funds in the wallet**: a shielded balance of at least the deposit in the escrow's token. The *Funding & vault* card shows the balance and any shortfall (250,000 for T01). Network fees are paid separately in DUST.
+7. **Local proof server running**: the proof is generated on your machine only.
+
+Then **Deposit into escrow** → confirm. The wallet signs, the proof runs locally, and once the transaction is confirmed the status becomes *Funded* and the vault-coin index is recorded automatically. With a cooling-off period, the period starts at this deposit.
+
+**Your wallet key and the committed payout key.** The *Funding & vault* card shows the connected wallet's shielded coin key and compares it with the buyer payout key committed in the terms. If they match, refunds come back to this wallet. If they differ, a warning appears: the deposit still works, but any refund goes to the committed key, not to this wallet. If that is not a wallet you control, ask the admin to correct the terms **before** depositing; after the deposit they cannot be changed.
 
 ### When the status is Created: deposit
 

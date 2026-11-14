@@ -17,6 +17,8 @@ export type MetaNetwork = 'preview' | 'preprod' | 'simulator' | string;
 /** Stored on each vault record (VaultRecord.meta). */
 export interface EscrowMeta extends WireMeta {
   network?: MetaNetwork;
+  /** Token decimals chosen at deploy (amounts are shown in whole tokens). */
+  decimals?: number;
   /** First seen in this vault (ms). */
   createdAt: number;
   source: MetaSource;

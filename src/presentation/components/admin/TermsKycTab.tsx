@@ -12,6 +12,8 @@ import { COMMITMENT_KEYS, TERMS_PRE_COOLING_OFF_MESSAGE, TERMS_V1_MESSAGE, fmtRa
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { wireMetaOf } from '@/domain/escrowMeta';
+import { sharedVault } from '@/infrastructure/storage/vaultInstance';
+import { decimalsOf, formatAmount, parseAmount } from '@/domain/amount';
 import { useApp } from '../../providers/AppProvider';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
@@ -74,10 +76,15 @@ export function TermsKycTab() {
 
   const mode = view?.financing.mode ?? null;
   const loanMode = mode === 'Deposited';
+  // Amounts are typed in whole tokens and committed in base units (decimals chosen at deploy, default 6).
+  const decimals = decimalsOf(esc.record.meta?.decimals, esc.record.terms?.escrowDecimals);
+  const fmt = (v: bigint | string) => formatAmount(v, decimals);
+  const priceBase = parseAmount(form.price, decimals);
+  const depositBase = loanMode ? parseAmount(form.deposit, decimals) : priceBase;
   const loanAmount = (() => {
     if (!loanMode) return null;
-    if (!/^\d+$/.test(form.price.trim()) || !/^\d+$/.test(form.deposit.trim())) return null;
-    return BigInt(form.price.trim()) - BigInt(form.deposit.trim());
+    if (priceBase === null || depositBase === null) return null;
+    return priceBase - depositBase;
   })();
 
   // Cooling-off: the period is public (Financing card); the penalty, a rate of the price, is a private term.
@@ -91,18 +98,22 @@ export function TermsKycTab() {
     return (BigInt(i) * 100n + BigInt((d + '00').slice(0, 2))).toString();
   })();
   const penaltyPreview = (() => {
-    if (!coolOn || rateBps === null || !/^\d+$/.test(form.price.trim())) return null;
-    return penaltyOf(BigInt(form.price.trim()), BigInt(rateBps));
+    if (!coolOn || rateBps === null || priceBase === null) return null;
+    return penaltyOf(priceBase, BigInt(rateBps));
   })();
+
+  /** The escrow's name as saved in the vault (not the possibly older copy held in memory). */
+  const currentName = async () => (addr && esc.vaultUnlocked ? wireMetaOf((await sharedVault().load(addr)).meta) : wireMetaOf(esc.record.meta));
 
   const generate = async () => {
     try {
       if (!mode) throw new Error(t('adminTerms.needMode'));
       if (coolingOff === null) throw new Error(t('cool.needFinancing'));
       if (coolOn && rateBps === null) throw new Error(t('cool.badRate'));
+      if (priceBase === null || depositBase === null) throw new Error(t('amount.bad').replace('{decimals}', String(decimals)));
       const p = createTermsPackage(termsCrypto, {
-        price: form.price,
-        buyerDeposit: loanMode ? form.deposit : form.price,
+        price: priceBase.toString(),
+        buyerDeposit: depositBase.toString(),
         buyerPayout: form.buyer,
         sellerPayout: form.seller,
         lenderPayout: loanMode ? form.lender : undefined,
@@ -112,10 +123,12 @@ export function TermsKycTab() {
         mode: loanMode ? 'deposited' : 'attested',
         contractAddress: addr,
         escrowColor: view?.escrowColor,
-        escrowTicker: view?.escrowTicker
+        escrowTicker: view?.escrowTicker,
+        escrowDecimals: decimals
       });
       // The deployment's name travels with the package (encrypted), so every party's vault shows the same label.
-      const meta = wireMetaOf(esc.record.meta);
+      // Read from the vault itself, so a name saved a moment ago (right after the deploy) is never missed.
+      const meta = await currentName();
       await esc.updateRecord((r) => ({ ...r, terms: meta ? { ...p, meta } : p }));
       setMsg({ tone: 'ok', text: t('adminTerms.generated') });
     } catch (e) {
@@ -177,11 +190,11 @@ export function TermsKycTab() {
   /** Recipients this escrow needs: the lender only in a loan deal (and it gets the lender package, not the full terms). */
   const recipients = RECIPIENTS.filter((r) => r !== 'lender' || loanMode);
   /** Each copy carries the escrow's current name (a rename after generating the package is picked up here). */
-  const named = (p: TermsPackage): TermsPackage => {
-    const meta = wireMetaOf(esc.record.meta);
+  const named = async (p: TermsPackage): Promise<TermsPackage> => {
+    const meta = await currentName();
     return meta ? { ...p, meta } : p;
   };
-  const sealFor = (r: Recipient, p: TermsPackage) => (r === 'lender' ? sealTo(lenderPackageOf(named(p)), recip[r].trim(), r) : sealTo(named(p), recip[r].trim(), r));
+  const sealFor = async (r: Recipient, p: TermsPackage) => (r === 'lender' ? sealTo(lenderPackageOf(await named(p)), recip[r].trim(), r) : sealTo(await named(p), recip[r].trim(), r));
 
   return (
     <div className="space-y-4">
@@ -216,16 +229,16 @@ export function TermsKycTab() {
         <PresetButton onApply={(v) => setForm((f) => ({ ...f, price: v.price, deposit: v.deposit, refund: v.refundOnLoss, rate: v.penaltyPct }))} />
         <div className="grid gap-x-4 sm:grid-cols-3">
           <Field label={`${t('adminTerms.price')} (${view?.escrowTicker ?? ''})`} hint={t(loanMode ? 'adminTerms.priceHint' : 'adminTerms.priceCashHint')} htmlFor="t-price">
-            <input id="t-price" className="input" inputMode="numeric" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+            <input id="t-price" className="input" inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
           </Field>
           {loanMode && (
             <>
               <Field label={`${t('adminTerms.deposit')} (${view?.escrowTicker ?? ''})`} hint={t('adminTerms.depositHint')} htmlFor="t-deposit">
-                <input id="t-deposit" className="input" inputMode="numeric" value={form.deposit} onChange={(e) => setForm({ ...form, deposit: e.target.value })} />
+                <input id="t-deposit" className="input" inputMode="decimal" value={form.deposit} onChange={(e) => setForm({ ...form, deposit: e.target.value })} />
               </Field>
               <Field label={`${t('adminTerms.loan')} (${view?.escrowTicker ?? ''})`} hint={t('adminTerms.loanHint')}>
                 <p className={`input !border-transparent ${loanAmount !== null && loanAmount <= 0n ? 'text-bad' : ''}`} aria-live="polite">
-                  {loanAmount === null ? '—' : loanAmount.toString()}
+                  {loanAmount === null ? '—' : fmt(loanAmount)}
                 </p>
               </Field>
             </>
@@ -251,10 +264,10 @@ export function TermsKycTab() {
             </Field>
             <Field label={`${t('cool.penalty')} (${view?.escrowTicker ?? ''})`} hint={t('cool.penaltyFieldHint')}>
               <p
-                className={`input !border-transparent ${penaltyPreview !== null && /^\d+$/.test((loanMode ? form.deposit : form.price).trim()) && penaltyPreview >= BigInt((loanMode ? form.deposit : form.price).trim()) ? 'text-bad' : ''}`}
+                className={`input !border-transparent ${penaltyPreview !== null && depositBase !== null && penaltyPreview >= depositBase ? 'text-bad' : ''}`}
                 aria-live="polite"
               >
-                {penaltyPreview === null ? '—' : penaltyPreview.toString()}
+                {penaltyPreview === null ? '—' : fmt(penaltyPreview)}
               </p>
             </Field>
           </div>
@@ -286,12 +299,12 @@ export function TermsKycTab() {
         {pkg && (
           <div className="mt-3 space-y-1 text-sm">
             <p className="text-slate-300">
-              {t('adminTerms.price')}: <strong>{pkg.terms.price}</strong> · {t('adminTerms.deposit')}: <strong>{pkg.terms.amount}</strong> · {t('adminTerms.loan')}: <strong>{pkg.terms.lenderShare}</strong>
+              {t('adminTerms.price')}: <strong>{fmt(pkg.terms.price)}</strong> · {t('adminTerms.deposit')}: <strong>{fmt(pkg.terms.amount)}</strong> · {t('adminTerms.loan')}: <strong>{fmt(pkg.terms.lenderShare)}</strong> {view?.escrowTicker}
               {BigInt(pkg.terms.lenderShare) > 0n && <> · {t(pkg.terms.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</>}
               {BigInt(pkg.terms.penaltyRate) > 0n && (
                 <>
                   {' '}
-                  · {t('cool.penalty')}: <strong>{pkg.terms.penalty}</strong> ({fmtRate(pkg.terms.penaltyRate)})
+                  · {t('cool.penalty')}: <strong>{fmt(pkg.terms.penalty)}</strong> ({fmtRate(pkg.terms.penaltyRate)})
                 </>
               )}
             </p>
@@ -339,7 +352,7 @@ export function TermsKycTab() {
               className="btn-ghost"
               disabled={pass.length < 8}
               onClick={() =>
-                void sealWithPassphrase(named(pkg), pass).then(async (s) => {
+                void named(pkg).then((n) => sealWithPassphrase(n, pass)).then(async (s) => {
                   downloadJson(`terms-backup-${addr.slice(0, 8)}.json`, s);
                   await esc.updateRecord((x) => ({ ...x, backups: [...(x.backups ?? []), { at: Date.now(), kind: 'file' }] }));
                 })

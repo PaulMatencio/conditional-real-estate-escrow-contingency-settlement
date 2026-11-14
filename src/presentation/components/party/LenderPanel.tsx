@@ -9,6 +9,7 @@ import { documentCommitment, loanCoinOf, newSalt, payoutOfCoin } from '@/infrast
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
+import { useAmount } from '../useAmount';
 import { Alert, Badge, Card, Field, Mono, Spinner, Stat } from '../ui';
 import { ConfirmDialog, Countdown, FilePick, TypedConfirmDialog, downloadJson, fmtTime, readFileBytes, readJsonFile } from './helpers';
 import { OpeningButtons } from '../OpeningButtons';
@@ -21,6 +22,7 @@ import { OpeningButtons } from '../OpeningButtons';
 export function LenderTermsCard() {
   const { t } = useT();
   const { record, updateRecord, view, identity, identities, contractAddress } = useEscrow();
+  const { fmt } = useAmount();
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
   const [pass, setPass] = useState('');
   const [remove, setRemove] = useState(false);
@@ -82,8 +84,8 @@ export function LenderTermsCard() {
       ) : (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Stat label={t('adminTerms.price')} value={`${pkg.price} ${view?.escrowTicker ?? pkg.escrowTicker ?? ''}`} />
-            <Stat label={t('adminTerms.loan')} value={`${pkg.lenderShare} ${view?.escrowTicker ?? pkg.escrowTicker ?? ''}`} sub={t('lender.youDeposit')} />
+            <Stat label={t('adminTerms.price')} value={fmt(pkg.price)} />
+            <Stat label={t('adminTerms.loan')} value={fmt(pkg.lenderShare)} sub={t('lender.youDeposit')} />
             <Stat label={t('lender.refundTerm')} value={<span className="text-sm">{t(pkg.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo')}</span>} />
           </div>
           {view && view.financing.mode === 'Deposited' && (
@@ -135,6 +137,7 @@ type LoanAction = 'depositLoan' | 'declineLoan' | 'withdrawLoan' | 'refundLender
 export function LoanCard() {
   const { t } = useT();
   const { view, now, record, run, busy, gateway, mode, updateRecord } = useEscrow();
+  const { fmt } = useAmount();
   const [doc, setDoc] = useState<{ name: string; salt: string; hash: string } | null>(null);
   const [pending, setPending] = useState<LoanAction | null>(null);
   const [balance, setBalance] = useState<bigint | null | undefined>(undefined);
@@ -147,7 +150,6 @@ export function LoanCard() {
 
   if (!view || view.financing.mode !== 'Deposited') return null;
   const f = view.financing;
-  const ticker = view.escrowTicker;
   const material = { terms: !!record.terms, kycAttestation: false, vaultCoin: true, lenderTerms: !!pkg, secondCoin: true };
   const actions = Object.fromEntries(availableActions(view, 'lender', now, material).map((a) => [a.circuit, a])) as Partial<Record<PartyCircuit, { enabled: boolean; reason: string | null }>>;
   const need = pkg ? BigInt(pkg.lenderShare) : null;
@@ -199,11 +201,11 @@ export function LoanCard() {
         <Alert tone={status.tone}>{status.text}</Alert>
       </div>
       <div className="mb-3 grid gap-3 sm:grid-cols-3">
-        <Stat label={t('adminTerms.loan')} value={need === null ? '—' : `${need} ${ticker}`} />
+        <Stat label={t('adminTerms.loan')} value={need === null ? '—' : fmt(need)} />
         <Stat
           label={t('fund.balance')}
-          value={balance === undefined ? '…' : balance === null ? '—' : `${balance} ${ticker}`}
-          sub={need !== null && balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${need - balance}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
+          value={balance === undefined ? '…' : balance === null ? '—' : fmt(balance)}
+          sub={need !== null && balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${fmt(need - balance)}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
         />
         {f.loanHeld && !f.secondCoinPaid && view.status === 'ContingenciesPending' ? (
           now < f.loanOfferExpiry ? <Countdown to={f.loanOfferExpiry} now={now} label={t('lender.withdrawFrom')} /> : <Stat label={t('lender.withdrawFrom')} value={<span className="text-sm">{t('lender.withdrawOpen')}</span>} />
@@ -245,7 +247,7 @@ export function LoanCard() {
                   <Mono value={coin.nonce} />
                 </Field>
                 <p className="text-slate-300">
-                  value {coin.value} {ticker} · {t('settle.to')} <span className="mono">{pkg.lenderPayout.slice(0, 12)}…</span>
+                  {fmt(coin.value)} · {t('settle.to')} <span className="mono">{pkg.lenderPayout.slice(0, 12)}…</span>
                 </p>
                 <button type="button" className="btn-ghost" onClick={() => downloadJson('loan-repayment-coin.json', { ...coin, recipient: pkg.lenderPayout, contractAddress: view.contractAddress })}>
                   {t('settle.exportCoin')}
@@ -259,7 +261,7 @@ export function LoanCard() {
       {pending && (
         <ConfirmDialog
           title={t(`circuit.${pending}` as MessageKey)}
-          body={t(`lender.confirm.${pending}` as MessageKey).replace('{amount}', need === null ? '' : `${need} ${ticker}`).replace('{term}', t(pkg?.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo'))}
+          body={t(`lender.confirm.${pending}` as MessageKey).replace('{amount}', need === null ? '' : fmt(need)).replace('{term}', t(pkg?.refundOnLoss ? 'adminTerms.refundYes' : 'adminTerms.refundNo'))}
           confirmLabel={t('actions.confirm')}
           onCancel={() => setPending(null)}
           onConfirm={() => void execute(pending)}

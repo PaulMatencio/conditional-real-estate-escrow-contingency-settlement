@@ -135,3 +135,31 @@ describe('test matrix and presets', () => {
     }
   });
 });
+
+describe('token amounts (whole tokens on screen, base units in the terms)', () => {
+  it('formats exactly, with at least two decimals and no rounding', async () => {
+    const { formatAmount, parseAmount, toBase, decimalsOf } = await import('@/domain/amount');
+    expect(formatAmount(250_000_000_000n, 6, 'sEUR')).toBe('250,000.00 sEUR');
+    expect(formatAmount('259999750000', 6, 'sEUR')).toBe('259,999.75 sEUR');
+    expect(formatAmount(250_000n, 6)).toBe('0.25');
+    expect(formatAmount(3_750n, 6)).toBe('0.00375');
+    expect(formatAmount(5n, 0)).toBe('5');
+    expect(parseAmount('250000', 6)).toBe(250_000_000_000n);
+    expect(parseAmount('250,000.5', 6)).toBe(250_000_500_000n);
+    expect(parseAmount('250 000,50', 6)).toBe(250_000_500_000n);
+    expect(parseAmount('1.1234567', 6)).toBeNull();
+    // European grouping (review finding): the last separator is the decimal mark.
+    expect(parseAmount('250.000,50', 6)).toBe(250_000_500_000n);
+    expect(parseAmount('1.000,5', 6)).toBe(1_000_500_000n);
+    expect(parseAmount('250.000.000', 6)).toBe(250_000_000_000_000n);
+    expect(parseAmount('250,000', 6)).toBe(250_000_000_000n);
+    expect(parseAmount('1,5', 6)).toBe(1_500_000n);
+    expect(parseAmount('0.25', 6)).toBe(250_000n);
+    expect(parseAmount('25,00,000', 6)).toBeNull();
+    expect(parseAmount('1,2.5', 6)).toBeNull();
+    expect(parseAmount('-1', 6)).toBeNull();
+    expect(toBase('246250')).toBe(246_250_000_000n);
+    expect(decimalsOf(undefined, 19, 8)).toBe(8);
+    expect(decimalsOf()).toBe(6);
+  });
+});

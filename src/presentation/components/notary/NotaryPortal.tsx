@@ -7,6 +7,7 @@ import { openingLabel, verifyOpening } from '@/application/termsService';
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
 import { fmtRate, isAttestationBundle, type Opening } from '@/domain/terms';
+import { decimalsOf, formatAmount } from '@/domain/amount';
 import { shortHex } from '@/domain/hex';
 import { networkConfig } from '@/infrastructure/config/network';
 import { documentCommitment } from '@/infrastructure/crypto/escrowCrypto';
@@ -125,7 +126,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                 const l = lockedFundsStatement(view);
                 const amountOf = (k: 'price' | 'amount' | 'lenderShare') => {
                   const o = openings.find((x) => x.kind === k);
-                  return o && 'amount' in o ? o.amount : null;
+                  return o && 'amount' in o ? formatAmount(o.amount, decimalsOf(o.decimals)) : null;
                 };
                 const terms = openings.find((o) => o.kind === 'loanTerms');
                 const cool = openings.find((o) => o.kind === 'coolingOff');
@@ -140,7 +141,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                     {lines.map(([k, v]) => v !== null && <Alert key={k} tone="ok">{t(k)}: {v} {view.escrowTicker}</Alert>)}
                     {cool && cool.kind === 'coolingOff' && (
                       <Alert tone="ok">
-                        {t('notary.coolingOffVerified')}: {BigInt(cool.penaltyRate) === 0n ? t('cool.noPenaltyShort') : `${fmtRate(cool.penaltyRate)} = ${cool.penalty} ${view.escrowTicker}`}
+                        {t('notary.coolingOffVerified')}: {BigInt(cool.penaltyRate) === 0n ? t('cool.noPenaltyShort') : `${fmtRate(cool.penaltyRate)} = ${formatAmount(cool.penalty, decimalsOf(cool.decimals), view.escrowTicker)}`}
                         {view.coolingOff.period > 0n && ` · ${Number(view.coolingOff.period / 86_400n)} ${t('financing.days')}`}
                       </Alert>
                     )}

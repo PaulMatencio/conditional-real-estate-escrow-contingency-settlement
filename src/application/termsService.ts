@@ -3,6 +3,7 @@
  * Crypto is injected (TermsCrypto port) so these rules stay framework-free and unit-testable.
  */
 import { AppError } from '@/domain/errors';
+import { decimalsOf, formatAmount } from '@/domain/amount';
 import type { EscrowView } from '@/domain/escrowView';
 import {
   COMMITMENT_KEYS,
@@ -54,6 +55,8 @@ export interface TermsInput {
   contractAddress?: string;
   escrowColor?: string;
   escrowTicker?: string;
+  /** Token decimals, kept with the package for display (amounts above are base units). */
+  escrowDecimals?: number;
 }
 
 /** FR-TERMS-01/02: the admin assembles the package from the price, the deposit split and the keys the parties submitted. */
@@ -93,6 +96,7 @@ export function createTermsPackage(crypto: TermsCrypto, input: TermsInput, now: 
     contractAddress: input.contractAddress ? norm(input.contractAddress) : undefined,
     escrowColor: input.escrowColor ? norm(input.escrowColor) : undefined,
     escrowTicker: input.escrowTicker,
+    escrowDecimals: input.escrowDecimals,
     terms,
     commitments: crypto.commitmentsOf(terms),
     createdAt: now
@@ -132,6 +136,7 @@ export function lenderPackageOf(pkg: TermsPackage, now: number = Date.now()): Le
     contractAddress: pkg.contractAddress,
     escrowColor: pkg.escrowColor,
     escrowTicker: pkg.escrowTicker,
+    escrowDecimals: pkg.escrowDecimals,
     price: t.price,
     priceSalt: t.priceSalt,
     lenderShare: t.lenderShare,
@@ -161,15 +166,15 @@ export function selectiveOpening(pkg: TermsPackage, kind: Opening['kind']): Open
   const t = pkg.terms;
   switch (kind) {
     case 'amount':
-      return { ...base, kind, amount: t.amount, salt: t.amountSalt, ticker: pkg.escrowTicker };
+      return { ...base, kind, amount: t.amount, salt: t.amountSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
     case 'price':
-      return { ...base, kind, amount: t.price, salt: t.priceSalt, ticker: pkg.escrowTicker };
+      return { ...base, kind, amount: t.price, salt: t.priceSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
     case 'lenderShare':
-      return { ...base, kind, amount: t.lenderShare, salt: t.lenderShareSalt, ticker: pkg.escrowTicker };
+      return { ...base, kind, amount: t.lenderShare, salt: t.lenderShareSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
     case 'loanTerms':
       return { ...base, kind, refundOnLoss: t.refundOnLoss, salt: t.loanTermsSalt };
     case 'coolingOff':
-      return { ...base, kind, penaltyRate: t.penaltyRate, penalty: t.penalty, salt: t.coolingOffSalt, ticker: pkg.escrowTicker };
+      return { ...base, kind, penaltyRate: t.penaltyRate, penalty: t.penalty, salt: t.coolingOffSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
     case 'buyerPayout':
       return { ...base, kind, key: t.buyerPayout, salt: t.buyerSalt };
     case 'sellerPayout':
@@ -182,8 +187,8 @@ export function selectiveOpening(pkg: TermsPackage, kind: Opening['kind']): Open
 /** v2: an opening the lender can hand over from its own package (price, loan amount, refund term, its key). */
 export function lenderOpening(pkg: LenderPackage, kind: (typeof LENDER_OPENING_KINDS)[number]): Opening {
   const base = { format: 'EscrowOpeningV1' as const, contractAddress: pkg.contractAddress };
-  if (kind === 'price') return { ...base, kind, amount: pkg.price, salt: pkg.priceSalt, ticker: pkg.escrowTicker };
-  if (kind === 'lenderShare') return { ...base, kind, amount: pkg.lenderShare, salt: pkg.lenderShareSalt, ticker: pkg.escrowTicker };
+  if (kind === 'price') return { ...base, kind, amount: pkg.price, salt: pkg.priceSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
+  if (kind === 'lenderShare') return { ...base, kind, amount: pkg.lenderShare, salt: pkg.lenderShareSalt, ticker: pkg.escrowTicker, decimals: pkg.escrowDecimals };
   if (kind === 'loanTerms') return { ...base, kind, refundOnLoss: pkg.refundOnLoss, salt: pkg.loanTermsSalt };
   return { ...base, kind, key: pkg.lenderPayout, salt: pkg.lenderPayoutSalt };
 }
@@ -203,15 +208,16 @@ export const openingLabel = (k: Opening['kind']): string => OPENING_LABEL[k];
 /** FR-NOTARY-02: verify an opening locally against the ledger commitment. */
 export function verifyOpening(crypto: TermsCrypto, o: Opening, view: EscrowView): { ok: boolean; detail: string } {
   const label = OPENING_LABEL[o.kind];
+  const amt = (v: string) => formatAmount(v, decimalsOf('decimals' in o ? o.decimals : undefined), view.escrowTicker);
   const result = (local: string, onchain: string | null, detail: string) =>
     onchain !== null && local === onchain ? { ok: true, detail } : { ok: false, detail: `The ${label.toLowerCase()} opening does not match ${o.kind}Commitment.` };
   switch (o.kind) {
     case 'amount':
-      return result(crypto.amountCommitment(BigInt(o.amount), o.salt), view.commitments.amount, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+      return result(crypto.amountCommitment(BigInt(o.amount), o.salt), view.commitments.amount, `${label} verified: ${amt(o.amount)}`);
     case 'price':
-      return result(crypto.priceCommitment(BigInt(o.amount), o.salt), view.commitments.price, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+      return result(crypto.priceCommitment(BigInt(o.amount), o.salt), view.commitments.price, `${label} verified: ${amt(o.amount)}`);
     case 'lenderShare':
-      return result(crypto.lenderShareCommitment(BigInt(o.amount), o.salt), view.commitments.lenderShare, `${label} verified: ${o.amount} ${view.escrowTicker}`);
+      return result(crypto.lenderShareCommitment(BigInt(o.amount), o.salt), view.commitments.lenderShare, `${label} verified: ${amt(o.amount)}`);
     case 'loanTerms':
       return result(crypto.loanTermsCommitment(o.refundOnLoss, o.salt), view.commitments.loanTerms, `${label} verified: ${o.refundOnLoss ? 'on (a refused loan refunds the buyer)' : 'off (a refused loan can forfeit the buyer deposit)'}`);
     case 'coolingOff':
@@ -220,7 +226,7 @@ export function verifyOpening(crypto: TermsCrypto, o: Opening, view: EscrowView)
         view.commitments.coolingOff,
         BigInt(o.penaltyRate) === 0n
           ? `${label} verified: none (a withdrawal inside the cooling-off period refunds the whole deposit)`
-          : `${label} verified: ${fmtRate(o.penaltyRate)} of the price = ${o.penalty} ${view.escrowTicker}`
+          : `${label} verified: ${fmtRate(o.penaltyRate)} of the price = ${amt(o.penalty)}`
       );
     default: {
       const onchain = o.kind === 'buyerPayout' ? view.commitments.buyerPayout : o.kind === 'sellerPayout' ? view.commitments.sellerPayout : view.commitments.lenderPayout;

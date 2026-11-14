@@ -151,9 +151,9 @@ describe('notary openings and certificate V2 (loan mode)', () => {
     const { sim, pkg } = await configuredLoanEscrow(false);
     const v = sim.view();
     const check = (kind: Parameters<typeof selectiveOpening>[1]) => verifyOpening(termsCrypto, selectiveOpening(pkg, kind), v);
-    expect(check('price')).toEqual({ ok: true, detail: 'Total price verified: 250000 EURe' });
-    expect(check('amount')).toEqual({ ok: true, detail: 'Buyer deposit verified: 100000 EURe' });
-    expect(check('lenderShare')).toEqual({ ok: true, detail: 'Loan amount verified: 150000 EURe' });
+    expect(check('price')).toEqual({ ok: true, detail: 'Total price verified: 0.25 EURe' });
+    expect(check('amount')).toEqual({ ok: true, detail: 'Buyer deposit verified: 0.10 EURe' });
+    expect(check('lenderShare')).toEqual({ ok: true, detail: 'Loan amount verified: 0.15 EURe' });
     expect(check('loanTerms').ok).toBe(true);
     expect(check('loanTerms').detail).toMatch(/off/);
     expect(check('lenderPayout').ok).toBe(true);

@@ -48,7 +48,7 @@ describe('terms package (FR-TERMS-01/03/05)', () => {
     expect(checkTermsAgainstLedger(termsCrypto, pkg, v)).toMatchObject({ ok: true, amount: 'match' });
     const amount = selectiveOpening(pkg, 'amount');
     expect(Object.keys(amount)).not.toContain('buyerSalt');
-    expect(verifyOpening(termsCrypto, amount, v)).toEqual({ ok: true, detail: 'Buyer deposit verified: 250000 EURe' });
+    expect(verifyOpening(termsCrypto, amount, v)).toEqual({ ok: true, detail: 'Buyer deposit verified: 0.25 EURe' });
     expect(verifyOpening(termsCrypto, { ...amount, amount: '250001' } as typeof amount, v).ok).toBe(false);
     expect(verifyOpening(termsCrypto, selectiveOpening(pkg, 'sellerPayout'), v).ok).toBe(true);
     const cert = buildCertificate(termsCrypto, { ...v, status: 'Funded' }, { network: 'preview', openings: [amount] });

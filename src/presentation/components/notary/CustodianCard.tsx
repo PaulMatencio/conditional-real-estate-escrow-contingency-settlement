@@ -143,7 +143,7 @@ export function CustodianCard({ view, onOpening }: { view: EscrowView; onOpening
                     </Badge>
                   ))}
               </div>
-              <TermsAmounts terms={custody.terms.terms} ticker={view.escrowTicker} />
+              <TermsAmounts terms={custody.terms.terms} ticker={view.escrowTicker} decimals={custody.terms.escrowDecimals} />
 
               <Field label={t('custody.handOut')} hint={t('custody.handOutHint')} htmlFor="custody-to-key">
                 <div className="flex flex-wrap gap-2">

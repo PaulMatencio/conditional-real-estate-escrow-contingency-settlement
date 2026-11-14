@@ -19,6 +19,7 @@ import { VaultGate } from './party/PartySetup';
 import { useEscrow } from '../providers/EscrowProvider';
 import { deployedMeta } from '@/application/escrowDirectory';
 import { LABEL_MAX, normalizeWireMeta } from '@/domain/escrowMeta';
+import { DEFAULT_DECIMALS, isValidDecimals } from '@/domain/amount';
 import { TEST_CASES, metaForCase, testCase } from '@/domain/testCases';
 
 type Tab = 'deploy' | 'contract' | 'initialize' | 'terms' | 'keys' | 'vault' | 'log';
@@ -110,6 +111,9 @@ function DeployTab() {
   const [seller, setSeller] = useState('');
   const [color, setColor] = useState('');
   const [ticker, setTicker] = useState('EURe');
+  // Token decimals: amounts are typed and shown in whole tokens, committed in base units. sEUR / EURe use 6.
+  const [decimals, setDecimals] = useState(String(DEFAULT_DECIMALS));
+  const decimalsNum = /^\d{1,2}$/.test(decimals.trim()) && isValidDecimals(Number(decimals.trim())) ? Number(decimals.trim()) : null;
   const busy = progress?.status === 'running';
   return (
     <div className="space-y-4">
@@ -130,6 +134,9 @@ function DeployTab() {
         </Field>
         <Field label={t('deploy.ticker')} htmlFor="ticker">
           <input id="ticker" className="input" value={ticker} maxLength={12} onChange={(e) => setTicker(e.target.value)} />
+        </Field>
+        <Field label={t('deploy.decimals')} hint={t('deploy.decimalsHint')} htmlFor="decimals">
+          <input id="decimals" className="input !w-28" inputMode="numeric" value={decimals} onChange={(e) => setDecimals(e.target.value)} />
         </Field>
       </div>
       <fieldset className="mb-3 rounded-xl border border-midnight-700 p-3">
@@ -164,13 +171,13 @@ function DeployTab() {
       <button
         type="button"
         className="btn-primary"
-        disabled={connector.status !== 'connected' || !adminRoleId || busy || !vaultUnlocked || !wire}
+        disabled={connector.status !== 'connected' || !adminRoleId || busy || !vaultUnlocked || !wire || decimalsNum === null}
         onClick={async () => {
           if (!adminRoleId || !wire) return;
           const addr = await deploy({ adminRoleId, buyerRoleId: buyer, sellerRoleId: seller, tokenColor: color, ticker });
           if (!addr) return;
           try {
-            await saveMeta(addr, () => deployedMeta(wire, networkConfig.networkId, Date.now()));
+            await saveMeta(addr, () => deployedMeta(wire, networkConfig.networkId, Date.now(), decimalsNum ?? undefined));
             await switchEscrow(addr);
           } catch (e) {
             setError((e as Error).message);

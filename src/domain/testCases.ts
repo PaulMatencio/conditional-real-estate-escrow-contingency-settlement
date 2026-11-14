@@ -6,7 +6,7 @@
 import type { WireMeta } from './escrowMeta';
 
 export interface TestCasePreset {
-  /** Total price, token base units. */
+  /** Total price in WHOLE tokens (the terms form converts to base units with the escrow's decimals). */
   price: string;
   /** Loan deals: buyer deposit as a percentage of the price (the rest is the loan). Cash deals: absent. */
   depositPct?: number;
@@ -145,6 +145,7 @@ const DAY = 86_400;
 export function presetValues(c: TestCase, nowSec: number) {
   const p = c.preset;
   const loan = p.depositPct !== undefined;
+  // Whole tokens, as typed in the terms form.
   const deposit = loan ? ((BigInt(p.price) * BigInt(p.depositPct!)) / 100n).toString() : p.price;
   return {
     mode: loan ? ('deposited' as const) : ('attested' as const),

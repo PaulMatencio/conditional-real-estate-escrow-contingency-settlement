@@ -37,10 +37,10 @@ export function renameMeta(current: EscrowMeta | undefined, wire: Partial<WireMe
 }
 
 /** The metadata a deployment starts with (admin deploy form, or a simulation). */
-export function deployedMeta(wire: Partial<WireMeta>, network: string, now: number): EscrowMeta {
+export function deployedMeta(wire: Partial<WireMeta>, network: string, now: number, decimals?: number): EscrowMeta {
   const w = normalizeWireMeta(wire);
   if (!w) throw new Error('A name is required.');
-  return { ...w, network, createdAt: now, source: 'deployed', lastOpenedAt: now };
+  return { ...w, network, createdAt: now, source: 'deployed', lastOpenedAt: now, ...(decimals !== undefined ? { decimals } : {}) };
 }
 
 /**

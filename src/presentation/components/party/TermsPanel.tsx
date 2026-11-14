@@ -77,7 +77,7 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
             </div>
           )}
           {check && !check.ok && check.amount !== 'unset' && <Alert tone="bad">TERMS_COMMITMENT_MISMATCH — {t('terms.mismatch')}</Alert>}
-          <TermsAmounts terms={pkg.terms} ticker={pkg.escrowTicker ?? view?.escrowTicker} />
+          <TermsAmounts terms={pkg.terms} ticker={pkg.escrowTicker ?? view?.escrowTicker} decimals={pkg.escrowDecimals} />
           <p className="text-sm text-slate-400">
             {t('terms.vaultIndex')}: {pkg.vaultIndex ?? '—'}
           </p>

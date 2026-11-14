@@ -10,6 +10,7 @@ import { runPartyAction, finalizeBlockers, trackVault } from '@/application/part
 import { createTermsPackage, lenderPackageOf } from '@/application/termsService';
 import { deployedMeta, listDirectory, withPackageMeta } from '@/application/escrowDirectory';
 import type { DirectoryEntry, EscrowMeta } from '@/domain/escrowMeta';
+import { DEFAULT_DECIMALS, toBase } from '@/domain/amount';
 import { deployTracker } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
 import { DEFAULT_TOP_UP_DAYS } from '@/domain/escrow';
@@ -173,10 +174,18 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     [prefs]
   );
 
-  // Vault record for the active escrow.
+  // Vault record for the active escrow. Every write bumps `recordSeq`, so a load that started before a write (e.g. the
+  // escrow just deployed, opened while its name is being saved) can never overwrite the newer record.
+  const activeRef = useRef<string | null>(null);
+  activeRef.current = activeAddress;
+  const recordSeq = useRef(0);
   useEffect(() => {
+    const seq = ++recordSeq.current;
     if (!vaultUnlocked || !activeAddress) return setRecord({});
-    void vault.load(activeAddress).then(setRecord, (e) => setError(String(e.message)));
+    void vault.load(activeAddress).then(
+      (r) => seq === recordSeq.current && setRecord(r),
+      (e) => setError(String(e.message))
+    );
   }, [vault, vaultUnlocked, activeAddress]);
 
   const updateRecord = useCallback(
@@ -186,6 +195,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
       // A package that carries a name (label, test case) names the escrow in this vault too, unless renamed here.
       const next = withPackageMeta(fn(await vault.load(activeAddress)), Date.now());
       await vault.save(activeAddress, next);
+      recordSeq.current++;
       setRecord(next);
       setDirTick((n) => n + 1);
     },
@@ -211,10 +221,15 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
       if (meta === r.meta) return;
       const next = { ...r, meta };
       await vault.save(address, next);
-      if (address === activeAddress) setRecord(next);
+      // Compared with the escrow active NOW (a ref), not when this callback was created: right after a deploy the
+      // address changes between the two.
+      if (address === activeRef.current) {
+        recordSeq.current++;
+        setRecord(next);
+      }
       setDirTick((n) => n + 1);
     },
-    [vault, activeAddress]
+    [vault]
   );
 
   const unlockVault = useCallback(
@@ -390,7 +405,8 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const s = await EscrowSimulator.create({ adminRoleId: id('admin'), buyerRoleId: id('buyer'), sellerRoleId: id('seller'), tokenColor: color, ticker: 'EURe' }, { time: t0 });
         s.logger = sharedTxLog();
         const wallet = session ? await createWalletProviders(session, prefs).then((p) => p.walletProvider.getCoinPublicKey() as unknown as string).catch(() => null) : null;
-        const price = opts.amount ?? '250000';
+        // Simulator token: 6 decimals like sEUR / EURe; `amount` is in whole tokens.
+        const price = toBase(opts.amount ?? '250000', DEFAULT_DECIMALS).toString();
         const pkg = {
           ...createTermsPackage(termsCrypto, {
             price,
@@ -406,7 +422,8 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           }),
           contractAddress: s.contractAddress,
           escrowColor: color,
-          escrowTicker: 'EURe'
+          escrowTicker: 'EURe',
+          escrowDecimals: DEFAULT_DECIMALS
         };
         const admin = secretKeyFromHex(keys.admin);
         await s.configure(admin, {
@@ -443,7 +460,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
           terms: pkg,
           roleKeys: keys,
           lenderTerms: opts.loan ? lenderPackageOf(pkg) : undefined,
-          meta: deployedMeta({ label, tags: ['simulator', opts.loan ? 'loan' : 'cash', ...(opts.coolingOff ? ['cooling-off'] : [])] }, 'simulator', Date.now())
+          meta: deployedMeta({ label, tags: ['simulator', opts.loan ? 'loan' : 'cash', ...(opts.coolingOff ? ['cooling-off'] : [])] }, 'simulator', Date.now(), DEFAULT_DECIMALS)
         });
         setDirTick((n) => n + 1);
         lastRound.current = null;

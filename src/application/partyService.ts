@@ -4,6 +4,7 @@
  * records the result in the local history (FR-AUDIT-03).
  */
 import { AppError } from '@/domain/errors';
+import { decimalsOf, formatAmount } from '@/domain/amount';
 import { authorityLevel, isFullyConfigured, type EscrowView } from '@/domain/escrowView';
 import { ACTIONS, needsSecondCoin, type PartyCircuit } from '@/domain/lifecycle';
 import type { Caller } from '@/domain/roles';
@@ -38,6 +39,8 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
   const problems: string[] = [];
   const warnings: string[] = [];
   const spec = ACTIONS[circuit];
+  const dec = decimalsOf(ctx.record.terms?.escrowDecimals, ctx.record.lenderTerms?.escrowDecimals, ctx.record.meta?.decimals);
+  const amt = (v: bigint) => formatAmount(v, dec, view.escrowTicker);
   if (!spec.callers.includes(caller) && !spec.callers.includes('anyone')) problems.push(`This action is not available to the ${caller}.`);
   const which = circuit === 'waiveContingency' || circuit === 'voidContingencyResult' ? (args as CircuitArgs['waiveContingency'])[0] : undefined;
   const phase = spec.check(view, caller, nowSec, which);
@@ -98,13 +101,13 @@ export async function preflight<C extends PartyCircuit>(ctx: PartyContext, view:
     const need = BigInt(ctx.record.terms.terms.amount) + DEPOSIT_MARGIN;
     const bal = await ctx.gateway.shieldedBalance(view.escrowColor).catch(() => null);
     if (bal === null) warnings.push('The wallet did not report a shielded balance; the deposit fails if it holds too little.');
-    else if (bal < need) problems.push(`Shielded balance too low: ${bal} ${view.escrowTicker}, need ${need} (shortfall ${need - bal}).`);
+    else if (bal < need) problems.push(`Shielded balance too low: ${amt(bal)}, need ${amt(need)} (shortfall ${amt(need - bal)}).`);
   }
   if ((circuit === 'depositTopUp' || circuit === 'depositLoan') && (ctx.record.terms || ctx.record.lenderTerms)) {
     const need = BigInt(ctx.record.lenderTerms?.lenderShare ?? ctx.record.terms!.terms.lenderShare);
     const bal = await ctx.gateway.shieldedBalance(view.escrowColor).catch(() => null);
     if (bal === null) warnings.push('The wallet did not report a shielded balance; the deposit fails if it holds too little.');
-    else if (bal < need) problems.push(`Shielded balance too low: ${bal} ${view.escrowTicker}, need ${need} (shortfall ${need - bal}).`);
+    else if (bal < need) problems.push(`Shielded balance too low: ${amt(bal)}, need ${amt(need)} (shortfall ${amt(need - bal)}).`);
   }
   if (circuit === 'depositLoan' && ctx.record.lenderTerms) {
     const key = await ctx.gateway.coinPublicKey().catch(() => null);

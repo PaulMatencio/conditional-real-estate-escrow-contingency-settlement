@@ -188,10 +188,10 @@ describe('notary', () => {
   it('verifies the penalty opening and reports it in the certificate', async () => {
     const { sim, pkg } = await funded();
     const o = selectiveOpening(pkg, 'coolingOff');
-    expect(verifyOpening(termsCrypto, o, sim.view())).toEqual({ ok: true, detail: 'Cooling-off penalty verified: 1.5 % of the price = 3750 EURe' });
+    expect(verifyOpening(termsCrypto, o, sim.view())).toEqual({ ok: true, detail: 'Cooling-off penalty verified: 1.5 % of the price = 0.00375 EURe' });
     expect(verifyOpening(termsCrypto, { ...o, penalty: '3751' } as typeof o, sim.view()).ok).toBe(false);
     const cert = (openings: Parameters<typeof buildCertificate>[2]['openings']) => buildCertificate(termsCrypto, sim.view(), { network: 'undeployed', openings });
     expect(cert([]).coolingOff).toMatchObject({ days: PERIOD, end: String(T0 + PERIOD * DAY), penalty: 'undisclosed', buyerWithdrew: false });
-    expect(cert([o]).coolingOff.penalty).toBe('1.5 % = 3750 EURe');
+    expect(cert([o]).coolingOff.penalty).toBe('1.5 % = 0.00375 EURe');
   });
 });

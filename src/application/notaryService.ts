@@ -3,6 +3,7 @@
  * certificate as a JSON proof bundle (the printable page is rendered by the presentation layer). Openings are
  * verified locally and only their verdicts — never the salts — go into the bundle.
  */
+import { decimalsOf, formatAmount } from '@/domain/amount';
 import { CONTINGENCIES, authorityLevel, fundsLocked, type EscrowView } from '@/domain/escrowView';
 import type { Opening } from '@/domain/terms';
 import { verifyOpening, type TermsCrypto } from './termsService';
@@ -100,7 +101,7 @@ function penaltyOf(crypto: TermsCrypto, view: EscrowView, openings: Opening[]): 
   if (view.coolingOff.period === 0n) return 'none';
   const o = openings.find((x) => x.kind === 'coolingOff');
   if (!o || o.kind !== 'coolingOff' || !verifyOpening(crypto, o, view).ok) return 'undisclosed';
-  return BigInt(o.penaltyRate) === 0n ? 'none' : `${(Number(o.penaltyRate) / 100).toString()} % = ${o.penalty} ${view.escrowTicker}`;
+  return BigInt(o.penaltyRate) === 0n ? 'none' : `${(Number(o.penaltyRate) / 100).toString()} % = ${formatAmount(o.penalty, decimalsOf(o.decimals), view.escrowTicker)}`;
 }
 
 export function buildCertificate(

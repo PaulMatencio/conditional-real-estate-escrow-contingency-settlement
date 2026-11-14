@@ -33,6 +33,12 @@ export async function findDepositTxHash(contractAddress: string, circuit: Deposi
   return deposit?.txHash ?? null;
 }
 
+/** The circuits that ran successfully on this escrow, from its public on-chain history (any party's transactions). */
+export async function chainCircuits(contractAddress: string): Promise<Set<string>> {
+  const { actions } = await new IndexerChainHistory(indexerHttpUrl(), networkConfig.indexerWS, 60_000).contractActions(contractAddress);
+  return new Set(actions.filter((a) => a.kind === 'call' && a.entryPoint && (a.result === 'SUCCESS' || a.result === null)).map((a) => a.entryPoint!));
+}
+
 /** Wallet Mode `now` for depositToEscrow / declineLoan / withdrawLoan: 2 minutes behind the wall clock, so the block time is past it. */
 const TIME_MARGIN = 120n;
 /** Circuits whose transaction leaves exactly one new coin in the contract (refundWithdrawal: the penalty change coin). */

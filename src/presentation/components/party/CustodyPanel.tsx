@@ -6,8 +6,10 @@ import { hasUsableSellerKyc } from '@/domain/escrowView';
 import { availableActions, type PartyCircuit } from '@/domain/lifecycle';
 import { loanCoinOf, payoutOfCoin, topUpCoinOf, vaultCoinOf, withdrawalCoinsOf } from '@/infrastructure/crypto/escrowCrypto';
 import { networkConfig } from '@/infrastructure/config/network';
+import { chainCircuits } from '@/infrastructure/gateway/partyGateway';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
+import { useAmount } from '../useAmount';
 import { Alert, Card, Field, Mono, Spinner, Stat } from '../ui';
 import { ConfirmDialog, downloadJson } from './helpers';
 
@@ -15,6 +17,7 @@ import { ConfirmDialog, downloadJson } from './helpers';
 export function FundingPanel() {
   const { t } = useT();
   const { record, view, gateway, mode } = useEscrow();
+  const { fmt } = useAmount();
   const [balance, setBalance] = useState<bigint | null | undefined>(undefined);
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const pkg = record.terms;
@@ -36,11 +39,11 @@ export function FundingPanel() {
     <Card title={t('fund.title')} icon={<Coins size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('fund.hint')}</p>
       <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label={t('fund.amount')} value={`${pkg.terms.amount} ${view.escrowTicker}`} sub={t('fund.private')} />
+        <Stat label={t('fund.amount')} value={fmt(pkg.terms.amount)} sub={t('fund.private')} />
         <Stat
           label={t('fund.balance')}
-          value={balance === undefined ? '…' : balance === null ? '—' : `${balance} ${view.escrowTicker}`}
-          sub={balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${need - balance}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
+          value={balance === undefined ? '…' : balance === null ? '—' : fmt(balance)}
+          sub={balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${fmt(need - balance)}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
         />
         <Stat label={t('fund.nonce')} tip={t('tip.fund.nonce')} value={<span className="mono">{shortHex(bytesToHex(coin.nonce))}</span>} sub={`color ${shortHex(view.escrowColor)}`} />
       </div>
@@ -118,11 +121,27 @@ export function VaultTrackingCard() {
  */
 export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolver' }) {
   const { t } = useT();
-  const { record, view, timeline, sim } = useEscrow();
+  const { record, view, timeline, sim, mode } = useEscrow();
+  const { fmt, decimals } = useAmount();
+  // The outcome is decided by what ran on the escrow, whoever ran it: this browser's history only knows its own calls
+  // (a buyer who withdrew never ran the seller's claimForfeit), so the public on-chain history is read once it closes.
+  const [onChain, setOnChain] = useState<Set<string> | null>(null);
+  const closedAt = view?.status === 'Closed' && mode === 'wallet' ? view.contractAddress : null;
+  useEffect(() => {
+    if (!closedAt) return setOnChain(null);
+    let alive = true;
+    void chainCircuits(closedAt).then(
+      (c) => alive && setOnChain(c),
+      () => alive && setOnChain(null)
+    );
+    return () => {
+      alive = false;
+    };
+  }, [closedAt]);
   const pkg = record.terms;
   if (!view || view.status !== 'Closed' || !pkg?.contractAddress) return null;
   const f = view.financing;
-  const ran = new Set([...(record.history ?? []).map((h) => h.circuit), ...(sim?.log.map((l) => l.circuit) ?? [])]);
+  const ran = new Set([...(record.history ?? []).map((h) => h.circuit), ...(sim?.log.map((l) => l.circuit) ?? []), ...(onChain ?? [])]);
   const outcome: 'released' | 'forfeited' | 'refunded' | 'withdrawn' = ran.has('releaseToSeller')
     ? 'released'
     : ran.has('claimForfeit')
@@ -161,7 +180,7 @@ export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolv
               <Mono value={c.coin.nonce} />
             </Field>
             <p className="text-slate-300">
-              color <span className="mono">{shortHex(c.coin.color)}</span> · value {c.coin.value} {view.escrowTicker} · {t('settle.to')} <span className="mono">{shortHex(c.to)}</span>
+              color <span className="mono">{shortHex(c.coin.color)}</span> · {fmt(c.coin.value)} · {t('settle.to')} <span className="mono">{shortHex(c.to)}</span>
             </p>
           </div>
         ))}
@@ -180,7 +199,7 @@ export function SettlementPanel({ party }: { party: 'buyer' | 'seller' | 'resolv
               onClick={() =>
                 downloadJson('settlement-receipt-private.json', {
                   ...publicReceipt,
-                  private: { price: pkg.terms.price, buyerDeposit: pkg.terms.amount, loanAmount: pkg.terms.lenderShare, coolingOffPenalty: pkg.terms.penalty, ticker: view.escrowTicker, payoutCoins: coins.map((c) => ({ ...c.coin, recipient: c.to, label: c.label })) }
+                  private: { price: pkg.terms.price, buyerDeposit: pkg.terms.amount, loanAmount: pkg.terms.lenderShare, coolingOffPenalty: pkg.terms.penalty, decimals, ticker: view.escrowTicker, payoutCoins: coins.map((c) => ({ ...c.coin, recipient: c.to, label: c.label })) }
                 })
               }
             >
@@ -202,6 +221,7 @@ type ForfeitAction = 'submitSellerKyc' | 'claimForfeit';
 export function ForfeitCard() {
   const { t } = useT();
   const { view, now, record, run, busy } = useEscrow();
+  const { fmt } = useAmount();
   const [pending, setPending] = useState<ForfeitAction | null>(null);
   if (!view || view.status !== 'Forfeited') return null;
   const material = { terms: !!record.terms, kycAttestation: !!record.kyc?.seller, vaultCoin: true };
@@ -223,7 +243,7 @@ export function ForfeitCard() {
     <Card title={t('forfeit.title')} icon={<Gavel size={16} aria-hidden />}>
       <p className="mb-3 text-sm text-slate-400">{t('forfeit.hint')}</p>
       <div className="mb-3 grid gap-3 sm:grid-cols-2">
-        <Stat label={t('adminTerms.deposit')} value={amount ? `${amount} ${view.escrowTicker}` : '—'} sub={t('fund.private')} />
+        <Stat label={t('adminTerms.deposit')} value={amount ? fmt(amount) : '—'} sub={t('fund.private')} />
         <Stat label={t('forfeit.kyc')} value={<span className="text-sm">{t(kycOk ? 'forfeit.kycOk' : 'forfeit.kycMissing')}</span>} />
       </div>
       {view.financing.buyerCoinPaid ? (
@@ -237,7 +257,7 @@ export function ForfeitCard() {
       {pending && (
         <ConfirmDialog
           title={t('circuit.claimForfeit')}
-          body={t('forfeit.confirm').replace('{amount}', amount ? `${amount} ${view.escrowTicker}` : '')}
+          body={t('forfeit.confirm').replace('{amount}', amount ? fmt(amount) : '')}
           confirmLabel={t('actions.confirm')}
           onCancel={() => setPending(null)}
           onConfirm={() => {

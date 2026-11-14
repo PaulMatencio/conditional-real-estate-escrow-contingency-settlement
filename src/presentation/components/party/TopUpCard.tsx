@@ -4,6 +4,7 @@ import { PiggyBank } from 'lucide-react';
 import { availableActions, type PartyCircuit } from '@/domain/lifecycle';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
+import { useAmount } from '../useAmount';
 import { Alert, Card, Spinner, Stat } from '../ui';
 import { ConfirmDialog, Countdown, fmtTime } from './helpers';
 
@@ -18,6 +19,7 @@ type TopUpAction = 'depositTopUp' | 'cancelAndRefund' | 'endTopUpWindow';
 export function TopUpCard() {
   const { t } = useT();
   const { view, now, record, run, busy, gateway, mode } = useEscrow();
+  const { fmt } = useAmount();
   const [pending, setPending] = useState<TopUpAction | null>(null);
   const [balance, setBalance] = useState<bigint | null | undefined>(undefined);
 
@@ -29,7 +31,6 @@ export function TopUpCard() {
   if (!view || view.financing.mode !== 'Deposited') return null;
   const f = view.financing;
   const pkg = record.terms;
-  const ticker = view.escrowTicker;
   const need = pkg ? BigInt(pkg.terms.lenderShare) : null;
   const inReview = view.status === 'ContingenciesPending';
   const windowed = f.loanLost && f.loanLostRefund && !f.topUpHeld;
@@ -72,11 +73,11 @@ export function TopUpCard() {
       </div>
       {!f.topUpHeld && !f.loanHeld && (
         <div className="mb-3 grid gap-3 sm:grid-cols-3">
-          <Stat label={t('topup.amount')} value={need === null ? '—' : `${need} ${ticker}`} sub={t('fund.private')} />
+          <Stat label={t('topup.amount')} value={need === null ? '—' : fmt(need)} sub={t('fund.private')} />
           <Stat
             label={t('fund.balance')}
-            value={balance === undefined ? '…' : balance === null ? '—' : `${balance} ${ticker}`}
-            sub={need !== null && balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${need - balance}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
+            value={balance === undefined ? '…' : balance === null ? '—' : fmt(balance)}
+            sub={need !== null && balance !== null && balance !== undefined && balance < need ? `${t('fund.shortfall')} ${fmt(need - balance)}` : mode === 'simulator' ? t('fund.simBalance') : undefined}
           />
           {inReview &&
             (windowed ? (
@@ -98,7 +99,7 @@ export function TopUpCard() {
       {pending && (
         <ConfirmDialog
           title={t(pending === 'cancelAndRefund' ? 'topup.giveUp' : (`circuit.${pending}` as MessageKey))}
-          body={t(pending === 'depositTopUp' ? 'topup.confirmDeposit' : 'topup.confirmGiveUp').replace('{amount}', need === null ? '' : `${need} ${ticker}`)}
+          body={t(pending === 'depositTopUp' ? 'topup.confirmDeposit' : 'topup.confirmGiveUp').replace('{amount}', need === null ? '' : fmt(need))}
           confirmLabel={t('actions.confirm')}
           onCancel={() => setPending(null)}
           onConfirm={() => void execute(pending)}

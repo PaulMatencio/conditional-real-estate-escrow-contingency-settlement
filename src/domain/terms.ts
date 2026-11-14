@@ -61,6 +61,8 @@ export interface TermsPackage {
   contractAddress?: string;
   escrowColor?: string;
   escrowTicker?: string;
+  /** Token decimals (amounts in `terms` are base units): for display and input only, never committed. Default 6. */
+  escrowDecimals?: number;
   terms: WirePrivateTerms;
   commitments: TermsCommitments;
   createdAt: number;
@@ -80,6 +82,7 @@ export interface LenderPackage {
   contractAddress?: string;
   escrowColor?: string;
   escrowTicker?: string;
+  escrowDecimals?: number;
   price: string;
   priceSalt: string;
   lenderShare: string;
@@ -96,12 +99,12 @@ export interface LenderPackage {
 /** FR-TERMS-05 / FR-NOTARY-02: one opening handed to a third party, without the rest of the package. */
 export type Opening =
   /** amount = the buyer deposit (v2), price = the total price, lenderShare = the loan amount. */
-  | { format: 'EscrowOpeningV1'; kind: 'amount' | 'price' | 'lenderShare'; contractAddress?: string; amount: string; salt: string; ticker?: string }
+  | { format: 'EscrowOpeningV1'; kind: 'amount' | 'price' | 'lenderShare'; contractAddress?: string; amount: string; salt: string; ticker?: string; decimals?: number }
   | { format: 'EscrowOpeningV1'; kind: 'buyerPayout' | 'sellerPayout' | 'lenderPayout'; contractAddress?: string; key: string; salt: string }
   /** v2: the loan refusal refund term. */
   | { format: 'EscrowOpeningV1'; kind: 'loanTerms'; contractAddress?: string; refundOnLoss: boolean; salt: string }
   /** Cooling-off penalty: the rate (basis points of the price) and the amount. */
-  | { format: 'EscrowOpeningV1'; kind: 'coolingOff'; contractAddress?: string; penaltyRate: string; penalty: string; salt: string; ticker?: string };
+  | { format: 'EscrowOpeningV1'; kind: 'coolingOff'; contractAddress?: string; penaltyRate: string; penalty: string; salt: string; ticker?: string; decimals?: number };
 
 /** Opening kinds in display order. The loan ones exist only in a loan deal. */
 export const OPENING_KINDS = ['price', 'amount', 'lenderShare', 'loanTerms', 'coolingOff', 'buyerPayout', 'sellerPayout', 'lenderPayout'] as const satisfies readonly Opening['kind'][];
