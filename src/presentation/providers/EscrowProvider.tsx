@@ -58,6 +58,8 @@ interface EscrowCtx {
   lockVault: () => void;
   record: VaultRecord;
   updateRecord: (fn: (r: VaultRecord) => VaultRecord) => Promise<void>;
+  /** Same as `updateRecord`, for any escrow of this vault (e.g. importing a package that belongs to another escrow). */
+  updateRecordAt: (address: string, fn: (r: VaultRecord) => VaultRecord) => Promise<void>;
   identity: VaultRecord['identity'] | null;
   /** Current envelope key first, then earlier ones (restored from a backup); all are tried when opening envelopes. */
   identities: NonNullable<VaultRecord['identity']>[];
@@ -188,18 +190,28 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     );
   }, [vault, vaultUnlocked, activeAddress]);
 
+  const updateRecordAt = useCallback(
+    async (address: string, fn: (r: VaultRecord) => VaultRecord) => {
+      if (!vault.unlocked) throw new Error('Unlock the vault first.');
+      // A package that carries a name (label, test case) names the escrow in this vault too, unless renamed here.
+      const next = withPackageMeta(fn(await vault.load(address)), Date.now());
+      await vault.save(address, next);
+      // Compared with the escrow active NOW (a ref): the caller may switch to `address` right after.
+      if (address === activeRef.current) {
+        recordSeq.current++;
+        setRecord(next);
+      }
+      setDirTick((n) => n + 1);
+    },
+    [vault]
+  );
+
   const updateRecord = useCallback(
     async (fn: (r: VaultRecord) => VaultRecord) => {
       if (!activeAddress) throw new Error('Load an escrow first.');
-      if (!vault.unlocked) throw new Error('Unlock the vault first.');
-      // A package that carries a name (label, test case) names the escrow in this vault too, unless renamed here.
-      const next = withPackageMeta(fn(await vault.load(activeAddress)), Date.now());
-      await vault.save(activeAddress, next);
-      recordSeq.current++;
-      setRecord(next);
-      setDirTick((n) => n + 1);
+      await updateRecordAt(activeAddress, fn);
     },
-    [vault, activeAddress]
+    [activeAddress, updateRecordAt]
   );
 
   // ------------------------------------------------------------------ escrow directory
@@ -534,6 +546,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     lockVault,
     record,
     updateRecord,
+    updateRecordAt,
     identity,
     identities: [...(identity ? [identity] : []), ...identityHistory],
     reloadVault,

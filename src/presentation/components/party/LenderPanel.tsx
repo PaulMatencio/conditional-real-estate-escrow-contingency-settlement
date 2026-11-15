@@ -13,6 +13,8 @@ import { useAmount } from '../useAmount';
 import { Alert, Badge, Card, Field, Mono, Spinner, Stat } from '../ui';
 import { ConfirmDialog, Countdown, FilePick, TypedConfirmDialog, downloadJson, fmtTime, readFileBytes, readJsonFile } from './helpers';
 import { OpeningButtons } from '../OpeningButtons';
+import { readPublicView } from '@/infrastructure/gateway/publicReader';
+import { OtherEscrowPrompt, type PendingImport } from './OtherEscrowPrompt';
 
 /**
  * Lender page, contract v2 (loan mode). The lender receives only its part of the terms (the lender package: price,
@@ -21,9 +23,10 @@ import { OpeningButtons } from '../OpeningButtons';
  */
 export function LenderTermsCard() {
   const { t } = useT();
-  const { record, updateRecord, view, identity, identities, contractAddress } = useEscrow();
+  const { record, updateRecord, updateRecordAt, switchEscrow, view, identity, identities, contractAddress } = useEscrow();
   const { fmt } = useAmount();
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
+  const [pending, setPending] = useState<PendingImport | null>(null);
   const [pass, setPass] = useState('');
   const [remove, setRemove] = useState(false);
   const pkg = record.lenderTerms;
@@ -31,6 +34,7 @@ export function LenderTermsCard() {
 
   const importFile = async (f: File) => {
     setMsg(null);
+    setPending(null);
     try {
       const raw = await readJsonFile(f);
       let p: unknown = raw;
@@ -45,7 +49,23 @@ export function LenderTermsCard() {
       // The lender gets the lender package; the full terms are for the buyer, seller and resolver.
       if (isTermsPackage(p)) throw new Error(t('lender.fullPackage'));
       if (!isLenderPackage(p)) throw new Error(t('lender.badFile'));
-      if (p.contractAddress && contractAddress && p.contractAddress !== contractAddress) throw new Error(t('terms.otherContract'));
+      // A package for another escrow: offer to store it there (after the same commitment check, against that escrow's
+      // public ledger) and open that escrow; with no escrow open, just do it.
+      if (p.contractAddress && p.contractAddress !== contractAddress) {
+        const pkgFor = p;
+        const address = p.contractAddress;
+        const store = async () => {
+          const c = checkLenderPackage(termsCrypto, pkgFor, await readPublicView(address));
+          if (!c.ok) throw new Error(`TERMS_COMMITMENT_MISMATCH — ${t('lender.mismatch')}`);
+          await updateRecordAt(address, (r) => ({ ...r, lenderTerms: pkgFor }));
+        };
+        if (contractAddress) return setPending({ address, meta: p.meta, store });
+        await store();
+        await switchEscrow(address);
+        setPass('');
+        setMsg({ tone: 'ok', text: t('lender.imported') });
+        return;
+      }
       const bound: LenderPackage = { ...p, contractAddress: contractAddress ?? p.contractAddress, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };
       if (view) {
         const c = checkLenderPackage(termsCrypto, bound, view);
@@ -68,6 +88,17 @@ export function LenderTermsCard() {
         </Field>
       ) : (
         <Alert tone="warn">{t('terms.noIdentity')}</Alert>
+      )}
+      {pending && (
+        <OtherEscrowPrompt
+          pending={pending}
+          onCancel={() => setPending(null)}
+          onDone={(text) => {
+            setPending(null);
+            setPass('');
+            setMsg({ tone: 'ok', text: `${t('lender.imported')} ${text}` });
+          }}
+        />
       )}
       {msg && (
         <div className="mb-3">

@@ -10,6 +10,7 @@ import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { FilePick, TypedConfirmDialog, downloadJson, readJsonFile } from './helpers';
 import { OpeningButtons, TermsAmounts, openingKindsFor } from '../OpeningButtons';
+import { OtherEscrowPrompt, type PendingImport } from './OtherEscrowPrompt';
 
 /**
  * Private Terms Vault for one party (FR-TERMS-03..06): import the package (plain, passphrase-sealed or an X25519
@@ -17,7 +18,8 @@ import { OpeningButtons, TermsAmounts, openingKindsFor } from '../OpeningButtons
  */
 export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
   const { t } = useT();
-  const { record, updateRecord, view, identity, identities, eraseLocal, contractAddress } = useEscrow();
+  const { record, updateRecord, updateRecordAt, switchEscrow, view, identity, identities, eraseLocal, contractAddress } = useEscrow();
+  const [pending, setPending] = useState<PendingImport | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
   const [pass, setPass] = useState('');
   const [erase, setErase] = useState(false);
@@ -25,6 +27,8 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
   const check = pkg && view ? checkTermsAgainstLedger(termsCrypto, pkg, view) : null;
 
   const importFile = async (f: File) => {
+    setMsg(null);
+    setPending(null);
     try {
       const raw = await readJsonFile(f);
       let p: unknown = raw;
@@ -41,7 +45,18 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
       if (isLenderPackage(p)) throw new Error(t('lender.lenderPackageHere'));
       if (isPreCoolingOffPackage(p)) throw new Error(TERMS_PRE_COOLING_OFF_MESSAGE);
       if (!isTermsPackage(p)) throw new Error(t('terms.badFile'));
-      if (p.contractAddress && contractAddress && p.contractAddress !== contractAddress) throw new Error(t('terms.otherContract'));
+      // A package for another escrow (e.g. a new deployment while the page still shows an archived one): offer to store
+      // it there and open that escrow; with no escrow open, just do it.
+      if (p.contractAddress && p.contractAddress !== contractAddress) {
+        const pkgFor = p;
+        const address = p.contractAddress;
+        const store = () => updateRecordAt(address, (r) => ({ ...r, terms: { ...pkgFor, vaultIndex: pkgFor.vaultIndex ?? r.terms?.vaultIndex } }));
+        if (contractAddress) return setPending({ address, meta: p.meta, store });
+        await store();
+        await switchEscrow(address);
+        setMsg({ tone: 'ok', text: t('terms.imported') });
+        return;
+      }
       const bound: TermsPackage = { ...p, contractAddress: contractAddress ?? p.contractAddress, escrowColor: view?.escrowColor ?? p.escrowColor, escrowTicker: view?.escrowTicker ?? p.escrowTicker };
       await updateRecord((r) => ({ ...r, terms: { ...bound, vaultIndex: bound.vaultIndex ?? r.terms?.vaultIndex } }));
       setMsg({ tone: 'ok', text: t('terms.imported') });
@@ -62,6 +77,16 @@ export function TermsPanel({ canBackup = true }: { canBackup?: boolean }) {
         <FilePick label={t('terms.import')} accept="application/json,.json" onFile={(f) => void importFile(f)} />
         <input type="password" className="input !w-56" placeholder={t('terms.passOptional')} aria-label={t('terms.passOptional')} value={pass} onChange={(e) => setPass(e.target.value)} />
       </div>
+      {pending && (
+        <OtherEscrowPrompt
+          pending={pending}
+          onCancel={() => setPending(null)}
+          onDone={(text) => {
+            setPending(null);
+            setMsg({ tone: 'ok', text: `${t('terms.imported')} ${text}` });
+          }}
+        />
+      )}
       {msg && <Alert tone={msg.tone} onClose={() => setMsg(null)}>{msg.text}</Alert>}
 
       {pkg && (
