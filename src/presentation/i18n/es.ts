@@ -440,6 +440,8 @@ export const es: Partial<Record<MessageKey, string>> = {
   'roleKey.removeWarn': 'Antes de quitarla, guarde la clave en un lugar seguro (copia de la bóveda o gestor de contraseñas).',
   'roleKey.removeHistory': 'Puede deshacerlo con «Restaurar clave quitada», siempre que no borre los datos de este depósito.',
   'roleKey.restoreRemoved': 'Restaurar clave quitada',
+  'roleKey.foundElsewhere': 'Su bóveda ya contiene la clave de {role} que corresponde al identificador de rol de este depósito: está guardada con {escrow}. ¿Usar la misma clave aquí?',
+  'roleKey.useFound': 'Usar esta clave',
   'roleKey.removedAt': 'quitada el',
   'roleKey.eraseWarn': 'Si nadie más tiene una copia, el pago y el reembolso serán imposibles. Exporte antes una copia de la bóveda.',
   'terms.eraseConfirm': 'Borrar datos',

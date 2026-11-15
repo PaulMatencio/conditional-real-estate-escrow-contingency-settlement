@@ -440,6 +440,8 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'roleKey.removeWarn': 'Avant de la retirer, conservez la clé en lieu sûr (sauvegarde du coffre ou gestionnaire de mots de passe).',
   'roleKey.removeHistory': 'Vous pouvez annuler avec « Restaurer la clé retirée », tant que vous n\'effacez pas les données de ce séquestre.',
   'roleKey.restoreRemoved': 'Restaurer la clé retirée',
+  'roleKey.foundElsewhere': 'Votre coffre contient déjà la clé {role} correspondant à l’identifiant de rôle de ce séquestre : elle est rangée avec {escrow}. Utiliser la même clé ici ?',
+  'roleKey.useFound': 'Utiliser cette clé',
   'roleKey.removedAt': 'retirée le',
   'roleKey.eraseWarn': 'Si personne d\'autre n\'en détient une copie, le paiement et le remboursement deviennent impossibles. Exportez d\'abord une sauvegarde du coffre.',
   'terms.eraseConfirm': 'Effacer les données',

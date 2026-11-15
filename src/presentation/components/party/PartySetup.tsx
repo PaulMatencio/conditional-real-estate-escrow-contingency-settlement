@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState, type ReactNode } from 'react';
 import { FlaskConical, KeyRound, Lock, Radio, Unlock, WalletCards } from 'lucide-react';
-import { isHex32, bytesToHex } from '@/domain/hex';
+import { isHex32, bytesToHex, shortHex } from '@/domain/hex';
+import { displayLabel } from '@/domain/escrowMeta';
+import type { RoleKeyMatch } from '@/application/escrowDirectory';
 import { ROLE_SLUG, rolesOf, type PartyRole } from '@/domain/roles';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { shieldedKeyToHex } from '@/infrastructure/wallet/providers';
@@ -179,8 +181,9 @@ export function VaultGate({ whenMissing }: { whenMissing?: ReactNode } = {}) {
 /** FR-WALLET-02/03: the role secret for this escrow, its role id, and every on-chain role it matches. */
 export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleChange?: (r: PartyRole) => void }) {
   const { t } = useT();
-  const { roleKey, setRoleKey, view, vaultUnlocked, mode, record } = useEscrow();
+  const { roleKey, setRoleKey, findRoleKeyElsewhere, view, vaultUnlocked, mode, record } = useEscrow();
   const [imp, setImp] = useState('');
+  const [elsewhere, setElsewhere] = useState<RoleKeyMatch | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const removed = (record.roleKeyHistory ?? []).filter((h) => h.role === role).at(-1);
   // Translated role name, lower-cased for use mid-sentence ("act as buyer", "agir en tant que acheteur").
@@ -191,6 +194,17 @@ export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleCha
   const held = view && id ? rolesOf(view, id) : [];
   const expected = view?.roles[role] ?? null;
   const ok = !!id && id === expected;
+
+  // No key here, but this escrow expects a role id whose key the vault already holds for another escrow (typically the
+  // previous, archived deployment): offer it instead of asking for a manual import.
+  useEffect(() => {
+    let live = true;
+    setElsewhere(null);
+    if (vaultUnlocked && !hex && expected) void findRoleKeyElsewhere(role).then((m) => live && setElsewhere(m), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [vaultUnlocked, hex, expected, role, findRoleKeyElsewhere]);
 
   if (!vaultUnlocked) return null;
   return (
@@ -248,6 +262,18 @@ export function RoleKeyCard({ role, onRoleChange }: { role: PartyRole; onRoleCha
       ) : (
         <>
           <p className="mb-3 text-sm text-slate-400">{t('party.roleKeyHint')}</p>
+          {elsewhere && (
+            <div className="mb-3 rounded-xl border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok" role="status">
+              <p>
+                {t('roleKey.foundElsewhere')
+                  .replace('{role}', roleLabel)
+                  .replace('{escrow}', `${displayLabel(elsewhere.address, elsewhere.meta)} (${shortHex(elsewhere.address, 6, 4)})${elsewhere.meta?.archived ? ` — ${t('terms.otherEscrow.archived')}` : ''}`)}
+              </p>
+              <button type="button" className="btn-primary mt-2" onClick={() => void setRoleKey(role, elsewhere.key).catch((e) => setMsg((e as Error).message))}>
+                {t('roleKey.useFound')}
+              </button>
+            </div>
+          )}
           {removed && (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <button type="button" className="btn-ghost" onClick={() => void setRoleKey(role, removed.key).catch((e) => setMsg((e as Error).message))}>

@@ -29,6 +29,45 @@ export async function listDirectory(vault: Vault): Promise<DirectoryEntry[]> {
   return Promise.all(ids.map(async (id) => entryOf(id, await vault.load(id))));
 }
 
+/** A role secret key held in this vault for ANOTHER escrow whose role id is the one an escrow expects. */
+export interface RoleKeyMatch {
+  /** The escrow whose record holds the key. */
+  address: string;
+  /** The role it is stored under there (a party can hold the same key for different roles in different escrows). */
+  role: string;
+  key: string;
+  meta?: EscrowMeta;
+  /** Found among that escrow's removed / replaced keys rather than its current ones. */
+  removed?: boolean;
+}
+
+/**
+ * Finds a key the vault already holds whose role id is `expectedId` (e.g. the admin registered a new escrow with the
+ * buyer's existing role id: the buyer's key sits in the old, maybe archived, escrow's record). Current keys win over
+ * removed ones, then the most recently opened escrow. `idOf` derives the role id (crypto stays out of this layer);
+ * keys it rejects are skipped.
+ */
+export async function findRoleKey(vault: Vault, expectedId: string, idOf: (key: string) => string, except?: string): Promise<RoleKeyMatch | null> {
+  if (!vault.unlocked) return null;
+  const want = expectedId.toLowerCase();
+  const same = (key: string) => {
+    try {
+      return idOf(key).toLowerCase() === want;
+    } catch {
+      return false;
+    }
+  };
+  const found: RoleKeyMatch[] = [];
+  const ids = (await vault.contracts()).filter((id) => id !== except && !SPECIAL.has(id) && /^[0-9a-f]{64}$/.test(id));
+  for (const address of ids) {
+    const r = await vault.load(address);
+    for (const [role, key] of Object.entries(r.roleKeys ?? {})) if (same(key)) found.push({ address, role, key, meta: r.meta });
+    for (const h of r.roleKeyHistory ?? []) if (same(h.key)) found.push({ address, role: h.role, key: h.key, meta: r.meta, removed: true });
+  }
+  found.sort((a, b) => Number(!!a.removed) - Number(!!b.removed) || (b.meta?.lastOpenedAt ?? 0) - (a.meta?.lastOpenedAt ?? 0));
+  return found[0] ?? null;
+}
+
 /** Writes a name/case/description, by the vault's owner (marks it renamed, so a later package import keeps it). */
 export function renameMeta(current: EscrowMeta | undefined, wire: Partial<WireMeta>, now: number): EscrowMeta {
   const w = normalizeWireMeta(wire);

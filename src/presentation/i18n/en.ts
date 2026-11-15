@@ -492,6 +492,8 @@ export const en = {
   'roleKey.removeWarn': 'Before removing it, save the key somewhere safe (a vault backup or a password manager).',
   'roleKey.removeHistory': 'You can undo this with "Restore removed key", as long as you don\'t erase this escrow\'s data.',
   'roleKey.restoreRemoved': 'Restore removed key',
+  'roleKey.foundElsewhere': 'Your vault already holds the {role} key for this escrow’s role id: it is stored with {escrow}. Use the same key here?',
+  'roleKey.useFound': 'Use this key',
   'roleKey.removedAt': 'removed on',
   'roleKey.eraseWarn': 'If no one else holds a copy, payout and refund become impossible. Export a vault backup first.',
   'terms.eraseConfirm': 'Erase data',

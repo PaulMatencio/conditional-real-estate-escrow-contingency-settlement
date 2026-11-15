@@ -8,7 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { IDENTITY_RECORD, type CallReceipt, type CircuitArgs, type EscrowPartyGateway, type VaultRecord } from '@/application/partyPorts';
 import { runPartyAction, finalizeBlockers, trackVault } from '@/application/partyService';
 import { createTermsPackage, lenderPackageOf } from '@/application/termsService';
-import { deployedMeta, listDirectory, withPackageMeta } from '@/application/escrowDirectory';
+import { deployedMeta, findRoleKey, listDirectory, withPackageMeta, type RoleKeyMatch } from '@/application/escrowDirectory';
 import type { DirectoryEntry, EscrowMeta } from '@/domain/escrowMeta';
 import { DEFAULT_DECIMALS, toBase } from '@/domain/amount';
 import { deployTracker } from '@/application/deployProgress';
@@ -80,6 +80,8 @@ interface EscrowCtx {
   // keys
   roleKey: (role: PartyRole) => string | null;
   setRoleKey: (role: PartyRole, hex: string | null) => Promise<void>;
+  /** A key held in this vault for another escrow whose role id is the one this escrow expects for `role`. */
+  findRoleKeyElsewhere: (role: PartyRole) => Promise<RoleKeyMatch | null>;
   // simulator
   sim: EscrowSimulator | null;
   /** `loan`: a loan-financed escrow (contract v2: buyer deposit 40 %, loan 60 %), lender terms stored in the vault too. */
@@ -332,6 +334,15 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
 
   const roleKey = useCallback((role: PartyRole) => record.roleKeys?.[role] ?? null, [record.roleKeys]);
 
+  const findRoleKeyElsewhere = useCallback(
+    async (role: PartyRole) => {
+      const expected = view?.roles[role];
+      if (!expected || !vault.unlocked) return null;
+      return findRoleKey(vault, expected, (k) => roleIdHex(secretKeyFromHex(k)), activeRef.current ?? undefined);
+    },
+    [view, vault]
+  );
+
   const setRoleKey = useCallback(
     async (role: PartyRole, hex: string | null) => {
       if (hex !== null) secretKeyFromHex(hex);
@@ -562,6 +573,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     notice,
     setNotice,
     roleKey,
+    findRoleKeyElsewhere,
     setRoleKey,
     sim,
     createSimulation,
