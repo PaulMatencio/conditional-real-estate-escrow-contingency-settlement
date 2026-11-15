@@ -10,6 +10,8 @@ import type { StepSink } from '@/application/deployProgress';
 import { compactText, deepMessage } from '@/domain/errors';
 import { indexerHttpUrl, networkConfig } from '../config/network';
 import { ZK_ASSET_PATH } from '../contract/compiled';
+import { withFallback } from '../indexer/fallbackIndexer';
+import { sharedIndexerBreaker, type IndexerBreaker } from '../indexer/indexerBreaker';
 import { persistentPrivateStateProvider } from '../storage/privateStateProvider';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
 import type { WalletSession } from './connector';
@@ -68,55 +70,24 @@ async function stage<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 export type AppProviders = MidnightProviders<string, string, unknown>;
 
-type Pdp = ReturnType<typeof indexerPublicDataProvider>;
-
-/**
- * Indexer reads with a fallback. Wallets report their own indexer, and not all of them index the same data (Lace in
- * Brave reports Blockfrost's Midnight service; 1AM reports its own): contract state and history can be missing there
- * even though the contract exists. The configured indexer (`midnight.config.json`) is tried first; the wallet's is the
- * fallback. Lookups return the first non-empty answer; "watch" promises resolve with whichever indexer sees the data first.
- */
-export function withFallback(primary: Pdp, fallback: Pdp): Pdp {
-  const first = async <T,>(a: () => Promise<T>, b: () => Promise<T>): Promise<T> => {
-    try {
-      const r = await a();
-      if (r !== null && r !== undefined) return r;
-    } catch {
-      /* fall through to the wallet's indexer */
-    }
-    return b();
-  };
-  const overrides: Record<string, (...args: never[]) => unknown> = {
-    queryContractState: (...a: never[]) => first(() => (primary.queryContractState as never as (...x: never[]) => Promise<unknown>)(...a), () => (fallback.queryContractState as never as (...x: never[]) => Promise<unknown>)(...a)),
-    queryUnshieldedBalances: (...a: never[]) => first(() => (primary.queryUnshieldedBalances as never as (...x: never[]) => Promise<unknown>)(...a), () => (fallback.queryUnshieldedBalances as never as (...x: never[]) => Promise<unknown>)(...a)),
-    queryDeployContractState: (...a: never[]) => first(() => (primary.queryDeployContractState as never as (...x: never[]) => Promise<unknown>)(...a), () => (fallback.queryDeployContractState as never as (...x: never[]) => Promise<unknown>)(...a)),
-    watchForTxData: (...a: never[]) => Promise.any([(primary.watchForTxData as never as (...x: never[]) => Promise<unknown>)(...a), (fallback.watchForTxData as never as (...x: never[]) => Promise<unknown>)(...a)]),
-    watchForDeployTxData: (...a: never[]) => Promise.any([(primary.watchForDeployTxData as never as (...x: never[]) => Promise<unknown>)(...a), (fallback.watchForDeployTxData as never as (...x: never[]) => Promise<unknown>)(...a)])
-  };
-  return new Proxy(primary, {
-    get(target, prop, receiver) {
-      if (typeof prop === 'string' && prop in overrides) return overrides[prop];
-      const v = Reflect.get(target, prop, receiver);
-      return typeof v === 'function' ? v.bind(target) : v;
-    }
-  });
-}
-
 /** How long a built transaction stays valid (midnight-js 5 `config.ttlSeconds`). */
 const TTL_SECONDS = 3600;
 
 /**
  * Assembles midnight-js 5 providers from a connected wallet. Endpoints and the network id come from the wallet's own
  * configuration (respects the user's network choice); the proof server is the configured local one.
+ *
+ * `indexerBreaker` (shared by default): while the configured indexer is failing, reads go straight to the wallet's
+ * indexer for a cooldown instead of failing — and logging — on every query.
  */
-export async function createWalletProviders(session: WalletSession, store: KeyValueStore, sink?: StepSink): Promise<AppProviders> {
+export async function createWalletProviders(session: WalletSession, store: KeyValueStore, sink?: StepSink, indexerBreaker: IndexerBreaker = sharedIndexerBreaker()): Promise<AppProviders> {
   const api: ConnectedAPI = session.api;
   const cfg = await api.getConfiguration();
 
   const walletIndexer = indexerPublicDataProvider(cfg.indexerUri, cfg.indexerWsUri);
   const publicDataProvider =
     cfg.networkId === networkConfig.networkId
-      ? withFallback(indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS), walletIndexer)
+      ? withFallback(indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS), walletIndexer, indexerBreaker)
       : walletIndexer;
   // midnight-js 5 checks every artefact against the compiler's contract-manifest.json (served by the /zk route).
   const zkConfigProvider = new FetchZkConfigProvider<string>(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });

@@ -1,8 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Home, Moon, ShieldCheck, Sun, Wallet, X } from 'lucide-react';
+import { Activity, Home, Moon, ShieldCheck, Sun, Wallet, X } from 'lucide-react';
 import { KNOWN_WALLETS } from '@/infrastructure/wallet/connector';
 import { shortHex } from '@/domain/hex';
 import { useApp } from '../providers/AppProvider';
@@ -10,6 +10,7 @@ import { LOCALES, useT, type Locale } from '../i18n';
 import { Badge, Spinner } from './ui';
 import { DustBadge } from './DustCard';
 import { EscrowSwitcher } from './EscrowSwitcher';
+import { HealthModal } from './HealthModal';
 
 function WalletModal({ onClose }: { onClose: () => void }) {
   const { t } = useT();
@@ -86,11 +87,13 @@ function useTheme() {
   };
 }
 
-/** Sticky top navigation: brand, role pages, language, theme, wallet. */
+/** Sticky top navigation: brand, role pages, escrow switcher, infrastructure health, language, theme, wallet. */
 export function Header() {
   const { t, locale, setLocale } = useT();
   const { connector, disconnectWallet } = useApp();
   const [picker, setPicker] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const closeHealth = useCallback(() => setHealthOpen(false), []);
   const { light, toggle } = useTheme();
   const session = connector.status === 'connected' ? connector.session : null;
 
@@ -130,6 +133,10 @@ export function Header() {
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <EscrowSwitcher />
+          <button type="button" className="btn-ghost !px-2.5 !py-1.5" onClick={() => setHealthOpen(true)} title={t('health.title')} aria-haspopup="dialog">
+            <Activity size={14} aria-hidden />
+            <span>{t('health.button')}</span>
+          </button>
           <select aria-label={t('common.language')} className="input !w-auto !py-1.5" value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
             {LOCALES.map((l) => (
               <option key={l.id} value={l.id}>
@@ -159,6 +166,7 @@ export function Header() {
         </div>
       </div>
       {picker && <WalletModal onClose={() => setPicker(false)} />}
+      {healthOpen && <HealthModal onClose={closeHealth} />}
     </header>
   );
 }

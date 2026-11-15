@@ -1,6 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
 import { Header } from '../components/Header';
+import { IndexerBanner } from '../components/IndexerBanner';
 import { I18nProvider } from '../i18n';
 import { AppProvider } from './AppProvider';
 import { EscrowProvider } from './EscrowProvider';
@@ -11,6 +12,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <AppProvider>
         <EscrowProvider>
           <Header />
+          <IndexerBanner />
           {children}
         </EscrowProvider>
       </AppProvider>

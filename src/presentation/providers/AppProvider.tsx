@@ -1,13 +1,18 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { CONTRACT_SLOT, registerMissing, runAction, stagedDeploy } from '@/application/adminService';
+import { CheckInfrastructure, type InfrastructureReport } from '@/application/checkInfrastructure';
+import type { IndexerAvailability } from '@/application/ports';
 import { activeSink, deployTracker, type DeployProgress } from '@/application/deployProgress';
 import { friendlyMessage } from '@/domain/errors';
 import { bytesToHex } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms } from '@/domain/escrow';
-import { MAINTENANCE_BATCH_SIZE, networkConfig } from '@/infrastructure/config/network';
+import { MAINTENANCE_BATCH_SIZE, contractConfig, indexerHttpUrl, networkConfig } from '@/infrastructure/config/network';
+import { ZK_ASSET_PATH } from '@/infrastructure/contract/compiled';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
+import { createHealthProbes } from '@/infrastructure/health/probes';
+import { sharedIndexerBreaker } from '@/infrastructure/indexer/indexerBreaker';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
 import { exportAuthorityKey, importAuthorityKey } from '@/infrastructure/storage/authorityKey';
 import { signingKeyHex } from '@/infrastructure/storage/signingKeyCodec';
@@ -56,6 +61,10 @@ interface App {
   /** Connected wallet's DUST as it reports it (null if not connected / not answering). */
   dust: DustReport | null;
   refreshDust: () => Promise<void>;
+  /** Live state of the configured indexer as seen by Wallet Mode queries (circuit breaker, drives the banner). */
+  indexerAvailability: IndexerAvailability;
+  /** Checks every infrastructure element (Health window). */
+  checkInfrastructure: () => Promise<InfrastructureReport>;
 }
 
 const Ctx = createContext<App | null>(null);
@@ -71,6 +80,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   if (!connectorRef.current) connectorRef.current = new WalletConnector(networkConfig.networkId);
   const connector = connectorRef.current;
   const connState = useSyncExternalStore(connector.subscribe, connector.getState, connector.getState);
+
+  const breaker = sharedIndexerBreaker();
+  const indexerAvailability = useSyncExternalStore(breaker.subscribe, breaker.get, breaker.get);
+  const infrastructure = useMemo(
+    () =>
+      new CheckInfrastructure(
+        createHealthProbes(
+          { ...networkConfig, indexerHttp: indexerHttpUrl(), zkBase: ZK_ASSET_PATH, keyCircuit: contractConfig.deployCircuits[0] ?? 'configure', caspBase: '/api/casp' },
+          connector,
+          { fetch: (...a) => fetch(...a), WebSocket: typeof WebSocket === 'undefined' ? undefined : WebSocket }
+        )
+      ),
+    [connector]
+  );
+  // Stable, so the Health window does not re-run every check whenever this provider re-renders (dust / state polls).
+  const checkInfrastructure = useCallback(() => infrastructure.execute(), [infrastructure]);
 
   const [wallets, setWallets] = useState<DetectedWallet[]>([]);
   const [adminKey, setAdminKeyState] = useState<string | null>(null);
@@ -306,7 +331,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     verifyAdminKey: () => (state && value.adminRoleId ? state.roles.admin === value.adminRoleId : null),
     dust,
-    refreshDust
+    refreshDust,
+    indexerAvailability,
+    checkInfrastructure
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
