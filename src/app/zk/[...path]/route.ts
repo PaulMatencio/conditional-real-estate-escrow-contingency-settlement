@@ -14,7 +14,22 @@ export const dynamic = 'force-dynamic';
  */
 const ALLOWED = /^(keys\/[A-Za-z0-9_]+\.(prover|verifier)|zkir\/[A-Za-z0-9_]+\.bzkir|compiler\/contract-(manifest|info)\.json)$/;
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+/**
+ * A key the compiled contract does not have was asked for: the requesting page runs code built against another
+ * compile (opened before the last `compact compile`, or served by a dev server started before it). Say which page,
+ * once per page and artefact, so the server log points at the tab to reload (CLAUDE.md "Contract updates must not
+ * break the dApp").
+ */
+const reported = new Set<string>();
+function reportStale(req: NextRequest, rel: string) {
+  const from = req.headers.get('referer') ?? req.headers.get('origin') ?? 'an unknown page';
+  const k = `${from}|${rel}`;
+  if (reported.has(k)) return;
+  reported.add(k);
+  console.warn(`[zk] ${rel} is not in the compiled contract; requested by ${from}. That page runs code from before the last contract compile: reload it (and restart the dev server if it predates the compile).`);
+}
+
+export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path: parts } = await ctx.params;
   // parts[0] is the contract name segment; the rest is the artefact path.
   if (parts[0] !== contractConfig.name) return new NextResponse('Not found', { status: 404 });
@@ -33,6 +48,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: stri
       }
     });
   } catch {
+    if (rel.startsWith('keys/') || rel.startsWith('zkir/')) reportStale(req, rel);
     return new NextResponse('Not found', { status: 404 });
   }
 }
