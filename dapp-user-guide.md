@@ -11,7 +11,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 | Role | Page | Main job |
 | --- | --- | --- |
 | Admin | `/admin` | Deploys and initializes the escrow, prepares and distributes the private terms, whitelists the KYC provider (CASP), finalizes |
-| Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price, waives or disputes contingencies |
+| Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price (in a cash deal this also clears Financing), waives inspection or title, disputes contingencies |
 | Seller | `/seller` | Accepts the terms, proves KYC, receives the payout |
 | Inspector | `/inspector` | Attests the inspection result |
 | Lender | `/lender` | Loan deals only: deposits (or refuses) the loan. A cash deal has no lender |
@@ -125,7 +125,7 @@ Either way they add the escrow to their vault once; the app then checks that the
 1. Tell the buyer and seller they can accept. The *Finalize initialization* card shows **Acceptance on-chain: buyer ✓ / seller ✓** and refreshes every 15 seconds (or click **Refresh**).
 2. When the card says ready, click **Finalize initialization**. The status becomes **Created**: the buyer can deposit.
 
-Finalize is refused while: a party has not accepted the current version, no terms backup is confirmed, the resolver is also another role, an attestor is the seller, the dispute deadline is not after the closing deadline, or the closing deadline has passed.
+Finalize is refused while: a party has not accepted the current version, no terms backup is confirmed, the resolver is also another role, an attestor is the seller, in a loan deal the lender is not set or is also the buyer, seller or resolver (a cash deal has no lender to check), the dispute deadline is not after the closing deadline, or the closing deadline has passed.
 
 ### 9. After finalization
 
@@ -162,16 +162,17 @@ None of these three is secret. Never send the secret role key to anyone.
 1. Make sure the wallet's **shielded balance** of the escrow token covers the amount, and that you have DUST for the fee. The *Funding & vault* card shows the amount, your balance and any shortfall.
 2. *Actions* → **Deposit into escrow**, confirm, approve in the wallet. Deadline: **before the closing deadline**.
 3. The status becomes **Funded**, and *KYC buyer* shows verified. The deposit is one shielded coin of exactly the agreed amount; any other amount is rejected.
+4. **Cash deal:** the same deposit also clears the **Financing** contingency (the *Contingencies* card shows it passed). There is no separate financing step and nothing to waive.
 
 ### During the contingency review
 
 1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector and title agent can attest (in a loan deal, the lender deposits or refuses the loan).
-2. **Cash deal:** nothing to do for Financing: your deposit locks the full price and already cleared it (the *Contingencies* card shows it passed). It cannot be waived or voided.
+2. **Financing:** in a cash deal there is nothing to do: your deposit locks the full price and already cleared it. In a loan deal it clears when the lender deposits the loan. Financing can never be waived or voided.
 3. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below).
 4. For each contingency you may:
-   - **Waive contingency** (choose which): you accept the risk without that attestation. Final.
+   - **Waive contingency** (Inspection or Title): you accept the risk without that attestation. Final. Financing is not offered.
    - Wait for the attestor's result.
-5. When every contingency is passed or waived, the status becomes **ReadyToClose**.
+5. When every contingency is passed or waived, the status becomes **ReadyToClose**. In a cash deal that means inspection and title, since Financing is already passed.
 6. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
 7. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
 
@@ -371,7 +372,7 @@ How loaded openings behave:
 1. **Open the escrow** (`/verify/<address>`) and check the **status**: *ReadyToClose* (all contingencies passed or waived) before the release; *Closed* once the seller is paid.
 2. **Proof of locked funds**: the price is locked and nothing has been paid out yet.
 3. **Verify the price**: as custodian, **Verify the amounts now**; otherwise **Load opening** with the price opening from the buyer or seller. Add the deposit or loan openings in a loan deal, and the payout keys only if the deed must state who is paid.
-4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a cash deal shows Financing *waived*.
+4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a cash deal shows Financing *passed* (cleared by the buyer's deposit), with no attestor report.
 5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP record** if a party sends you the file).
 6. **Deadlines and timing**: the cooling-off period, if any, is over (no release before). Note the dispute deadline: once it passes, an escrow still waiting for the seller's valid KYC can be expired and the buyer refunded.
 7. **Issue the certificate** in the same visit (**Export JSON bundle** or **Print / save as PDF**) and seal or sign it.
@@ -470,8 +471,12 @@ Every transaction your browser builds is logged in your vault: when, which actio
 | *issuer not whitelisted* on a KYC pre-check | The CASP key changed or was never whitelisted | The admin whitelists the active CASP key (before finalization) |
 | Release blocked: *ERROR\_SELLER\_KYC\_REQUIRED* / *ERROR\_KYC\_EXPIRED* | Seller KYC missing or expired on-chain | The seller requests a new attestation and clicks **Submit seller KYC** |
 | *CASP simulator unreachable* | The simulator is not running | Start it on port 8787 |
+| *Cash deal: financing is cleared by the buyer's deposit* | You tried to waive or void Financing in a cash deal | Nothing to do: the deposit already cleared it |
+| *Loan-financed escrow: top up instead of waiving financing* | Financing cannot be waived in a loan deal | Wait for the lender's deposit, or top up the missing amount |
 
 **Can the amount be changed after acceptance?** Only before finalization: the admin generates a new package and configures again, and both parties accept again.
+
+**Why is there no financing step in a cash deal?** The buyer's deposit locks the full price, so it proves the funds itself: the contract marks Financing passed at the deposit. No lender is configured and nobody attests or waives financing.
 
 **Can I accept or deposit on behalf of someone else?** No. Every action proves the caller's own role key, and payouts go only to the committed payout keys.
 
