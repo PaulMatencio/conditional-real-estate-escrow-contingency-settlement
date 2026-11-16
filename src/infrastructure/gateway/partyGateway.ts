@@ -20,7 +20,7 @@ import { maintenanceOf, toEscrowView, type LedgerInput } from '../contract/view'
 import type { PrivateInputs } from '../contract/witnesses';
 import type { AppProviders } from '../wallet/providers';
 import type { WalletSession } from '../wallet/connector';
-import { describeError, AdminGateway } from './adminGateway';
+import { describeError, foreignCircuits, AdminGateway } from './adminGateway';
 import { IndexerChainHistory } from '../indexer/chainHistorySource';
 
 /**
@@ -68,6 +68,12 @@ export class PartyGateway implements EscrowPartyGateway {
     if (this.found) return this.found;
     const have = await AdminGateway.registered(this.providers, this.contractAddress);
     const all = allCircuitIds();
+    // An escrow deployed by an older build carries circuits this build no longer has (e.g. submitFinancing);
+    // midnight-js would fail fetching their keys with a bare 404. Its ledger layout differs too: refuse clearly.
+    const foreign = foreignCircuits(have, all);
+    if (foreign.length > 0) {
+      throw new AppError('CONTRACT_VERSION', `Escrow ${this.contractAddress.slice(0, 10)}… was deployed with an older contract version (circuits unknown to this build: ${foreign.join(', ')}). Archive it in the escrow switcher and use an escrow deployed with the current contract.`);
+    }
     const subset = all.every((c) => have.has(c)) ? undefined : all.filter((c) => have.has(c));
     const self = this;
     const compiled = makeCompiledContract(() => self.current.secretKey(), subset, {
