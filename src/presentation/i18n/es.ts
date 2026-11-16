@@ -855,5 +855,14 @@ export const es: Partial<Record<MessageKey, string>> = {
   'adminTerms.missingPkg': 'Las condiciones ya están comprometidas en la cadena, pero esta bóveda no contiene el paquete. Restáurelo desde su copia más abajo. Generar un paquete nuevo obligaría a configurar de nuevo, y ambas partes tendrían que aceptar otra vez.',
   'adminTerms.restoredUnchecked': 'Paquete de condiciones restaurado, pero no se pudo leer el contrato en el indexador: todavía no se ha comprobado con los compromisos en la cadena. Recargue la pestaña y revise las insignias de coincidencia antes de distribuir.',
   'adminTerms.acceptance': 'Aceptación en la cadena, versión de configuración',
-  'fund.trackHint': '«Localizar el índice de la bóveda» encuentra solo el depósito en la cadena pública: no hace falta hash, aunque haya depositado otra persona. Pegue un hash de transacción de depósito o un índice solo si falla.'
+  'fund.trackHint': '«Localizar el índice de la bóveda» encuentra solo el depósito en la cadena pública: no hace falta hash, aunque haya depositado otra persona. Pegue un hash de transacción de depósito o un índice solo si falla.',
+  'health.detail.stale-bundle': 'Esta página se construyó para otra versión del contrato que la que sirve el servidor (los circuitos difieren). Reinicie la dApp y recargue la página.',
+  'dir.olderContract': 'contrato antiguo',
+  'compat.staleTitle': 'Esta página está desactualizada',
+  'compat.staleBody': 'Su código se construyó para otra versión del contrato que la que sirve ahora el servidor de la dApp, así que algunas acciones fallarían. Reinicie la dApp (npm run dev, o npm run build && npm start) y recargue la página.',
+  'compat.reload': 'Recargar la página',
+  'compat.olderTitle': 'Este escrow usa una versión antigua del contrato',
+  'compat.olderBody': 'Se desplegó antes de la última actualización del contrato, así que esta versión de la dApp no puede leerlo ni actuar sobre él. Su registro en la bóveda, sus claves y sus condiciones se conservan. Archívelo y luego despliegue o abra un escrow creado con el contrato actual.',
+  'compat.archived': 'Archivado. Elija otro escrow en el selector.',
+  'compat.explorer': 'Abrir en el explorador'
 };

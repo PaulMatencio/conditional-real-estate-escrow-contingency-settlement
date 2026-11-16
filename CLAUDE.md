@@ -110,7 +110,8 @@ CASP simulator (test only): `npm run start-server` in `../../eu-counterparty-sim
   sends wall clock − 120 s (`TIME_MARGIN`).
 - Ledger reads inside `&&`/ternaries after a witness comparison trigger disclosure errors: read into a `const` first.
 - Any contract change ⇒ the ledger layout changes ⇒ **existing deployments become unreadable** by the new dApp;
-  redeploy test escrows. Rebuild/restart the dApp before deploying.
+  redeploy test escrows. Rebuild/restart the dApp before deploying. The dApp must still handle the old escrows
+  cleanly (see *Contract updates must not break the dApp*).
 
 ## dApp conventions
 
@@ -126,6 +127,27 @@ CASP simulator (test only): `npm run start-server` in `../../eu-counterparty-sim
 - i18n: every user-facing string in `src/presentation/i18n/{en,fr,es}.ts` (same keys in all three).
 - Terms packages: format `EscrowTermsV2` with 8 commitments (incl. cooling-off); older packages are refused with a
   clear message, never silently accepted.
+
+## Contract updates must not break the dApp
+
+Design the dApp so that updating the contract (adding, removing or renaming a circuit, changing the ledger layout)
+never breaks it. Escrows deployed by an older build stay in the vault and the switcher; they must not crash a page.
+
+- **Check compatibility before touching an escrow.** Every path that opens or reads an escrow (admin, party pages,
+  notary portal, compliance console, escrow switcher, public reads) first compares the on-chain circuits with the
+  build's (`foreignCircuits` / `allCircuitIds`) and checks that the ledger decodes. On a mismatch it stops with one
+  clear `CONTRACT_VERSION` error (i18n), before any midnight-js call, proof or ZK artefact fetch.
+- **Never request a ZK artefact the build does not have.** Only circuits in `allCircuitIds()` reach the
+  `FetchZkConfigProvider` or `findDeployedContract`; a bare `/zk/... 404` in the console is a bug.
+- **Degrade, don't fail.** An incompatible escrow shows its address, an "older contract version" badge and the
+  actions that still make sense (archive, export vault backup, open in the explorer); the rest of the app, and the
+  other escrows, keep working.
+- **Record the build.** At deploy, store the contract build fingerprint (hash of `compiler/contract-info.json`) in
+  `VaultRecord.meta`, so the dApp can tell "older version" apart from "wrong network / not an escrow".
+- **Keep the user's data.** A contract update never deletes or rewrites vault records, terms packages or KYC bundles
+  of older escrows; archiving is the user's choice.
+- **Test it.** Each contract change adds or keeps an application test that opens an escrow with an unknown circuit
+  and a changed ledger, and expects the clean `CONTRACT_VERSION` error, not a crash.
 
 ## Testing and delivery
 

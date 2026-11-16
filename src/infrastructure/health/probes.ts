@@ -1,6 +1,7 @@
 import type { HealthProbe, ProbeOutcome } from '@/application/ports';
 import type { HealthCheckId } from '@/domain/health';
 import type { WalletConnector } from '../wallet/connector';
+import { bundleDrift, driftText, proofCircuitsOf } from '../contract/compat';
 
 type FetchFn = typeof fetch;
 type WebSocketCtor = new (url: string, protocols?: string | string[]) => WebSocket;
@@ -122,6 +123,11 @@ export interface ProbeConfig {
   zkBase: string;
   /** A circuit that is always compiled, to check the proving keys exist. */
   keyCircuit: string;
+  /**
+   * The proof circuits this page's code was built with: compared with the server's compiled contract to catch a page
+   * or dev server older than the last compile (keys requested for circuits the server no longer has).
+   */
+  buildCircuits?: readonly string[];
   /** Same-origin CASP simulator proxy (`/api/casp`, see src/app/api/casp). */
   caspBase: string;
 }
@@ -158,7 +164,16 @@ export function createHealthProbes(cfg: ProbeConfig, connector: WalletConnector,
       const manifest = await env.fetch(`${cfg.zkBase}/compiler/contract-manifest.json`, { signal });
       if (!manifest.ok) return { status: 'down', detail: { code: 'not-compiled' } };
       const key = await env.fetch(`${cfg.zkBase}/keys/${cfg.keyCircuit}.verifier`, { signal });
-      return key.ok ? { status: 'ok' } : { status: 'degraded', detail: { code: 'no-keys' } };
+      if (!key.ok) return { status: 'degraded', detail: { code: 'no-keys' } };
+      if (cfg.buildCircuits) {
+        const info = await env.fetch(`${cfg.zkBase}/compiler/contract-info.json`, { signal, cache: 'no-store' });
+        const server = info.ok ? proofCircuitsOf(await info.json().catch(() => null)) : null;
+        if (server) {
+          const d = bundleDrift(server, cfg.buildCircuits);
+          if (d.added.length || d.removed.length) return { status: 'degraded', detail: { code: 'stale-bundle', info: driftText(d) } };
+        }
+      }
+      return { status: 'ok' };
     }),
     probe('casp', `${cfg.caspBase} → CASP simulator`, true, async (signal) => {
       const url = `${trim(cfg.caspBase)}/health`;

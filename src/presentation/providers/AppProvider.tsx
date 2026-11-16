@@ -8,7 +8,7 @@ import { friendlyMessage } from '@/domain/errors';
 import { bytesToHex } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms } from '@/domain/escrow';
 import { MAINTENANCE_BATCH_SIZE, contractConfig, indexerHttpUrl, networkConfig } from '@/infrastructure/config/network';
-import { ZK_ASSET_PATH } from '@/infrastructure/contract/compiled';
+import { ZK_ASSET_PATH, allCircuitIds } from '@/infrastructure/contract/compiled';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
 import { createHealthProbes } from '@/infrastructure/health/probes';
@@ -87,7 +87,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () =>
       new CheckInfrastructure(
         createHealthProbes(
-          { ...networkConfig, indexerHttp: indexerHttpUrl(), zkBase: ZK_ASSET_PATH, keyCircuit: contractConfig.deployCircuits[0] ?? 'configure', caspBase: '/api/casp' },
+          { ...networkConfig, indexerHttp: indexerHttpUrl(), zkBase: ZK_ASSET_PATH, keyCircuit: contractConfig.deployCircuits[0] ?? 'configure', buildCircuits: allCircuitIds(), caspBase: '/api/casp' },
           connector,
           { fetch: (...a) => fetch(...a), WebSocket: typeof WebSocket === 'undefined' ? undefined : WebSocket }
         )

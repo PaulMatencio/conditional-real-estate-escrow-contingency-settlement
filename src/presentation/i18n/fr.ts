@@ -855,5 +855,14 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'adminTerms.missingPkg': 'Les conditions sont déjà engagées sur la chaîne, mais ce coffre ne contient pas le paquet. Restaurez-le depuis votre sauvegarde ci-dessous. Générer un nouveau paquet obligerait à reconfigurer, et les deux parties devraient accepter à nouveau.',
   'adminTerms.restoredUnchecked': 'Paquet de conditions restauré, mais le contrat n\'a pas pu être lu depuis l\'indexeur : il n\'a pas encore été vérifié par rapport aux engagements sur la chaîne. Rechargez l\'onglet et vérifiez les badges de correspondance avant de distribuer.',
   'adminTerms.acceptance': 'Acceptation sur la chaîne, version de configuration',
-  'fund.trackHint': '« Localiser l\'index du coffre » retrouve seul le dépôt sur la chaîne publique : aucun hash nécessaire, même si quelqu\'un d\'autre a déposé. Collez un hash de transaction de dépôt ou un index seulement en cas d\'échec.'
+  'fund.trackHint': '« Localiser l\'index du coffre » retrouve seul le dépôt sur la chaîne publique : aucun hash nécessaire, même si quelqu\'un d\'autre a déposé. Collez un hash de transaction de dépôt ou un index seulement en cas d\'échec.',
+  'health.detail.stale-bundle': 'Cette page a été construite pour une autre version du contrat que celle servie par le serveur (circuits différents). Redémarrez la dApp et rechargez la page.',
+  'dir.olderContract': 'ancien contrat',
+  'compat.staleTitle': 'Cette page n’est plus à jour',
+  'compat.staleBody': 'Son code a été construit pour une autre version du contrat que celle que le serveur de la dApp sert maintenant : certaines actions échoueraient. Redémarrez la dApp (npm run dev, ou npm run build && npm start), puis rechargez la page.',
+  'compat.reload': 'Recharger la page',
+  'compat.olderTitle': 'Cet escrow utilise une ancienne version du contrat',
+  'compat.olderBody': 'Il a été déployé avant la dernière mise à jour du contrat : cette version de la dApp ne peut ni le lire ni agir dessus. Son enregistrement dans le coffre, ses clés et ses conditions sont conservés. Archivez-le, puis déployez ou ouvrez un escrow créé avec le contrat actuel.',
+  'compat.archived': 'Archivé. Choisissez un autre escrow dans le sélecteur.',
+  'compat.explorer': 'Ouvrir dans l’explorateur'
 };

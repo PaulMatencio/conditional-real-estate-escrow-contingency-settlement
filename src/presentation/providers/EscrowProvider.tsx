@@ -23,6 +23,7 @@ import { generateRecipientKeyPair } from '@/infrastructure/crypto/aead';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { PartyGateway } from '@/infrastructure/gateway/partyGateway';
+import { isContractVersionError } from '@/infrastructure/contract/compat';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { EscrowSimulator } from '@/infrastructure/simulator/escrowSimulator';
 import { migratePlaintextAdminKey, migratePlaintextAuthorityKeys, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
@@ -76,6 +77,11 @@ interface EscrowCtx {
   readOnly: boolean;
   /** Read-only reads: the indexer has not answered for 15 s (midnight-js keeps retrying), or the last read failed. */
   publicRead: { slow: boolean; error: string | null };
+  /**
+   * The current escrow was deployed with another build of the contract (CLAUDE.md "Contract updates must not break
+   * the dApp"): the reason, shown as a banner with Archive. Null when the escrow is readable by this build.
+   */
+  incompatible: string | null;
   now: bigint;
   refresh: () => Promise<void>;
   gateway: () => Promise<EscrowPartyGateway>;
@@ -315,6 +321,8 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
   const [publicRead, setPublicRead] = useState<{ slow: boolean; error: string | null }>({ slow: false, error: null });
   const publicInFlight = useRef(false);
   useEffect(() => setPublicRead({ slow: false, error: null }), [readOnly, contractAddress]);
+  const [incompatible, setIncompatible] = useState<string | null>(null);
+  useEffect(() => setIncompatible(null), [contractAddress, mode]);
 
   /** No wallet: the public ledger from the indexer. One read at a time (a dead indexer is retried for a long time). */
   const readPublic = useCallback(async (address: string): Promise<EscrowView | null> => {
@@ -324,9 +332,11 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     try {
       const v = await readPublicView(address);
       setPublicRead({ slow: false, error: null });
+      setIncompatible(null);
       return v;
     } catch (e) {
       setPublicRead({ slow: false, error: friendlyMessage(e) });
+      if (isContractVersionError(e)) setIncompatible(friendlyMessage(e));
       return null;
     } finally {
       clearTimeout(timer);
@@ -349,6 +359,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const gw = await gateway();
         v = await gw.readView();
         setView(v);
+        setIncompatible(null);
         setNow(await gw.now());
       }
       const round = v.lifecycleRound.toString();
@@ -359,6 +370,12 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         lastRound.current = round;
       }
     } catch (e) {
+      // Another build's escrow: one clear banner (with Archive), whatever triggered the read, and no stale view.
+      if (isContractVersionError(e)) {
+        setIncompatible(friendlyMessage(e));
+        setView(null);
+        return;
+      }
       // The 15 s background poll stays quiet on a failed read (indexer hiccup, rate limit): the next poll retries and
       // the last good view stays on screen. Reads the user asked for still report the error.
       if (opts?.quiet) console.warn('[escrow] background refresh failed; retrying on the next poll', e);
@@ -437,6 +454,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         const msg = friendlyMessage(e);
         deployTracker.fail(msg);
         setError(msg);
+        if (isContractVersionError(e)) setIncompatible(msg);
         return undefined;
       } finally {
         setBusy(false);
@@ -611,6 +629,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     view,
     readOnly,
     publicRead,
+    incompatible,
     now,
     refresh,
     gateway,

@@ -6,7 +6,7 @@ import { fr } from '@/presentation/i18n/fr';
 
 // Every value the Health window can show must have a message in every locale (the keys are built at run time).
 const IDS: HealthCheckId[] = ['indexer-http', 'indexer-ws', 'wallet', 'wallet-indexer', 'proof-server', 'zk-artifacts', 'casp', 'node-rpc'];
-const DETAILS: HealthDetailCode[] = ['http-error', 'unreadable', 'opaque-ok', 'no-response', 'not-graphql', 'ws-unavailable', 'ws-no-connect', 'ws-no-handshake', 'ws-error', 'ws-closed', 'no-wallet', 'wallet-disconnected', 'wallet-network', 'not-compiled', 'no-keys', 'casp-disabled', 'timeout', 'slow', 'error'];
+const DETAILS: HealthDetailCode[] = ['http-error', 'unreadable', 'opaque-ok', 'no-response', 'not-graphql', 'ws-unavailable', 'ws-no-connect', 'ws-no-handshake', 'ws-error', 'ws-closed', 'no-wallet', 'wallet-disconnected', 'wallet-network', 'not-compiled', 'no-keys', 'stale-bundle', 'casp-disabled', 'timeout', 'slow', 'error'];
 const STATUSES: HealthStatus[] = ['ok', 'degraded', 'down', 'skipped'];
 
 const keys = [

@@ -11,6 +11,7 @@ import { toSigningKey, verifyingKeyId } from '../storage/signingKeyCodec';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
 import { LedgerTransaction, SucceedEntirely } from '@midnight-ntwrk/midnight-js-types';
 import { operationNames, readContractState, type ChainContractState } from '../contract/chainState';
+import { assertCompatible, olderContractError } from '../contract/compat';
 import { AppError, compactText, deepMessage } from '@/domain/errors';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms, TxReceipt } from '@/domain/escrow';
@@ -51,8 +52,6 @@ const toReceipt = (r: { public: { txId: string; txHash: string; blockHeight: num
   blockHeight: r.public.blockHeight
 });
 
-/** Circuits registered on-chain that this build does not know (a different contract version). */
-export const foreignCircuits = (registered: Iterable<string>, known: readonly string[]): string[] => [...registered].filter((c) => !known.includes(c));
 
 /** The `Maybe<…>` arguments of the constructor / `configure`, in contract order. */
 function maybeTerms(t: ConfigureTerms) {
@@ -94,10 +93,7 @@ export class AdminGateway {
   private static async open(providers: AppProviders, address: string, getSecretKey: () => Uint8Array): Promise<Found> {
     const have = await AdminGateway.registered(providers, address);
     const all = allCircuitIds();
-    const foreign = foreignCircuits(have, all);
-    if (foreign.length > 0) {
-      throw new AppError('CONTRACT_VERSION', `Contract ${address.slice(0, 10)}… is a different version of this escrow (circuits unknown to this build: ${foreign.join(', ')}). Nothing was changed.`);
-    }
+    assertCompatible(address, have, all); // another build's escrow: clear error, nothing changed
     const subset = all.every((c) => have.has(c)) ? undefined : all.filter((c) => have.has(c));
     return (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(providers, {
       contractAddress: address,
@@ -161,7 +157,13 @@ export class AdminGateway {
   static async readState(providers: AppProviders, address: string): Promise<AdminState> {
     const s = await readContractState(providers.publicDataProvider, address);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
-    const L = ledger(s.data);
+    assertCompatible(address, operationNames(s));
+    let L: ReturnType<typeof ledger>;
+    try {
+      L = ledger(s.data);
+    } catch (e) {
+      throw olderContractError(address, [], 'its ledger layout differs from this build', e);
+    }
     const hex = (b: Uint8Array) => bytesToHex(b);
     const configured = new Set([...L.configured]);
     const have = await AdminGateway.registered(providers, address);

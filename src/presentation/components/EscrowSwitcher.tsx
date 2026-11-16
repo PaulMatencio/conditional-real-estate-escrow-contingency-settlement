@@ -7,6 +7,7 @@ import { CASE_ID_MAX, LABEL_MAX, displayLabel, matchesSearch, runLabels, sortEnt
 import { shortHex } from '@/domain/hex';
 import { TEST_CASES, testMatrixMarkdown } from '@/domain/testCases';
 import { networkConfig } from '@/infrastructure/config/network';
+import { buildFingerprint, isContractVersionError } from '@/infrastructure/contract/compat';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { sharedVault } from '@/infrastructure/storage/vaultInstance';
 import { useEscrow } from '../providers/EscrowProvider';
@@ -26,10 +27,14 @@ const PAGE_ROLE: Record<string, string> = {
 const ROLES = ['admin', 'buyer', 'seller', 'lender', 'inspector', 'titleAgent', 'resolver', 'custodian'];
 const ENDED = 'ended';
 const UNREADABLE = 'unreadable';
+/** Deployed with another build of the contract: kept in the vault, not usable by this build (CLAUDE.md). */
+const OLDER = 'older-contract';
 
 const statusTone = (s: string | undefined) =>
   !s || s === UNREADABLE || s === ENDED
     ? 'muted'
+    : s === OLDER
+      ? 'warn'
     : s === 'Closed'
       ? 'ok'
       : ['Forfeited', 'Withdrawn', 'Refunded', 'Expired', 'Cancelled'].includes(s)
@@ -66,6 +71,10 @@ export function EscrowSwitcher() {
   const [form, setForm] = useState({ label: '', caseId: '', description: '', tags: '' });
   const [msg, setMsg] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const [build, setBuild] = useState<string | null>(null);
+  useEffect(() => {
+    void buildFingerprint().then(setBuild, () => undefined);
+  }, []);
 
   useEffect(() => setRole(PAGE_ROLE[path] ?? 'all'), [path]);
   useEffect(() => {
@@ -81,10 +90,16 @@ export function EscrowSwitcher() {
     let alive = true;
     for (const e of directory) {
       if (e.meta?.archived && !showArchived) continue;
+      // Deployed by another build (fingerprint recorded at deploy): no need to read the chain to know it is not usable.
       const read: Promise<string> =
         e.meta?.network === 'simulator'
           ? Promise.resolve(sim?.contractAddress === e.address ? sim.view().status : ENDED)
-          : readPublicView(e.address).then((v) => v.status as string, () => UNREADABLE);
+          : e.meta?.build && build && e.meta.build !== build
+            ? Promise.resolve(OLDER)
+            : readPublicView(e.address).then(
+                (v) => v.status as string,
+                (err) => (isContractVersionError(err) ? OLDER : UNREADABLE)
+              );
       void read.then((s) => {
         if (!alive) return;
         setStatuses((x) => (x[e.address] === s ? x : { ...x, [e.address]: s }));
@@ -95,7 +110,7 @@ export function EscrowSwitcher() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, showArchived]);
+  }, [open, showArchived, build]);
 
   const runs = useMemo(() => runLabels(directory), [directory]);
   const current = directory.find((e) => e.address === contractAddress);
@@ -209,7 +224,7 @@ export function EscrowSwitcher() {
                           {e.meta?.tags?.length ? ` · ${e.meta.tags.join(', ')}` : ''}
                         </span>
                       </span>
-                      <Badge tone={statusTone(st)}>{st === ENDED ? t('dir.ended') : st === UNREADABLE ? t('dir.unreadable') : (st ?? '…')}</Badge>
+                      <Badge tone={statusTone(st)}>{st === ENDED ? t('dir.ended') : st === UNREADABLE ? t('dir.unreadable') : st === OLDER ? t('dir.olderContract') : (st ?? '…')}</Badge>
                       <span className="hidden w-28 truncate text-xs text-slate-400 sm:inline">{e.roles.join(', ') || '—'}</span>
                       <span className="hidden w-16 text-right text-xs text-slate-500 sm:inline">{ago(e.meta?.lastOpenedAt)}</span>
                     </button>

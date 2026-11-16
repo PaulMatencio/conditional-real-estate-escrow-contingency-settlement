@@ -10,6 +10,7 @@ import { LOCALES, useT, type Locale } from '../i18n';
 import { Badge, Spinner } from './ui';
 import { DustBadge } from './DustCard';
 import { EscrowSwitcher } from './EscrowSwitcher';
+import { CompatBanner } from './CompatBanner';
 import { HealthModal } from './HealthModal';
 
 function WalletModal({ onClose }: { onClose: () => void }) {
@@ -167,6 +168,7 @@ export function Header() {
       </div>
       {picker && <WalletModal onClose={() => setPicker(false)} />}
       {healthOpen && <HealthModal onClose={closeHealth} />}
+      <CompatBanner />
     </header>
   );
 }

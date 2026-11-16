@@ -38,6 +38,7 @@ export type HealthDetailCode =
   | 'wallet-network'
   | 'not-compiled'
   | 'no-keys'
+  | 'stale-bundle'
   | 'casp-disabled'
   | 'timeout'
   | 'slow'

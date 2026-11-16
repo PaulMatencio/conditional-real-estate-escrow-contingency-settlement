@@ -29,6 +29,11 @@ export interface EscrowMeta extends WireMeta {
   /** Status read the last time the switcher refreshed (public ledger), for the list. */
   lastStatus?: string;
   lastOpenedAt?: number;
+  /**
+   * Contract build this escrow was deployed with (fingerprint of the compiler's circuit and ledger description, set at
+   * deploy). Differs from the running build → the escrow is an older contract version (CLAUDE.md).
+   */
+  build?: string;
 }
 
 export const LABEL_MAX = 80;

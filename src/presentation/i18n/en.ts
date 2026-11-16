@@ -907,7 +907,16 @@ export const en = {
   'adminTerms.missingPkg': 'The terms are already committed on-chain, but this vault does not hold the package. Restore it from your backup below. Generating a new package would mean configuring again, and both parties would have to accept again.',
   'adminTerms.restoredUnchecked': 'Terms package restored, but the contract could not be read from the indexer, so it was not checked against the on-chain commitments yet. Reload the tab and check the match badges before distributing.',
   'adminTerms.acceptance': 'Acceptance on-chain, configuration version',
-  'fund.trackHint': 'Locate vault index finds the deposit on the public chain by itself: no hash needed, even if someone else deposited. Paste a deposit transaction hash or an index only if that fails.'
+  'fund.trackHint': 'Locate vault index finds the deposit on the public chain by itself: no hash needed, even if someone else deposited. Paste a deposit transaction hash or an index only if that fails.',
+  'health.detail.stale-bundle': 'This page was built for another version of the contract than the one the server serves (circuits differ). Restart the dApp and reload the page.',
+  'dir.olderContract': 'older contract',
+  'compat.staleTitle': 'This page is out of date',
+  'compat.staleBody': 'Its code was built for another version of the contract than the one the dApp server now serves, so some actions would fail. Restart the dApp (npm run dev, or npm run build && npm start), then reload the page.',
+  'compat.reload': 'Reload the page',
+  'compat.olderTitle': 'This escrow uses an older contract version',
+  'compat.olderBody': 'It was deployed before the last contract update, so this version of the dApp cannot read or act on it. Its vault record, keys and terms are kept. Archive it, then deploy or open an escrow made with the current contract.',
+  'compat.archived': 'Archived. Pick another escrow in the switcher.',
+  'compat.explorer': 'Open in the explorer'
 } as const;
 
 export type MessageKey = keyof typeof en;

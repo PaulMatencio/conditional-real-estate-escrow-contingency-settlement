@@ -1,6 +1,5 @@
 import type { ConnectedAPI } from '@midnightntwrk/dapp-connector-api';
 import { dappConnectorWalletProviders } from '@midnight-ntwrk/midnight-js-dapp-connector-proof-provider';
-import { FetchZkConfigProvider } from '@midnight-ntwrk/midnight-js-fetch-zk-config-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import type { MidnightProviders, PrivateStateProvider, ProofProvider } from '@midnight-ntwrk/midnight-js-types';
@@ -10,6 +9,7 @@ import type { StepSink } from '@/application/deployProgress';
 import { compactText, deepMessage } from '@/domain/errors';
 import { indexerHttpUrl, networkConfig } from '../config/network';
 import { ZK_ASSET_PATH } from '../contract/compiled';
+import { GuardedZkConfigProvider } from '../contract/guardedZkConfig';
 import { withFallback } from '../indexer/fallbackIndexer';
 import { sharedIndexerBreaker, type IndexerBreaker } from '../indexer/indexerBreaker';
 import { persistentPrivateStateProvider } from '../storage/privateStateProvider';
@@ -90,7 +90,8 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
       ? withFallback(indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS), walletIndexer, indexerBreaker)
       : walletIndexer;
   // midnight-js 5 checks every artefact against the compiler's contract-manifest.json (served by the /zk route).
-  const zkConfigProvider = new FetchZkConfigProvider<string>(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });
+  // Guarded: a circuit this build lacks, or a key the server lacks, is a clear contract-version error, not a 404.
+  const zkConfigProvider = new GuardedZkConfigProvider(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });
   // Proving always uses the LOCAL proof server from midnight.config.json — never the wallet's hosted one
   // (cfg.proverServerUri) nor the wallet's in-extension prover. A proof request carries the circuit's private inputs
   // (witnesses such as the role secret key), which must not leave this machine. Compact 0.36 circuits are ZKIR v3:

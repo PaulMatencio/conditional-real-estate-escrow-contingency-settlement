@@ -458,6 +458,8 @@ Every transaction your browser builds is logged in your vault: when, which actio
 | The vault card says the page is not secure (or *Cannot read properties of undefined (reading 'importKey')*) | The address is not a secure page (e.g. a LAN IP) | Use `localhost`, `127.0.0.1` or a `*.localhost` name |
 | A role page starts with an empty vault | Each address has its own vault | Use the address you used before, or restore a vault backup |
 | *Contract state not found on this network* | Wrong address, wrong network, or a contract from before the 0.36 upgrade | Check the address and the wallet's network; redeploy if the contract is from an older build |
+| Banner *This escrow uses an older contract version*; the switcher shows *older contract* | The escrow was deployed before the last contract update; this version of the dApp cannot read or act on it | Click **Archive** on the banner (or in the switcher), then deploy or open an escrow made with the current contract. Its vault record, keys and terms are kept |
+| Banner *This page is out of date* (Health: *Compiled contract and ZK keys* degraded) | The page or the dApp server predates the last contract compile | Restart the dApp (`npm run dev`, or `npm run build && npm start`) and reload the page |
 | *This contract was deployed on the ledger 8 era* | Built with the previous compiler | Deploy a new escrow |
 | *TERMS\_COMMITMENT\_MISMATCH* | The terms package is not the one committed on-chain | Ask the admin (or custodian) for the right `terms-for-<role>.json` |
 | *This envelope is addressed to another key* | The file was encrypted to another envelope key, or opened on another address | Send the admin the envelope key of the vault you use, and get a new file |

@@ -18,6 +18,7 @@ import { TxLogPanel } from './TxLogPanel';
 import { VaultGate } from './party/PartySetup';
 import { useEscrow } from '../providers/EscrowProvider';
 import { deployedMeta } from '@/application/escrowDirectory';
+import { buildFingerprint } from '@/infrastructure/contract/compat';
 import { LABEL_MAX, normalizeWireMeta } from '@/domain/escrowMeta';
 import { DEFAULT_DECIMALS, isValidDecimals } from '@/domain/amount';
 import { TEST_CASES, metaForCase, testCase } from '@/domain/testCases';
@@ -177,7 +178,8 @@ function DeployTab() {
           const addr = await deploy({ adminRoleId, buyerRoleId: buyer, sellerRoleId: seller, tokenColor: color, ticker });
           if (!addr) return;
           try {
-            await saveMeta(addr, () => deployedMeta(wire, networkConfig.networkId, Date.now(), decimalsNum ?? undefined));
+            const build = await buildFingerprint();
+            await saveMeta(addr, () => ({ ...deployedMeta(wire, networkConfig.networkId, Date.now(), decimalsNum ?? undefined), build }));
             await switchEscrow(addr);
           } catch (e) {
             setError((e as Error).message);
