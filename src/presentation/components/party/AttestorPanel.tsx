@@ -2,11 +2,11 @@
 import { useState } from 'react';
 import { FileCheck2 } from 'lucide-react';
 import type { ContingencyName } from '@/domain/escrowView';
-import type { DocumentBundle } from '@/domain/report';
+import { DEFAULT_BUNDLE_RECIPIENTS, bundleFileName, isEnvelopeKey, lastExports, recipientConflict, recipientSlug, upsertRecipient, type BundleRecipient, type DocumentBundle } from '@/domain/report';
 import { b64, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { documentCommitment, newSalt } from '@/infrastructure/crypto/escrowCrypto';
 import { useEscrow } from '../../providers/EscrowProvider';
-import { useT } from '../../i18n';
+import { useT, type MessageKey } from '../../i18n';
 import { Alert, Card, Field, Mono } from '../ui';
 import { ConfirmDialog, FilePick, downloadJson, fmtTime, readFileBytes } from './helpers';
 
@@ -21,37 +21,120 @@ interface Doc {
 }
 
 /**
- * Exports the report bundle (report + salt + commitment) for the buyer, seller and notary: sealed to a recipient's
- * envelope key (one file per recipient, no shared secret) or with a passphrase given to them separately.
+ * Exports the report bundle (report + salt + commitment) for the buyer, seller, notary, resolver or anyone else: one
+ * file per recipient sealed to their envelope key, named after them (`title-bundle-for-seller.json`) and saying inside
+ * who it is for. Recipients' keys are remembered in this escrow's vault record (they are public keys), with the date
+ * each one last received this report. A passphrase file remains for recipients without an envelope key.
  */
 function BundleExport({ doc, contingency }: { doc: Doc; contingency: ContingencyName }) {
   const { t } = useT();
-  const { contractAddress } = useEscrow();
+  const { contractAddress, record, updateRecord, vaultUnlocked } = useEscrow();
+  const saved = record.bundleRecipients ?? [];
+  const [keys, setKeys] = useState<Record<string, string>>(() => Object.fromEntries(saved.map((r) => [r.id, r.key])));
+  const [others, setOthers] = useState<BundleRecipient[]>(() => saved.filter((r) => r.id.startsWith('other:')));
+  const [newName, setNewName] = useState('');
   const [pass, setPass] = useState('');
-  const [to, setTo] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const bundle = (): DocumentBundle => ({ format: 'EscrowDocumentBundleV1', contractAddress: contractAddress ?? undefined, contingency, fileName: doc.name, salt: doc.salt, reportHash: doc.hash, document: b64(doc.bytes) });
-  const file = `${contingency.toLowerCase()}-bundle.json`;
-  const go = (p: Promise<unknown>) => {
-    setErr(null);
-    void p.then((s) => downloadJson(file, s), (e) => setErr((e as Error).message));
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
+  const exported = lastExports(record.bundleExports, doc.hash);
+
+  const rows: BundleRecipient[] = [...DEFAULT_BUNDLE_RECIPIENTS.map((id) => ({ id, key: '' })), ...others].map((r) => ({ ...r, key: (keys[r.id] ?? '').trim() }));
+  const nameOf = (r: BundleRecipient) => (r.id.startsWith('other:') ? (r.label ?? r.id.slice(6)) : t(`bundle.to.${r.id}` as MessageKey));
+  const bundle = (sealedFor?: string): DocumentBundle => ({ format: 'EscrowDocumentBundleV1', contractAddress: contractAddress ?? undefined, contingency, fileName: doc.name, salt: doc.salt, reportHash: doc.hash, document: b64(doc.bytes), ...(sealedFor ? { sealedFor } : {}) });
+
+  /** Checks a row's key: well formed, and not the key already saved for someone else. */
+  const problem = (r: BundleRecipient, list: BundleRecipient[]): string | null => {
+    if (!isEnvelopeKey(r.key)) return t('bundle.badKey').replace('{who}', nameOf(r));
+    const other = recipientConflict(list, r.id, r.key);
+    return other ? t('bundle.sameKey').replace('{who}', nameOf(r)).replace('{other}', nameOf(other)) : null;
   };
+
+  /** Seals for each given row, downloads the files, then records the keys and deliveries in the vault. */
+  const exportFor = async (targets: BundleRecipient[]) => {
+    setMsg(null);
+    const list = rows.filter((r) => r.key);
+    for (const r of targets) {
+      const p = problem(r, list);
+      if (p) return setMsg({ tone: 'bad', text: p });
+    }
+    try {
+      for (const r of targets) downloadJson(bundleFileName(contingency, r.id), await sealTo(bundle(nameOf(r)), r.key, nameOf(r)));
+      if (vaultUnlocked) {
+        const at = Date.now();
+        await updateRecord((rec) => ({
+          ...rec,
+          bundleRecipients: targets.reduce((acc, r) => upsertRecipient(acc, { id: r.id, key: r.key, ...(r.label ? { label: r.label } : {}) }), rec.bundleRecipients ?? []),
+          bundleExports: [...(rec.bundleExports ?? []), ...targets.map((r) => ({ reportHash: doc.hash, recipient: r.id, at }))]
+        }));
+      }
+      setMsg({ tone: 'ok', text: t('bundle.exported').replace('{who}', targets.map(nameOf).join(', ')) });
+    } catch (e) {
+      setMsg({ tone: 'bad', text: (e as Error).message });
+    }
+  };
+
+  const addOther = () => {
+    const label = newName.trim();
+    if (!label) return;
+    const id = `other:${recipientSlug(label)}`;
+    if (rows.some((r) => r.id === id)) return setMsg({ tone: 'warn', text: t('bundle.exists').replace('{who}', label) });
+    setOthers((o) => [...o, { id, label, key: '' }]);
+    setNewName('');
+  };
+
+  const ready = rows.filter((r) => r.key);
   return (
-    <div className="mt-3 space-y-2 rounded-xl border border-midnight-700 p-3">
+    <div className="mt-3 space-y-3 rounded-xl border border-midnight-700 p-3">
       <p className="text-sm text-slate-300">{t('attest.exportHint')}</p>
+      <ul className="space-y-2">
+        {rows.map((r) => (
+          <li key={r.id} className="grid gap-2 sm:grid-cols-[8rem_1fr_auto] sm:items-center">
+            <label htmlFor={`bk-${contingency}-${r.id}`} className="text-sm font-medium text-white">
+              {nameOf(r)}
+            </label>
+            <input
+              id={`bk-${contingency}-${r.id}`}
+              className="input mono"
+              placeholder={t('attest.recipientKey')}
+              value={keys[r.id] ?? ''}
+              onChange={(e) => setKeys((k) => ({ ...k, [r.id]: e.target.value }))}
+              spellCheck={false}
+            />
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn-ghost" disabled={!r.key} onClick={() => void exportFor([r])}>
+                {t('bundle.exportOne')}
+              </button>
+              <span className="text-xs text-slate-500">{exported[r.id] ? `${t('bundle.sentAt')} ${fmtTime(Math.floor(exported[r.id] / 1000))}` : t('bundle.notSent')}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
       <div className="flex flex-wrap items-center gap-2">
-        <input className="input mono !w-80" placeholder={t('attest.recipientKey')} aria-label={t('attest.recipientKey')} value={to} onChange={(e) => setTo(e.target.value)} spellCheck={false} />
-        <button type="button" className="btn-ghost" disabled={!to.trim()} onClick={() => go(sealTo(bundle(), to.trim()))}>
-          {t('attest.exportTo')}
+        <input className="input !w-56" placeholder={t('bundle.otherName')} aria-label={t('bundle.otherName')} value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <button type="button" className="btn-ghost" disabled={!newName.trim()} onClick={addOther}>
+          {t('bundle.addOther')}
+        </button>
+        <button type="button" className="btn-primary ml-auto" disabled={ready.length < 2} onClick={() => void exportFor(ready)}>
+          {t('bundle.exportAll').replace('{n}', String(ready.length))}
         </button>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      {!vaultUnlocked && <p className="text-xs text-warn">{t('bundle.notRemembered')}</p>}
+      <div className="flex flex-wrap items-center gap-2 border-t border-midnight-700 pt-3">
+        <span className="text-sm text-slate-400">{t('bundle.orPassphrase')}</span>
         <input type="password" className="input !w-48" placeholder={t('vault.passphrase')} aria-label={t('vault.passphrase')} value={pass} onChange={(e) => setPass(e.target.value)} />
-        <button type="button" className="btn-ghost" disabled={pass.length < 8} onClick={() => go(sealWithPassphrase(bundle(), pass))}>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={pass.length < 8}
+          onClick={() => void sealWithPassphrase(bundle(), pass).then((x) => downloadJson(`${contingency.toLowerCase()}-bundle.json`, x), (e) => setMsg({ tone: 'bad', text: (e as Error).message }))}
+        >
           {t('attest.exportBundle')}
         </button>
       </div>
-      {err && <Alert tone="bad" onClose={() => setErr(null)}>{err}</Alert>}
+      {msg && (
+        <Alert tone={msg.tone} onClose={() => setMsg(null)}>
+          {msg.text}
+        </Alert>
+      )}
     </div>
   );
 }

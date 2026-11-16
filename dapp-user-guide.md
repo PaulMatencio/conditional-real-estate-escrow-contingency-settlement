@@ -260,11 +260,12 @@ The app checks your role id is set on-chain for that escrow, adds it to your vau
    1. **Choose document**: your report (PDF or any file). The browser hashes it locally with a fresh random salt; the file is never uploaded.
    2. Pick the **Outcome**: *Favourable (pass / approve / clear)* or *Unfavourable*.
    3. **Submit on-chain** and confirm. The result is anchored with the **Report commitment**.
-4. Export the **report bundle** (the report, its salt and its commitment) for the buyer, seller and notary, either:
-   - sealed to each recipient's **envelope key** (one file per recipient, nothing else to share), or
-   - **Export with passphrase** (one file; give them the passphrase separately).
+4. Export the **report bundle** (the report, its salt and its commitment). The export card lists **Buyer**, **Seller**, **Notary** and **Dispute resolver**; add anyone else with **Add recipient**.
+   - Paste each recipient's **envelope key** once: buyer, seller and resolver find it on their *Private terms vault* card, the notary on the custodian card. Keys are remembered for this escrow (they are public keys), and a key already saved for someone else is refused, so the seller's key cannot end up in the buyer's file.
+   - **Export sealed file** per row, or **Export for all**. Each file is named after its recipient (`title-bundle-for-seller.json`) and says inside who it is for; each row then shows the date it was sent.
+   - No envelope key? **Export with passphrase** makes one file; give the passphrase separately.
 
-   They check it in their *Attestor reports* card (or the Notary portal). Later, *Submitted reports* lists every report you committed with its salt: **Re-select the report to export again** (the file must hash to the committed report).
+   Recipients check the bundle in their *Attestor reports* card (or the Notary portal). Later, *Submitted reports* lists every report you committed with its salt: **Re-select the report to export again** (the file must hash to the committed report); the remembered keys and sent dates are there again.
 
 ### Rules
 

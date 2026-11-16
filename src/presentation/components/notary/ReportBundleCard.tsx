@@ -18,6 +18,7 @@ export interface ReportVerdict {
 
 interface Opened {
   fileName: string;
+  sealedFor?: string;
   contingency: ContingencyName;
   bytes: Uint8Array;
   match: ReportMatch;
@@ -54,7 +55,7 @@ export function ReportBundleCard({ view, onVerdict }: { view: EscrowView | null;
       if (b.contractAddress && b.contractAddress.toLowerCase() !== view.contractAddress.toLowerCase()) throw new Error(t('terms.otherContract'));
       const bytes = unb64(b.document);
       const match = matchReport(view, await documentCommitment(bytes, b.salt), b.contingency);
-      setOpened({ fileName: b.fileName, contingency: b.contingency, bytes, match });
+      setOpened({ fileName: b.fileName, sealedFor: b.sealedFor, contingency: b.contingency, bytes, match });
       setPass('');
       const ok = match.kind === 'current';
       onVerdict?.({ label: `${t('report.verdictLabel')}: ${b.fileName}`, ok, detail: ok ? `${t('notary.docMatches')} ${match.contingency}` : match.kind === 'voided' ? t('report.voided') : t('notary.docNoMatch') });
@@ -80,6 +81,7 @@ export function ReportBundleCard({ view, onVerdict }: { view: EscrowView | null;
       )}
       {opened && m && (
         <div className="space-y-2" aria-live="polite">
+          {opened.sealedFor && <p className="text-xs text-slate-400">{t('bundle.sealedFor')}: {opened.sealedFor}</p>}
           {m.kind === 'current' && (
             <Alert tone={m.submitted ? 'ok' : 'warn'}>
               {t('report.matches').replace('{file}', opened.fileName).replace('{contingency}', contingencyName(m.contingency))}{' '}

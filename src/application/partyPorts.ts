@@ -159,6 +159,9 @@ export interface VaultRecord {
   penaltyCoin?: { index?: string; txHash?: string };
   /** Attestors: the admin's assignment notice for this escrow (role, role id, deadlines, name). */
   assignment?: import('@/domain/assignment').AssignmentNotice;
+  /** Attestors: who report bundles go to (envelope keys are public) and what was exported to whom. */
+  bundleRecipients?: import('@/domain/report').BundleRecipient[];
+  bundleExports?: import('@/domain/report').BundleExport[];
   /** Salt + metadata of documents this party committed (FR-ATTEST-02). */
   documents?: { contingency: ContingencyName; reportHash: string; salt: string; fileName: string; at: number }[];
   /** Contract maintenance-authority (signing) key, admin only; removed once the authority is renounced. */
