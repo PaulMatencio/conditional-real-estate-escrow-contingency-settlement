@@ -322,17 +322,41 @@ The admin needs a confirmed backup of the private terms before finalizing; the c
 Later, with the copy held:
 
 - **Restore to a party** who lost their vault: choose the recipient, paste their envelope public key, **Encrypt & download**, and send them the file.
-- **Single openings**: export the price or one payout key on its own, or click **Verify the price now** to add the verified price to the certificate.
+- **Single openings**: export one term on its own (price, deposit, a payout key…), or click **Verify the amounts now** to verify every amount in the copy at once (price, deposit and, when they apply, loan amount, refund term and cooling-off penalty) and add them to the certificate. Payout keys are not included: export and load those separately if you need them.
 - **Download an offline archive** with a passphrase (12+ characters).
 - **Remove the custodian copy** only once the escrow is closed or archived (type REMOVE).
 
+### Openings: proving one private term
+
+The price, the deposit, the payout keys and the other private terms are never on-chain in clear: the escrow holds only a **commitment** for each (a hash of the value and a random salt). An **opening** is a small file, `opening-<kind>.json`, that reveals **one** of these values with its salt. **Load opening** recomputes the commitment in your browser and compares it with the one on-chain: ✓ proves the value is exactly the one the escrow was configured with. Nothing else is revealed.
+
+Parties holding the terms (buyer, seller, resolver) export openings from their *Private terms vault* card; as custodian you export them from your copy.
+
+| Opening (`kind`) | Proves | When to load it |
+| --- | --- | --- |
+| Price (`price`) | the agreed sale price | almost always: it is what the deed records |
+| Buyer deposit (`amount`) | the amount the buyer locked | loan deals (deposit ≠ price); in a cash deal it equals the price |
+| Buyer / seller payout key (`buyerPayout`, `sellerPayout`) | the shielded key that is refunded or paid | only to certify who receives the funds |
+| Loan amount, lender payout key, refund term (`lenderShare`, `lenderPayout`, `loanTerms`) | the loan terms | loan deals, if the deed records the financing |
+| Cooling-off penalty (`coolingOff`) | the withdrawal penalty | only when the cooling-off term is on |
+
+**None is required.** Load only what your act needs; a cash deal usually needs the price alone. Without any opening the certificate still proves everything public: status, locked funds, contingency results, KYC anchors and deadlines, but states no amount.
+
+How loaded openings behave:
+
+- **One file per click**: repeat **Load opening** for each file.
+- **They add up**: every opening that matches goes into the certificate.
+- **One per kind**: loading a second opening of the same kind replaces the first.
+- **A failed one is not added**: it is listed with ✗ (altered file, other escrow or older terms) and leaves a valid one already loaded in place.
+- **Kept until you leave the page**: reloading or leaving `/verify/<address>` clears them. Load everything, then export or print the certificate in the same visit.
+
 ### When the parties ask for verification
 
-*Proof of locked funds* states whether the price is locked. *Local verifier* checks files against the chain:
+*Proof of locked funds* states whether the price is locked and not paid out. *Local verifier* checks files against the chain:
 
 | You receive | From | Load with | Proves |
 | --- | --- | --- | --- |
-| An opening file (`opening-amount.json`, …) | buyer, seller or your custodian copy | **Load opening** | the price or a payout key matches its on-chain commitment |
+| An opening file (`opening-price.json`, …) | buyer, seller or your custodian copy | **Load opening** | that one term matches its on-chain commitment (see *Openings* above) |
 | A KYC attestation file | buyer or seller | **Load CASP record** | it is signed by a whitelisted CASP and anchored as the buyer's or seller's KYC |
 | A report bundle | an attestor | *Attestor reports* card → passphrase (if any), **Open report bundle** | the report is the one committed on-chain for that contingency (and its outcome) |
 | A report + its document salt (plain) | an attestor | enter the **Document salt**, then **Load document** | the same, without a bundle |
@@ -340,6 +364,16 @@ Later, with the copy held:
 ### Issue the certificate
 
 *EU notarial escrow certificate*: **Export JSON bundle** (the proof bundle with the verified openings, never their salts) or **Print / save as PDF**, ready for a qualified electronic seal or signature.
+
+### Checklist before the deed
+
+1. **Open the escrow** (`/verify/<address>`) and check the **status**: *ReadyToClose* (all contingencies passed or waived) before the release; *Closed* once the seller is paid.
+2. **Proof of locked funds**: the price is locked and nothing has been paid out yet.
+3. **Verify the price**: as custodian, **Verify the amounts now**; otherwise **Load opening** with the price opening from the buyer or seller. Add the deposit or loan openings in a loan deal, and the payout keys only if the deed must state who is paid.
+4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a cash deal shows Financing *waived*.
+5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP record** if a party sends you the file).
+6. **Deadlines**: the closing and dispute deadlines have not passed.
+7. **Issue the certificate** in the same visit (**Export JSON bundle** or **Print / save as PDF**) and seal or sign it.
 
 ## Compliance officer guide
 
