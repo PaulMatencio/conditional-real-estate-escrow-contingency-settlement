@@ -16,7 +16,8 @@ import { TypedConfirmDialog, fmtTime } from './helpers';
 import { insecureContextMessage } from '@/infrastructure/crypto/aead';
 
 /** FR-WALLET-04: Wallet Mode ⇄ Simulator Mode, the escrow address and the simulator controls. */
-export function ModeBar() {
+/** `walletNote`: replaces the "connect a wallet" warning on pages that work read-only without one (compliance console). */
+export function ModeBar({ walletNote }: { walletNote?: string } = {}) {
   const { t } = useT();
   const { mode, setMode, contractAddress, setContractAddress, sim, createSimulation, simFinalize, setSimTime, now, view, vaultUnlocked, busy } = useEscrow();
   const { connector } = useApp();
@@ -43,7 +44,7 @@ export function ModeBar() {
 
       {mode === 'wallet' ? (
         <div className="mt-3">
-          {connector.status !== 'connected' && <Alert tone="warn">{t('admin.needWallet')}</Alert>}
+          {connector.status !== 'connected' && (walletNote ? <p className="mb-2 text-sm text-slate-400">{walletNote}</p> : <Alert tone="warn">{t('admin.needWallet')}</Alert>)}
           <Field label={t('contract.address')} htmlFor="party-addr">
             <div className="flex gap-2">
               <input id="party-addr" className="input mono" value={addr} onChange={(e) => setAddr(e.target.value)} spellCheck={false} />

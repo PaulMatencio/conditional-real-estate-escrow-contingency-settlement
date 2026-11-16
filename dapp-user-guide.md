@@ -372,7 +372,7 @@ How loaded openings behave:
 3. **Verify the price**: as custodian, **Verify the amounts now**; otherwise **Load opening** with the price opening from the buyer or seller. Add the deposit or loan openings in a loan deal, and the payout keys only if the deed must state who is paid.
 4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a cash deal shows Financing *waived*.
 5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP record** if a party sends you the file).
-6. **Deadlines**: the closing and dispute deadlines have not passed.
+6. **Deadlines and timing**: the cooling-off period, if any, is over (no release before). Note the dispute deadline: once it passes, an escrow still waiting for the seller's valid KYC can be expired and the buyer refunded.
 7. **Issue the certificate** in the same visit (**Export JSON bundle** or **Print / save as PDF**) and seal or sign it.
 
 ## Compliance officer guide
@@ -382,7 +382,7 @@ The compliance officer watches the KYC side of the escrow and, when a CASP withd
 ### Set up (once)
 
 1. The CASP simulator prints an **officer token** (and optionally a notary token) at start. Put them in the dApp's `.env.local` as `CASP_OFFICER_TOKEN` and `CASP_NOTARY_TOKEN`, then restart the dApp.
-2. On `/compliance`, load the escrow with the mode bar (Wallet Mode → connect → contract address → **Load**). Broadcasting needs a wallet for the fee; checking does not.
+2. On `/compliance`, choose **Wallet Mode**, enter the contract address and click **Load**. No wallet is needed to monitor: without one, the console reads the escrow straight from the indexer (KYC anchors, revoked references, which CASP keys are whitelisted). Connect a wallet (any wallet) only to **Broadcast on-chain** a revocation, which pays a small DUST fee.
 
 ### Check the escrow's KYC at any time
 
