@@ -29,6 +29,7 @@ const RULES: { test: RegExp; code: ContractErrorCode; guidance: string }[] = [
   { test: /TERMS_COMMITMENT_MISMATCH[^"'\n]*/, code: 'TERMS_COMMITMENT_MISMATCH', guidance: 'The terms you hold do not open the commitments on the ledger. Do not accept; ask the admin for the package that was configured.' },
   { test: /ERROR_DEPOSIT_COIN_MISMATCH/, code: 'DEPOSIT_COIN_MISMATCH', guidance: 'The deposit coin was not built from the terms (FR-FUND-01). Rebuild it from the Terms vault.' },
   { test: /ERROR_VAULT_COIN_MISMATCH/, code: 'VAULT_COIN_MISMATCH', guidance: 'The vault coin or its Merkle index is stale or wrong. Re-run vault tracking (FR-FUND-03).' },
+  { test: /unknown coin tree root/i, code: 'VAULT_COIN_MISMATCH', guidance: 'The coin index used for the payout is wrong, so the node does not recognise the coin-tree root it leads to. Open Vault tracking and click Locate vault index (it now reads the exact index from the indexer), then retry.' },
   { test: /Vault must be paid out in full/, code: 'VAULT_NOT_FULL', guidance: 'Internal invariant violated. Report to support with the transaction id.' },
   { test: /ERROR_NOT_WHITELISTED[^"'\n]*/, code: 'NOT_WHITELISTED', guidance: 'Untrusted issuer, bad signature, wrong subject or wrong wallet. Check the attestation was issued for your role id and your committed payout key.' },
   { test: /ERROR_KYC_EXPIRED/, code: 'KYC_EXPIRED', guidance: 'The attestation has expired. Obtain a new one from the CASP.' },
