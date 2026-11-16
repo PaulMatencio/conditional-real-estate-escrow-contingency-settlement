@@ -244,6 +244,7 @@ export const es: Partial<Record<MessageKey, string>> = {
   'fund.tracking': 'Seguimiento de la bóveda',
   'fund.depositTx': 'Hash de la transacción de depósito',
   'fund.track': 'Localizar índice de la bóveda',
+  'fund.located': 'Moneda del depósito encontrada: índice {index}. Se guarda con sus condiciones; ya puede liberar los fondos.',
   'fund.manualIndex': 'Índice facilitado por el depositante',
   'fund.setIndex': 'Fijar',
   'fund.v2': 'Punto de validación V-2: el índice se deriva de la transacción de depósito y del estado Zswap del indexador. Confírmelo en la red preview antes de confiar en él.',

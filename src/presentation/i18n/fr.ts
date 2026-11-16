@@ -244,6 +244,7 @@ export const fr: Partial<Record<MessageKey, string>> = {
   'fund.tracking': 'Suivi du coffre',
   'fund.depositTx': 'Hash de la transaction de dépôt',
   'fund.track': 'Localiser l\'index du coffre',
+  'fund.located': 'Pièce du coffre trouvée : index {index}. Il est enregistré avec vos conditions ; vous pouvez libérer les fonds.',
   'fund.manualIndex': 'Index communiqué par le déposant',
   'fund.setIndex': 'Définir',
   'fund.v2': 'Point de validation V-2 : l\'index est dérivé de la transaction de dépôt et de l\'état Zswap de l\'indexeur. Vérifiez-le sur le réseau preview avant de vous y fier.',

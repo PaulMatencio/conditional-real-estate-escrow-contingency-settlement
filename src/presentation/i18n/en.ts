@@ -297,6 +297,7 @@ export const en = {
   'fund.tracking': 'Vault tracking',
   'fund.depositTx': 'Deposit transaction hash',
   'fund.track': 'Locate vault index',
+  'fund.located': 'Vault coin found: index {index}. It is saved with your terms; you can release now.',
   'fund.manualIndex': 'Index shared by the depositor',
   'fund.setIndex': 'Set',
   'fund.v2': 'Validation item V-2: the index is derived from the deposit transaction and the indexer\'s Zswap state. Confirm it on the preview network before relying on it.',

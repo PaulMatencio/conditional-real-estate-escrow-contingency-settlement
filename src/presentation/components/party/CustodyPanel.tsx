@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { Coins, Gavel, Receipt } from 'lucide-react';
+import { friendlyMessage } from '@/domain/errors';
 import { bytesToHex, shortHex } from '@/domain/hex';
 import { hasUsableSellerKyc } from '@/domain/escrowView';
 import { availableActions, type PartyCircuit } from '@/domain/lifecycle';
@@ -71,8 +72,22 @@ function VaultTracking() {
   const [tx, setTx] = useState('');
   const [manual, setManual] = useState('');
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   const pkg = record.terms;
   if (!pkg) return null;
+  const locate = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const index = await trackVaultIndex(tx.trim() || undefined);
+      setMsg({ tone: 'ok', text: t('fund.located').replace('{index}', index) });
+      setTx('');
+    } catch (e) {
+      setMsg({ tone: 'bad', text: friendlyMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
       <p className="mb-2 text-sm text-slate-300">
@@ -81,8 +96,8 @@ function VaultTracking() {
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="flex gap-2">
           <input className="input mono" placeholder={t('fund.depositTx')} aria-label={t('fund.depositTx')} value={tx} onChange={(e) => setTx(e.target.value)} />
-          <button type="button" className="btn-ghost" disabled={busy} onClick={() => (setBusy(true), void trackVaultIndex(tx.trim() || undefined).finally(() => setBusy(false)))}>
-            {t('fund.track')}
+          <button type="button" className="btn-ghost" disabled={busy} onClick={() => void locate()}>
+            {busy && <Spinner />} {t('fund.track')}
           </button>
         </div>
         <div className="flex gap-2">
@@ -97,6 +112,13 @@ function VaultTracking() {
           </button>
         </div>
       </div>
+      {msg && (
+        <div className="mt-2" aria-live="polite">
+          <Alert tone={msg.tone} onClose={() => setMsg(null)}>
+            {msg.text}
+          </Alert>
+        </div>
+      )}
       <p className="mt-2 text-xs text-slate-500">{t('fund.trackHint')}</p>
     </>
   );

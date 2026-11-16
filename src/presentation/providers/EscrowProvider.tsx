@@ -98,7 +98,8 @@ interface EscrowCtx {
   setSimTime: (sec: number) => void;
   timeline: TimelineEvent[];
   casp: HttpCaspGateway;
-  trackVaultIndex: (depositTxHash?: string) => Promise<void>;
+  /** Resolves to the vault coin index found, or throws why it could not be found. */
+  trackVaultIndex: (depositTxHash?: string) => Promise<string>;
   // escrow directory (the vault is the registry)
   /** Every escrow this vault holds a record for, with its name and the roles held here. Empty while locked. */
   directory: DirectoryEntry[];
@@ -444,20 +445,20 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     [gateway, record, vault, activeAddress, refresh, mode, session]
   );
 
+  /** Locate button: resolves to the index found, or throws the reason (shown in the Vault tracking card itself). */
   const trackVaultIndex = useCallback(
-    async (depositTxHash?: string) => {
-      setError(null);
-      try {
-        const gw = await gateway();
-        const base = depositTxHash && record.terms ? { ...record, terms: { ...record.terms, depositTxHash } } : record;
-        const next = await trackVault({ gateway: gw, crypto: termsCrypto, record: base });
-        if (next.terms?.vaultIndex === undefined) throw new Error('Vault index not found yet. Check the deposit transaction hash, or enter the index the depositor shared.');
-        await updateRecord(() => next);
-      } catch (e) {
-        setError(friendlyMessage(e));
-      }
+    async (depositTxHash?: string): Promise<string> => {
+      if (mode === 'wallet' && !session) throw new Error('Connect a wallet to locate the vault coin (it reads the coin tree through your wallet\'s providers).');
+      const gw = await gateway();
+      const hash = depositTxHash?.trim().toLowerCase().replace(/^0x/, '') || undefined;
+      const base = hash && record.terms ? { ...record, terms: { ...record.terms, depositTxHash: hash } } : record;
+      const next = await trackVault({ gateway: gw, crypto: termsCrypto, record: base }, { strict: true });
+      const index = next.terms?.vaultIndex;
+      if (index === undefined) throw new Error('Vault index not found. Check the deposit transaction hash, or enter the index the depositor sees.');
+      await updateRecord(() => next);
+      return index;
     },
-    [gateway, record, updateRecord]
+    [gateway, record, updateRecord, mode, session]
   );
 
   /** Simulator Mode: a ready-to-use escrow with every role key in the vault and the live CASP simulator whitelisted. */

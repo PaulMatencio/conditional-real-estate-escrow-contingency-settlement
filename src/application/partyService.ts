@@ -208,10 +208,17 @@ export async function trackPenaltyCoin(ctx: PartyContext): Promise<VaultRecord> 
 }
 
 /** FR-FUND-03: derive the vault coin index on this party's own (no dependency on the depositor) and store it. */
-export async function trackVault(ctx: PartyContext): Promise<VaultRecord> {
+/**
+ * Finds the vault coin's index and stores it in the terms. In passing (before a payout) a failure is ignored and the
+ * pre-flight reports the missing index; `strict` (the Locate button) rethrows the reason instead.
+ */
+export async function trackVault(ctx: PartyContext, opts: { strict?: boolean } = {}): Promise<VaultRecord> {
   const t = ctx.record.terms;
   if (!t) return ctx.record;
-  const index = await ctx.gateway.locateVaultIndex(t.depositTxHash ?? null, t.terms).catch(() => null);
+  const index = await ctx.gateway.locateVaultIndex(t.depositTxHash ?? null, t.terms).catch((e) => {
+    if (opts.strict) throw e;
+    return null;
+  });
   return index === null ? ctx.record : { ...ctx.record, terms: { ...t, vaultIndex: index.toString() } };
 }
 

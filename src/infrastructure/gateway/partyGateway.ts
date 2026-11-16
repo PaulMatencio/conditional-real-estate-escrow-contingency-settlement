@@ -142,10 +142,10 @@ export class PartyGateway implements EscrowPartyGateway {
       inserted += next.firstFree - before;
       local = next;
     }
-    if (position === null) return null;
+    if (position === null) throw new AppError('VALIDATION', 'This transaction put no coin into this escrow: it is not this escrow\'s deposit. Check the hash and that the right escrow is open.');
     const cfg = blockHash ? { type: 'blockHash' as const, blockHash } : undefined;
     const both = await this.providers.publicDataProvider.queryZSwapAndContractState(this.contractAddress, cfg as never);
-    if (!both) return null;
+    if (!both) throw new AppError('UNKNOWN', 'The indexer returned no coin-tree state for the deposit block, so the index cannot be computed yet. Retry in a minute, or enter the index the depositor sees.');
     const zswap = (both.zswapChainState as unknown as { deserialize(d: Record<string, unknown>): ZswapChainState }).deserialize({ v9: ZswapChainState });
     return zswap.firstFree - inserted + position;
   }
@@ -154,12 +154,22 @@ export class PartyGateway implements EscrowPartyGateway {
     return this.locateCoinIndex('depositToEscrow', depositTxHash);
   }
 
-  /** Each deposit circuit (and a withdrawal refund with a penalty) puts exactly one coin into the contract: its transaction gives that coin's index. */
+  /**
+   * Each deposit circuit (and a withdrawal refund with a penalty) puts exactly one coin into the contract: its
+   * transaction gives that coin's index. Throws an AppError saying why when the index cannot be found (callers that
+   * only try in passing catch it).
+   */
   async locateCoinIndex(circuit: DepositCircuit, txHash: string | null): Promise<bigint | null> {
-    const hash = txHash ?? (await findDepositTxHash(this.contractAddress, circuit).catch(() => null));
-    if (!hash) return null;
+    let hash = txHash?.trim().toLowerCase().replace(/^0x/, '') || null;
+    if (hash && !/^[0-9a-f]{64}$/.test(hash)) throw new AppError('VALIDATION', 'A transaction hash is 64 hexadecimal characters: check what was pasted.');
+    if (!hash) {
+      hash = await findDepositTxHash(this.contractAddress, circuit).catch((e) => {
+        throw new AppError('UNKNOWN', `Could not read this escrow's history from the indexer (${e instanceof Error ? e.message : String(e)}). Check "Health".`);
+      });
+      if (!hash) throw new AppError('VALIDATION', `No ${circuit} transaction found on-chain for this escrow yet.`);
+    }
     const found = await fetchTransaction(hash);
-    if (!found) return null;
+    if (!found) throw new AppError('VALIDATION', `No transaction with this hash or identifier on the ${networkConfig.networkId} indexer. Paste the deposit's transaction hash from the depositor's transaction log.`);
     const tx = Transaction.deserialize('signature', 'proof', 'binding', hexToBytes(found.raw)) as unknown as Transaction<never, never, never>;
     return this.indexFromTx(tx, found.blockHash);
   }
@@ -185,18 +195,25 @@ const fail = (what: string) => (): never => {
   throw new AppError('MISSING_MATERIAL', `This action needs ${what}, which this browser does not hold.`);
 };
 
-/** Indexer lookup of a transaction by hash (same query shape midnight-js uses). */
-export async function fetchTransaction(hash: string): Promise<{ raw: string; blockHash: string; blockHeight: number } | null> {
+/**
+ * Indexer lookup of a transaction (same query shape midnight-js uses), by hash, then by identifier: wallets and logs
+ * show one or the other, and both are 64 hex. Null when the indexer knows neither; throws when it cannot be asked.
+ */
+export async function fetchTransaction(hashOrId: string): Promise<{ raw: string; blockHash: string; blockHeight: number } | null> {
   const query = `query TX($offset: TransactionOffset!) { transactions(offset: $offset) { raw hash block { height hash } } }`;
-  const res = await fetch(indexerHttpUrl(), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query, variables: { offset: { hash: hash.replace(/^0x/, '') } } })
-  });
-  if (!res.ok) return null;
-  const j = (await res.json()) as { data?: { transactions?: { raw: string; block: { height: number; hash: string } }[] } };
-  const t = j.data?.transactions?.[0];
-  return t ? { raw: t.raw, blockHash: t.block.hash, blockHeight: t.block.height } : null;
+  const value = hashOrId.trim().toLowerCase().replace(/^0x/, '');
+  for (const offset of [{ hash: value }, { identifier: value }]) {
+    const res = await fetch(indexerHttpUrl(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables: { offset } })
+    });
+    if (!res.ok) throw new AppError('UNKNOWN', `The indexer did not answer the transaction lookup (HTTP ${res.status}). Check "Health".`);
+    const j = (await res.json()) as { data?: { transactions?: { raw: string; block: { height: number; hash: string } }[] } };
+    const t = j.data?.transactions?.[0];
+    if (t) return { raw: t.raw, blockHash: t.block.hash, blockHeight: t.block.height };
+  }
+  return null;
 }
 
 export { bytesToHex };
