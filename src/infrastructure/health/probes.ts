@@ -163,8 +163,9 @@ export function createHealthProbes(cfg: ProbeConfig, connector: WalletConnector,
     probe('casp', `${cfg.caspBase} → CASP simulator`, true, async (signal) => {
       const url = `${trim(cfg.caspBase)}/health`;
       const res = await env.fetch(url, { method: 'GET', signal });
-      // The proxy answers 404 "disabled" in production builds without CASP_SIM_ENABLED=1: nothing to check then.
-      if (res.status === 404) return { status: 'skipped', detail: { code: 'casp-disabled' } };
+      // The proxy answers 404 "disabled" in production builds without CASP_SIM_ENABLED=1: the KYC steps then fail even
+      // though the simulator itself is running, so this is "down" with its own fix, not "not checked".
+      if (res.status === 404) return { status: 'down', detail: { code: 'casp-disabled' } };
       if (!res.ok) return { status: 'down', detail: { code: 'http-error', info: await statusInfo(res) } };
       const body = (await res.json().catch(() => null)) as { ok?: boolean; casp?: string } | null;
       if (!body?.ok) return { status: 'degraded', detail: { code: 'http-error', info: 'health: ok=false' } };

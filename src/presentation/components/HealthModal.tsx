@@ -14,7 +14,9 @@ const TONE: Record<HealthStatus, 'ok' | 'warn' | 'bad' | 'muted'> = { ok: 'ok', 
 function Explanation({ r }: { r: HealthCheckResult }) {
   const { t } = useT();
   if (!r.detail && r.status === 'ok') return null;
-  const hint = r.status !== 'ok' && r.status !== 'skipped' ? (`health.hint.${r.id}` as MessageKey) : null;
+  // Some details already say what to do; the element's generic hint would then contradict them.
+  const ownFix = r.detail?.code === 'casp-disabled';
+  const hint = r.status !== 'ok' && r.status !== 'skipped' && !ownFix ? (`health.hint.${r.id}` as MessageKey) : null;
   return (
     <p className="mt-1 text-xs text-slate-400">
       {r.detail && t(`health.detail.${r.detail.code}` as MessageKey)}

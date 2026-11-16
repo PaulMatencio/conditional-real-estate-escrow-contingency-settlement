@@ -110,13 +110,13 @@ describe('createHealthProbes', () => {
     expect(await zk(['contract-manifest.json', 'keys/configure.verifier'])).toEqual({ status: 'ok' });
   });
 
-  it('CASP simulator: ok with its name, down with the proxy’s reason, skipped when the proxy is off', async () => {
+  it('CASP simulator: ok with its name, down with the proxy’s reason, down (own reason) when the proxy is off', async () => {
     const casp = (r: Response) => byId(createHealthProbes(cfg, connector({}), env((u) => (u === '/api/casp/health' ? r : json({}, 500)))), 'casp').run(signal());
     expect(await casp(json({ ok: true, casp: 'EU Test CASP', testOnly: true }))).toEqual({ status: 'ok', target: '/api/casp → EU Test CASP' });
     expect(await casp(json({ error: 'CASP simulator not reachable at http://127.0.0.1:8787 (fetch failed).' }, 502))).toMatchObject({
       status: 'down',
       detail: { code: 'http-error', info: 'HTTP 502: CASP simulator not reachable at http://127.0.0.1:8787 (fetch failed).' }
     });
-    expect(await casp(json({ error: 'CASP simulator proxy is disabled in production' }, 404))).toEqual({ status: 'skipped', detail: { code: 'casp-disabled' } });
+    expect(await casp(json({ error: 'CASP simulator proxy is disabled in production' }, 404))).toEqual({ status: 'down', detail: { code: 'casp-disabled' } });
   });
 });
