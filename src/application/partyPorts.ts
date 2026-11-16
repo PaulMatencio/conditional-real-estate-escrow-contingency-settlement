@@ -157,6 +157,8 @@ export interface VaultRecord {
   secondCoin?: { kind: 'loan' | 'topup'; index?: string; txHash?: string };
   /** Cooling-off: the penalty coin the withdrawal refund left in the contract (read from that transaction). */
   penaltyCoin?: { index?: string; txHash?: string };
+  /** Attestors: the admin's assignment notice for this escrow (role, role id, deadlines, name). */
+  assignment?: import('@/domain/assignment').AssignmentNotice;
   /** Salt + metadata of documents this party committed (FR-ATTEST-02). */
   documents?: { contingency: ContingencyName; reportHash: string; salt: string; fileName: string; at: number }[];
   /** Contract maintenance-authority (signing) key, admin only; removed once the authority is renounced. */

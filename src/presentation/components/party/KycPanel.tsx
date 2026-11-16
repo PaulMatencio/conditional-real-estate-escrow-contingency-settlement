@@ -78,7 +78,7 @@ export function KycPanel({ party }: { party: 'buyer' | 'seller' }) {
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={check.ok ? 'ok' : 'bad'}>{check.ok ? t('kyc.precheckOk') : t('kyc.precheckFail')}</Badge>
             <span className="text-slate-400">
-              issuer {shortHex(bundle.issuerId)} · ref {shortHex(check.reference)} · {t('status.validUntil')} {fmtTime(bundle.attestation.validUntil)}
+              issuer {shortHex(bundle.issuerId)} · ref {shortHex(check.reference)} · {t('kyc.issuedAt')} {fmtTime(bundle.issuedAt)} · {t('status.validUntil')} {fmtTime(bundle.attestation.validUntil)}
             </span>
           </div>
           {check.problems.map((p) => (

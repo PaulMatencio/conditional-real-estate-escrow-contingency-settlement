@@ -15,6 +15,7 @@ export function rolesOf(r: VaultRecord): string[] {
   if (r.meta?.source === 'deployed' || r.authorityKey || r.authorityRenouncedAt) roles.add('admin');
   if (r.lenderTerms) roles.add('lender');
   if (r.custody) roles.add('custodian');
+  if (r.assignment) roles.add(r.assignment.role);
   return [...roles];
 }
 
@@ -83,11 +84,11 @@ export function deployedMeta(wire: Partial<WireMeta>, network: string, now: numb
 }
 
 /**
- * A record was saved: when it now holds a terms package, lender package or custodian copy carrying a name, adopt it
- * (unless renamed locally). Every import path goes through the vault, so this one rule covers them all.
+ * A record was saved: when it now holds a terms package, lender package, custodian copy or assignment notice carrying a
+ * name, adopt it (unless renamed locally). Every import path goes through the vault, so this one rule covers them all.
  */
 export function withPackageMeta(r: VaultRecord, now: number): VaultRecord {
-  const incoming = r.terms?.meta ?? r.lenderTerms?.meta ?? r.custody?.terms.meta;
+  const incoming = r.terms?.meta ?? r.lenderTerms?.meta ?? r.custody?.terms.meta ?? r.assignment?.meta;
   if (!incoming) return r;
   const meta = mergeImportedMeta(r.meta, incoming, now);
   return meta === r.meta ? r : { ...r, meta };

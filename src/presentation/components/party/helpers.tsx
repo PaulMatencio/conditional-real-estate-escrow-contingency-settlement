@@ -14,6 +14,16 @@ export function downloadJson(name: string, value: unknown) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Saves raw bytes (e.g. a report opened from a bundle) under its original file name. */
+export function downloadBytes(name: string, bytes: Uint8Array, type = 'application/octet-stream') {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function readFileBytes(f: File): Promise<Uint8Array> {
   return new Uint8Array(await f.arrayBuffer());
 }

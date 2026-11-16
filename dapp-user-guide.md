@@ -106,6 +106,15 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 2. Type a backup passphrase (12+ characters) and click **Download encrypted backup**. Keep the file and the passphrase apart.
 3. Finalize requires at least one confirmed backup: the custodian copy or the passphrase backup counts.
 
+### 6b. Send the attestors their assignment
+
+*Assignment notices* card (Terms & KYC tab), one row per attestor whose role id is set (inspector, title agent, resolver):
+
+- **Assignment link**: copy it and send it. It opens their page with this escrow preselected and carries only the address and the role, so it can travel by email or chat.
+- **Seal notice**: paste their **envelope key** (shown on their page, *My assignment* card) and send them `assignment-for-<role>.json`. Besides the address and role it carries the escrow's name and the closing and dispute deadlines, which is why it is sealed to them.
+
+Either way they add the escrow to their vault once; the app then checks that their role id is the one set on-chain.
+
 ### 7. Whitelist the CASP
 
 *Trusted CASP whitelist*: the app reads the CASP's published issuer keys. Click **Whitelist** on the active key. Without at least one trusted CASP the configuration is incomplete and nobody can accept.
@@ -145,7 +154,7 @@ None of these three is secret. Never send the secret role key to anyone.
 
 ### Before depositing: get your KYC attestation
 
-*Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored in your vault and pre-checked at once: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**.
+*Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored (encrypted) in your vault and pre-checked at once; the card shows when the CASP issued it and until when it is valid. The pre-check covers: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**.
 
 ### When the status is Created: deposit
 
@@ -156,12 +165,23 @@ None of these three is secret. Never send the secret role key to anyone.
 ### During the contingency review
 
 1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector, lender and title agent can attest.
-2. Follow the *Contingencies* card. For each one you may:
+2. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below).
+3. For each contingency you may:
    - **Waive contingency** (choose which): you accept the risk without that attestation. Final.
    - Wait for the attestor's result.
-3. When every contingency is passed or waived, the status becomes **ReadyToClose**.
-4. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
-5. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
+4. When every contingency is passed or waived, the status becomes **ReadyToClose**.
+5. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
+6. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
+
+#### Check an attestor's report
+
+*Attestor reports* card (buyer, seller and resolver pages, or the Notary portal, which needs no wallet): enter the passphrase the attestor gave you (not needed if the bundle was sealed to your envelope key), then **Open report bundle**. The browser decrypts the bundle, recomputes the report's commitment from the file and its salt and compares it with the escrow on-chain:
+
+- *"… is the report anchored on-chain for the inspection"* with its outcome: it is the report the inspector attested.
+- *Does not match*: the file was changed, or it is not the attested report. Do not rely on it.
+- *Voided*: it matches a result the resolver voided during a dispute.
+
+**Save the report** writes the original file to disk. Nothing is uploaded.
 
 ### Closing
 
@@ -221,6 +241,15 @@ Each attestor submits one result for their contingency, once, during the conting
 
 Open *My role id* → **Generate new key**, keep the secret key safe and send only the **role id** to the admin, who sets it on the **Initialize** tab. You must be independent: the app refuses to finalize if an attestor's role id is the seller's.
 
+### Receive your assignment (inspector and title agent)
+
+On your page, unlock the vault and send the admin your **envelope key** (*My assignment* card). The admin sends you an **assignment link** or an `assignment-for-<role>.json` notice:
+
+- **Link**: open it, then **Add and open**.
+- **Notice file**: **Import assignment notice**.
+
+The app checks your role id is set on-chain for that escrow, adds it to your vault under its name and opens it; the card then shows the closing and dispute deadlines. Import your role key once (*My role key*) and the escrow stays in your escrow switcher.
+
 ### When the status is ContingenciesPending
 
 1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode**, connect your wallet (you pay a small DUST fee), and **Load** the contract.
@@ -229,7 +258,11 @@ Open *My role id* → **Generate new key**, keep the secret key safe and send on
    1. **Choose document**: your report (PDF or any file). The browser hashes it locally with a fresh random salt; the file is never uploaded.
    2. Pick the **Outcome**: *Favourable (pass / approve / clear)* or *Unfavourable*.
    3. **Submit on-chain** and confirm. The result is anchored with the **Report commitment**.
-4. Click **Export encrypted bundle** and send it with the report to the buyer, seller and notary: the salt it carries lets them check that the report matches the on-chain commitment (Notary portal → *Local verifier*).
+4. Export the **report bundle** (the report, its salt and its commitment) for the buyer, seller and notary, either:
+   - sealed to each recipient's **envelope key** (one file per recipient, nothing else to share), or
+   - **Export with passphrase** (one file; give them the passphrase separately).
+
+   They check it in their *Attestor reports* card (or the Notary portal). Later, *Submitted reports* lists every report you committed with its salt: **Re-select the report to export again** (the file must hash to the committed report).
 
 ### Rules
 
@@ -245,7 +278,7 @@ The resolver acts only when buyer or seller opens a dispute, and must decide **b
 ### Before the deploy
 
 1. *My role id* → **Generate new key**; send only the role id to the admin.
-2. On `/resolver` (your own address), unlock the vault and send the admin your **Envelope public key** (*Private terms vault* card).
+2. On `/resolver` (your own address), unlock the vault and send the admin your **Envelope public key** (*Private terms vault* or *My assignment* card). The admin may also send you an assignment link or notice (see *Receive your assignment* above).
 3. When the admin sends `terms-for-resolver.json`, **Import package** and check the three badges show **match**. You need the terms to execute a payout after your decision.
 
 ### When a dispute is opened (status Disputed)
@@ -300,7 +333,8 @@ Later, with the copy held:
 | --- | --- | --- | --- |
 | An opening file (`opening-amount.json`, …) | buyer, seller or your custodian copy | **Load opening** | the price or a payout key matches its on-chain commitment |
 | A KYC attestation file | buyer or seller | **Load CASP record** | it is signed by a whitelisted CASP and anchored as the buyer's or seller's KYC |
-| A report + its document salt | an attestor (encrypted bundle) | enter the **Document salt**, then **Load document** | the report is the one committed on-chain for that contingency |
+| A report bundle | an attestor | *Attestor reports* card → passphrase (if any), **Open report bundle** | the report is the one committed on-chain for that contingency (and its outcome) |
+| A report + its document salt (plain) | an attestor | enter the **Document salt**, then **Load document** | the same, without a bundle |
 
 ### Issue the certificate
 

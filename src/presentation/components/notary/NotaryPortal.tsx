@@ -18,6 +18,7 @@ import { useT, type MessageKey } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
 import { StatusOverview } from '../party/StatusOverview';
 import { CustodianCard } from './CustodianCard';
+import { ReportBundleCard } from './ReportBundleCard';
 import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 import { FilePick, downloadJson, readFileBytes, readJsonFile } from '../party/helpers';
 
@@ -150,6 +151,7 @@ export function NotaryPortal({ address }: { address?: string }) {
                 );
               })()}
             </Card>
+            <ReportBundleCard view={view} onVerdict={add} />
             <Card title={t('notary.verifier')} icon={<FileSearch size={16} aria-hidden />} className="print:hidden">
               <p className="mb-3 text-sm text-slate-400">{t('notary.verifierHint')}</p>
               <div className="flex flex-wrap gap-2">

@@ -1,12 +1,14 @@
 'use client';
 import { useState } from 'react';
 import type { PartyRole } from '@/domain/roles';
+import { isAttestorRole } from '@/domain/assignment';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
 import { Alert } from '../ui';
 import { ProgressPanel } from '../ProgressPanel';
 import { useApp } from '../../providers/AppProvider';
 import { ActionsPanel } from './ActionsPanel';
+import { AssignmentPanel } from './AssignmentPanel';
 import { AttestorPanel } from './AttestorPanel';
 import { ForfeitCard, FundingPanel, SettlementPanel, VaultTrackingCard } from './CustodyPanel';
 import { KycPanel } from './KycPanel';
@@ -15,6 +17,7 @@ import { StatusOverview } from './StatusOverview';
 import { TermsPanel } from './TermsPanel';
 import { TimelinePanel } from './TimelinePanel';
 import { TxLogPanel } from '../TxLogPanel';
+import { ReportBundleCard } from '../notary/ReportBundleCard';
 import { LenderTermsCard, LoanCard } from './LenderPanel';
 import { TopUpCard } from './TopUpCard';
 import { PenaltyCard, WithdrawCard } from './CoolingOffCard';
@@ -59,6 +62,7 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
+          {isAttestorRole(initial) && <AssignmentPanel role={initial} />}
           <RoleKeyCard role={role} onRoleChange={setRole} />
           {(role === 'buyer' || role === 'seller' || (role === 'lender' && loanMode)) && <PayoutKeyCard party={role} />}
           {view && <ActionsPanel role={role} onlyEnabled={role === 'resolver'} />}
@@ -76,6 +80,7 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {view && vaultUnlocked && role === 'seller' && <PenaltyCard />}
           {view && role === 'seller' && view.status === 'Forfeited' && <ForfeitCard />}
           {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <SettlementPanel party={role} />}
+          {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <ReportBundleCard view={view} />}
         </div>
         <div className="space-y-4">
           {view ? <StatusOverview view={view} now={now} /> : <Alert tone="warn">{t('party.noEscrow')}</Alert>}

@@ -20,6 +20,7 @@ import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field, Mono } from '../ui';
 import { VaultGate } from '../party/PartySetup';
 import { PresetButton } from './usePreset';
+import { AssignmentCard } from './AssignmentCard';
 import { FilePick, downloadJson, readJsonFile } from '../party/helpers';
 
 const RECIPIENTS = ['buyer', 'seller', 'resolver', 'custodian', 'lender'] as const;
@@ -366,6 +367,8 @@ export function TermsKycTab() {
           </div>
         </Card>
       )}
+
+      <AssignmentCard />
 
       <Card title={t('adminTerms.casp')} tip={t('tip.adminTerms.casp')} icon={<Building size={16} aria-hidden />}>
         <p className="mb-3 text-sm text-slate-400">{t('adminTerms.caspHint')}</p>
