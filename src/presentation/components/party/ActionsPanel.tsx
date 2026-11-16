@@ -38,7 +38,7 @@ const OPEN: PartyCircuit[] = ['expireEscrow', 'endTopUpWindow'];
  */
 export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; onlyEnabled?: boolean }) {
   const { t } = useT();
-  const { view, now, record, run, busy } = useEscrow();
+  const { view, now, record, run, busy, readOnly } = useEscrow();
   const [which, setWhich] = useState<ContingencyName>('Inspection');
   const [pending, setPending] = useState<PartyCircuit | null>(null);
   const [evidence, setEvidence] = useState('');
@@ -86,6 +86,11 @@ export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; o
           </select>
         </label>
       )}
+      {readOnly && (
+        <div className="mb-3">
+          <Alert tone="warn">{t('readOnly.actions')}</Alert>
+        </div>
+      )}
       {actions.length === 0 && <p className="text-sm text-slate-400">{t('actions.none')}</p>}
       <ul className="space-y-2">
         {actions.map((a) => {
@@ -95,7 +100,7 @@ export function ActionsPanel({ role, onlyEnabled = false }: { role: PartyRole; o
               <button
                 type="button"
                 className={a.irreversible ? 'btn-danger' : 'btn-primary'}
-                disabled={busy || reason !== null}
+                disabled={busy || reason !== null || readOnly}
                 onClick={() => (a.irreversible || a.circuit === 'openDispute' ? setPending(a.circuit) : void execute(a.circuit))}
               >
                 {busy ? <Spinner /> : null} {t(`circuit.${a.circuit}` as MessageKey) ?? a.circuit}

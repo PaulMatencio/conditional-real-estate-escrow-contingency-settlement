@@ -14,6 +14,7 @@ import { CashFinancingCard } from './CashFinancingCard';
 import { ForfeitCard, FundingPanel, SettlementPanel, VaultTrackingCard } from './CustodyPanel';
 import { KycPanel } from './KycPanel';
 import { ModeBar, PayoutKeyCard, RoleKeyCard, VaultGate } from './PartySetup';
+import { ReadOnlyNotice } from './ReadOnlyNotice';
 import { StatusOverview } from './StatusOverview';
 import { TermsPanel } from './TermsPanel';
 import { TimelinePanel } from './TimelinePanel';
@@ -53,7 +54,8 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           if (!contractAddress && ids.length === 1) await setContractAddress(ids[0]);
         }}
       />
-      <ModeBar />
+      <ModeBar walletNote={t('readOnly.note')} />
+      <ReadOnlyNotice />
       {error && (
         <Alert tone="bad" onClose={() => setError(null)}>
           {error}

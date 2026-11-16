@@ -32,6 +32,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 ### Wallet Mode and Simulator Mode
 
 - **Wallet Mode** = the real escrow on the preview network: real transactions, fees in DUST, proofs from the local proof server.
+  - **No wallet connected (read-only):** you can still **Load** an escrow on any role page or the compliance console. It is read from the Midnight indexer, so you see its status, deadlines, contingencies and whether your role key matches (**This key holds: …**). Action buttons stay disabled until you connect a wallet: every action is a transaction that pays a small DUST fee, and any wallet can pay it. Your role is proven by your role key, not by the wallet.
 - **Simulator Mode** = the compiled contract running inside the browser, with no wallet, no fees and a movable clock. Use it to rehearse a whole escrow in minutes: **Create simulated escrow** on any party page sets up every role in one vault.
 
 Every action button checks its preconditions first. A disabled button shows why underneath it (wrong phase, deadline passed, missing key or terms).
@@ -253,7 +254,7 @@ The app checks your role id is set on-chain for that escrow, adds it to your vau
 
 ### When the status is ContingenciesPending
 
-1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode**, connect your wallet (you pay a small DUST fee), and **Load** the contract.
+1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode** and **Load** the contract (or use your assignment notice). You can check everything without a wallet; connect one before **Submit on-chain**, which pays a small DUST fee.
 2. *My role key*: import your secret key. The card must show **This key holds: inspector** (or lender, titleAgent).
 3. *Attestation* card:
    1. **Choose document**: your report (PDF or any file). The browser hashes it locally with a fresh random salt; the file is never uploaded.

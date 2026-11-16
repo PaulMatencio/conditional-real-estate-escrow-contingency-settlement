@@ -2,17 +2,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Ban, Building, RefreshCw, Search } from 'lucide-react';
 import type { CaspIssuerKey } from '@/application/partyPorts';
-import { friendlyMessage } from '@/domain/errors';
-import type { EscrowView } from '@/domain/escrowView';
 import { isRevocationBundle, type RevocationBundle } from '@/domain/terms';
 import { shortHex } from '@/domain/hex';
 import { pointFromWire, sigFromWire, verifyAttestationRevocation, verifyIssuerRevocation } from '@/infrastructure/crypto/escrowCrypto';
-import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useApp } from '../../providers/AppProvider';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Field } from '../ui';
 import { ModeBar } from '../party/PartySetup';
+import { ReadOnlyNotice } from '../party/ReadOnlyNotice';
 import { StatusOverview } from '../party/StatusOverview';
 import { FilePick, readJsonFile } from '../party/helpers';
 
@@ -21,52 +19,14 @@ import { FilePick, readJsonFile } from '../party/helpers';
  * broadcaster for CASP-signed revocations (permissionless circuits), and attestation / Travel Rule / source-of-funds
  * status from the CASP. Talks to the eu-counterparty-simulator through /api/casp (TEST ONLY).
  *
- * Monitoring needs no wallet: without one, the escrow is read straight from the indexer (like the Notary portal).
+ * Monitoring needs no wallet: without one, the escrow provider reads it straight from the indexer (read-only mode).
  * Only broadcasting a revocation is a transaction, so only that asks for a wallet (it pays the fee).
  */
 export function ComplianceConsole() {
   const { t } = useT();
-  const { casp, view: walletView, now: walletNow, run, busy, error, setError, mode, contractAddress } = useEscrow();
+  const { casp, view, now, run, busy, error, setError } = useEscrow();
   const { connector } = useApp();
   const walletConnected = connector.status === 'connected';
-  const [publicView, setPublicView] = useState<EscrowView | null>(null);
-  const [publicErr, setPublicErr] = useState<string | null>(null);
-  // Wallet Mode with an address but no wallet: read the public ledger from the indexer instead (refreshed every 20 s).
-  const readOnly = mode === 'wallet' && !!contractAddress && !walletConnected;
-  // midnight-js retries a failing indexer for a long time instead of failing: never start a read while one is still
-  // running, and say so after 15 s rather than showing nothing.
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    setPublicView(null);
-    setPublicErr(null);
-    setSlow(false);
-    if (!readOnly || !contractAddress) return;
-    let live = true;
-    let inFlight = false;
-    const read = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      const timer = setTimeout(() => live && setSlow(true), 15_000);
-      try {
-        const v = await readPublicView(contractAddress);
-        if (live) (setPublicView(v), setPublicErr(null));
-      } catch (e) {
-        if (live) setPublicErr(friendlyMessage(e));
-      } finally {
-        clearTimeout(timer);
-        inFlight = false;
-        if (live) setSlow(false);
-      }
-    };
-    void read();
-    const id = setInterval(() => void read(), 20_000);
-    return () => {
-      live = false;
-      clearInterval(id);
-    };
-  }, [readOnly, contractAddress]);
-  const view = walletView ?? (readOnly ? publicView : null);
-  const now = walletView ? walletNow : BigInt(Math.floor(Date.now() / 1000));
   const [health, setHealth] = useState<string | null>(null);
   const [keys, setKeys] = useState<CaspIssuerKey[]>([]);
   const [caspErr, setCaspErr] = useState<string | null>(null);
@@ -108,8 +68,7 @@ export function ComplianceConsole() {
         <p className="text-sm text-slate-400">{t('page.compliance.subtitle')}</p>
       </div>
       <ModeBar walletNote={t('compliance.walletNote')} />
-      {readOnly && publicErr && <Alert tone="bad" onClose={() => setPublicErr(null)}>{t('compliance.readFailed')} ({publicErr})</Alert>}
-      {readOnly && !publicView && slow && <Alert tone="warn">{t('compliance.indexerSlow')}</Alert>}
+      <ReadOnlyNotice />
       {error && <Alert tone="bad" onClose={() => setError(null)}>{error}</Alert>}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">

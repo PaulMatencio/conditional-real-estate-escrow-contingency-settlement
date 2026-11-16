@@ -23,6 +23,7 @@ import { generateRecipientKeyPair } from '@/infrastructure/crypto/aead';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { PartyGateway } from '@/infrastructure/gateway/partyGateway';
+import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { EscrowSimulator } from '@/infrastructure/simulator/escrowSimulator';
 import { migratePlaintextAdminKey, migratePlaintextAuthorityKeys, sharedVault, vaultSignal } from '@/infrastructure/storage/vaultInstance';
 import { LocalStorageStore } from '@/infrastructure/storage/kv';
@@ -68,6 +69,13 @@ interface EscrowCtx {
   eraseLocal: () => Promise<void>;
   // chain / simulator
   view: EscrowView | null;
+  /**
+   * Wallet Mode with an escrow loaded but no wallet connected: `view` comes straight from the indexer (read-only, like
+   * the Notary portal). Every check works; acting needs a wallet (a transaction pays a fee).
+   */
+  readOnly: boolean;
+  /** Read-only reads: the indexer has not answered for 15 s (midnight-js keeps retrying), or the last read failed. */
+  publicRead: { slow: boolean; error: string | null };
   now: bigint;
   refresh: () => Promise<void>;
   gateway: () => Promise<EscrowPartyGateway>;
@@ -302,14 +310,46 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     return gwRef.current;
   }, [mode, sim, contractAddress, session, prefs, record.terms]);
 
+  const readOnly = mode === 'wallet' && !!contractAddress && !session;
+  const [publicRead, setPublicRead] = useState<{ slow: boolean; error: string | null }>({ slow: false, error: null });
+  const publicInFlight = useRef(false);
+  useEffect(() => setPublicRead({ slow: false, error: null }), [readOnly, contractAddress]);
+
+  /** No wallet: the public ledger from the indexer. One read at a time (a dead indexer is retried for a long time). */
+  const readPublic = useCallback(async (address: string): Promise<EscrowView | null> => {
+    if (publicInFlight.current) return null;
+    publicInFlight.current = true;
+    const timer = setTimeout(() => setPublicRead((p) => ({ ...p, slow: true })), 15_000);
+    try {
+      const v = await readPublicView(address);
+      setPublicRead({ slow: false, error: null });
+      return v;
+    } catch (e) {
+      setPublicRead({ slow: false, error: friendlyMessage(e) });
+      return null;
+    } finally {
+      clearTimeout(timer);
+      publicInFlight.current = false;
+    }
+  }, []);
+
   const refresh = useCallback(async (opts?: { quiet?: boolean }) => {
     try {
       if (mode === 'simulator' && !sim) return;
-      if (mode === 'wallet' && (!contractAddress || !session)) return;
-      const gw = await gateway();
-      const v = await gw.readView();
-      setView(v);
-      setNow(await gw.now());
+      if (mode === 'wallet' && !contractAddress) return;
+      let v: EscrowView;
+      if (mode === 'wallet' && !session) {
+        const pv = await readPublic(contractAddress!);
+        if (!pv || activeRef.current !== pv.contractAddress) return;
+        v = pv;
+        setView(v);
+        setNow(BigInt(Math.floor(Date.now() / 1000)));
+      } else {
+        const gw = await gateway();
+        v = await gw.readView();
+        setView(v);
+        setNow(await gw.now());
+      }
       const round = v.lifecycleRound.toString();
       if (lastRound.current !== round) {
         // FR-AUDIT-01: one entry per lifecycleRound change seen by this browser.
@@ -323,7 +363,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
       if (opts?.quiet) console.warn('[escrow] background refresh failed; retrying on the next poll', e);
       else setError(friendlyMessage(e));
     }
-  }, [mode, sim, contractAddress, session, gateway]);
+  }, [mode, sim, contractAddress, session, gateway, readPublic]);
 
   useEffect(() => {
     void refresh();
@@ -366,6 +406,11 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
   const run = useCallback(
     async <C extends PartyCircuit>(caller: Caller, circuit: C, args: CircuitArgs[C], role?: PartyRole): Promise<CallReceipt | undefined> => {
       setError(null);
+      // Read-only (no wallet): say so before starting anything, rather than failing half-way in the progress panel.
+      if (mode === 'wallet' && !session) {
+        setError('Connect a wallet (Lace or 1AM) to do this: every action is a transaction that pays a small DUST fee. Reading the escrow needs no wallet.');
+        return undefined;
+      }
       setBusy(true);
       deployTracker.start(mode === 'wallet' ? 'wallet' : 'test', undefined, circuit);
       deployTracker.begin('validate');
@@ -396,7 +441,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
         setBusy(false);
       }
     },
-    [gateway, record, vault, activeAddress, refresh, mode]
+    [gateway, record, vault, activeAddress, refresh, mode, session]
   );
 
   const trackVaultIndex = useCallback(
@@ -563,6 +608,8 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     reloadVault,
     eraseLocal,
     view,
+    readOnly,
+    publicRead,
     now,
     refresh,
     gateway,
