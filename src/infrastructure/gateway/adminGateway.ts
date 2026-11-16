@@ -181,7 +181,8 @@ export class AdminGateway {
         buyer: hex(L.buyerId),
         seller: hex(L.sellerId),
         inspector: configured.has(InitAttribute.Inspector) ? hex(L.inspectorId) : null,
-        lender: configured.has(InitAttribute.Lender) ? hex(L.lenderId) : null,
+        // A cash deal marks the lender role configured without a lender: no role id then.
+        lender: configured.has(InitAttribute.Lender) && !/^0*$/.test(hex(L.lenderId)) ? hex(L.lenderId) : null,
         titleAgent: configured.has(InitAttribute.TitleAgent) ? hex(L.titleAgentId) : null,
         resolver: configured.has(InitAttribute.Resolver) ? hex(L.resolverId) : null
       },

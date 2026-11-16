@@ -14,7 +14,6 @@ export type PartyCircuit =
   | 'submitSellerKyc'
   | 'openContingencyReview'
   | 'submitInspection'
-  | 'submitFinancing'
   | 'submitTitle'
   | 'waiveContingency'
   | 'cancelAndRefund'
@@ -138,17 +137,6 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     witnesses: ['localSecretKey'],
     check: (v) => first(phase(v, 'Not in contingency review', 'ContingenciesPending'), v.contingencies.Inspection.submitted ? 'Inspection outcome already submitted' : null)
   },
-  submitFinancing: {
-    circuit: 'submitFinancing',
-    callers: ['lender'],
-    witnesses: ['localSecretKey'],
-    check: (v) =>
-      first(
-        phase(v, 'Not in contingency review', 'ContingenciesPending'),
-        isLoanMode(v) ? 'Loan-financed escrow: the lender deposits or refuses the loan' : null,
-        v.contingencies.Financing.submitted ? 'Financing outcome already submitted' : null
-      )
-  },
   submitTitle: {
     circuit: 'submitTitle',
     callers: ['titleAgent'],
@@ -164,7 +152,8 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
       const p = phase(v, 'Not in contingency review', 'ContingenciesPending');
       if (p) return p;
       if (!which) return CONTINGENCIES.some((k) => !(v.contingencies[k].submitted && v.contingencies[k].passed)) ? null : 'Every contingency is already cleared';
-      if (which === 'Financing' && isLoanMode(v)) return 'Loan-financed escrow: top up instead of waiving financing';
+      // Mirrors the contract: financing is never waived (cash: the deposit clears it; loan: the buyer tops up).
+      if (which === 'Financing') return isLoanMode(v) ? 'Loan-financed escrow: top up instead of waiving financing' : "Cash deal: financing is cleared by the buyer's deposit";
       const c = v.contingencies[contingencyKey(which)];
       return c.submitted && c.passed ? `${which} already cleared` : null;
     }
@@ -222,7 +211,9 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     check: (v, _c, _n, which) => {
       const p = phase(v, 'Escrow is not disputed', 'Disputed');
       if (p) return p;
-      if (!which) return CONTINGENCIES.some((k) => v.contingencies[k].submitted && !v.contingencies[k].waived) ? null : 'No attested result to void';
+      const voidable = (k: ContingencyName) => v.contingencies[k].submitted && !v.contingencies[k].waived && (k !== 'Financing' || isLoanMode(v));
+      if (!which) return CONTINGENCIES.some(voidable) ? null : 'No attested result to void';
+      if (which === 'Financing' && !isLoanMode(v)) return "Cash deal: financing is cleared by the buyer's deposit and cannot be voided";
       const c = v.contingencies[which];
       if (which === 'Financing' && isLoanMode(v) && c.submitted && !(v.financing.loanLost && !v.financing.loanWithdrawn && !v.financing.topUpHeld)) return 'Only a loan refusal can be voided';
       return c.submitted && !c.waived ? null : `No attested ${which.toLowerCase()} to void`;
@@ -438,21 +429,6 @@ export function availableActions(v: EscrowView, role: PartyRole, nowSec: bigint,
       const reason = a.check(v, a.callers.includes(role) ? role : 'anyone', nowSec, which) ?? missingMaterial(a, material, v);
       return { circuit: a.circuit, enabled: reason === null, reason, irreversible: !!a.irreversible };
     });
-}
-
-/**
- * Cash deal (financing mode Attested): the buyer's deposit already locks the full price, so the Financing contingency
- * guards nothing. Contract v2 still requires it to be cleared, so the dApp offers the buyer to waive it.
- * - 'hidden':  not a cash deal, or Financing already cleared (passed or waived)
- * - 'later':   cash deal, but the contingency review is not open yet (waiving needs ContingenciesPending)
- * - 'now':     the buyer can waive Financing now
- */
-export function cashFinancingWaiver(v: EscrowView): 'hidden' | 'later' | 'now' {
-  if (v.financing.mode !== 'Attested') return 'hidden';
-  const c = v.contingencies.Financing;
-  if (c.waived || (c.submitted && c.passed)) return 'hidden';
-  if (inStatus(v, 'Initializing', 'Created', 'Funded')) return 'later';
-  return ACTIONS.waiveContingency.check(v, 'buyer', 0n, 'Financing') === null ? 'now' : 'hidden';
 }
 
 /** Only what is enabled right now (the resolver workspace lists exactly these, §3.1.6). */

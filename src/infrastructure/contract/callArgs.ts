@@ -41,7 +41,6 @@ export function contractArgs<C extends PartyCircuit>(circuit: C, args: CircuitAr
     case 'acceptConfiguration':
       return [(args as CircuitArgs['acceptConfiguration'])[0]];
     case 'submitInspection':
-    case 'submitFinancing':
     case 'submitTitle': {
       const [ok, hash] = args as CircuitArgs['submitInspection'];
       return [ok, hex32ToBytes(hash, 'report hash')];

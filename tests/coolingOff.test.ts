@@ -148,7 +148,6 @@ describe('after the cooling-off period', () => {
     const { sim, buyer, seller } = await funded();
     await act(seller, 'seller', 'openContingencyReview');
     await act(party(sim, K.inspector, {}), 'inspector', 'submitInspection', [true, hex(0x51)]);
-    await act(party(sim, K.lender, {}), 'lender', 'submitFinancing', [true, hex(0x53)]);
     await act(party(sim, K.title, {}), 'titleAgent', 'submitTitle', [true, hex(0x54)]);
     await act(seller, 'seller', 'submitSellerKyc');
     expect(sim.view().status).toBe('ReadyToClose');

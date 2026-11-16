@@ -24,8 +24,9 @@ export { KycAttestation, SchnorrSignature, kycMessage, kycReference,
 //    the buyer's deposit (Forfeited);
 //  - the release pays both coins to the seller; every unwind returns each
 //    coin to whoever deposited it.
-// Cash deals (FinancingMode.Attested) keep the v1 behaviour: one coin, and
-// the lender only attests.
+// Cash deals (FinancingMode.Attested): one coin, no lender. The buyer's deposit
+// locks the full price, so it clears the financing contingency by itself; no
+// lender role id is needed and nobody attests or waives financing.
 //
 // Cooling-off period (optional, off by default, cash and loan deals): for a
 // public number of seconds after the buyer's deposit (capped at the closing
@@ -82,7 +83,7 @@ export enum EscrowStatus {
 
 // v2: how the financing contingency is met.
 export enum FinancingMode {
-    Attested,              // cash deal: the lender only attests (v1 behaviour), lender share = 0
+    Attested,              // cash deal: no lender, lender share = 0; the buyer's deposit clears financing
     Deposited              // loan: the lender deposits its committed share (or the buyer tops up)
 }
 
@@ -465,7 +466,8 @@ export circuit configure(
 
 // v2: financing terms, same rules as configure(): admin only, while
 // Initializing, any change resets both acceptances. Cash deals configure it
-// too (mode Attested, lender share 0) so every escrow commits to a price.
+// too (mode Attested, lender share 0) so every escrow commits to a price;
+// choosing the cash mode also marks the (unused) lender role as configured.
 export circuit configureFinancing(
     mode: Maybe<FinancingMode>,
     price: Maybe<Bytes<32>>,
@@ -480,7 +482,17 @@ export circuit configureFinancing(
     assert(status == EscrowStatus.Initializing, "Contract is already initialized");
     onlyAdmin();
     const m = disclose(mode);
-    if (m.is_some) { financingMode = m.value; configured.insert(InitAttribute.Financing); }
+    if (m.is_some) {
+        financingMode = m.value;
+        configured.insert(InitAttribute.Financing);
+        // A cash deal has no lender: its role counts as configured. Back to a
+        // loan, the lender role id must be set again if none was given.
+        if (m.value == FinancingMode.Attested) {
+            configured.insert(InitAttribute.Lender);
+        } else if (lenderId == pad(32, "")) {
+            configured.remove(InitAttribute.Lender);
+        }
+    }
     const p = disclose(price);
     if (p.is_some) {
         assert(p.value != pad(32, ""), "Price commitment cannot be empty");
@@ -581,14 +593,15 @@ export circuit finalizeInitialization(): [] {
     assert(buyerId != resolverId, "Buyer must be distinct from dispute resolver");
     assert(sellerId != resolverId, "Seller must be distinct from dispute resolver");
     assert(inspectorId != resolverId, "Inspector must be distinct from dispute resolver");
-    assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
     assert(titleAgentId != resolverId, "Title agent must be distinct from dispute resolver");
     assert(inspectorId != sellerId, "Inspector must be independent from seller");
-    assert(lenderId != sellerId, "Lender must be independent from seller");
     assert(titleAgentId != sellerId, "Title agent must be independent from seller");
     assert(disputeDeadline > closingDeadline, "Dispute deadline must follow closing deadline");
     assert(blockTimeLt(closingDeadline), "Closing deadline is already in the past");
+    // The lender only exists in a loan deal (a cash deal has none).
     if (financingMode == FinancingMode.Deposited) {
+        assert(lenderId != resolverId, "Lender must be distinct from dispute resolver");
+        assert(lenderId != sellerId, "Lender must be independent from seller");
         assert(lenderId != buyerId, "Lender must be distinct from the buyer when it deposits the loan");
         assert(loanOfferExpiry <= closingDeadline, "Loan offer expiry must not be after the closing deadline");
         assert(topUpWindow > 0, "Top-up window must be positive");
@@ -974,6 +987,12 @@ export circuit depositToEscrow(coin: ShieldedCoinInfo, now: Uint<64>): [] {
         "ERROR_DEPOSIT_COIN_MISMATCH"
     );
     receiveShielded(disclose(coin));
+    // Cash deal: the full price is now locked, which is all the financing
+    // contingency guards. Cleared here, not waived (nothing to void later).
+    if (financingMode == FinancingMode.Attested) {
+        financingSubmitted = true;
+        financingApproved = true;
+    }
     status = EscrowStatus.Funded;
     lifecycleRound.increment(1);
 }
@@ -1102,7 +1121,8 @@ export circuit openContingencyReview(): [] {
     lifecycleRound.increment(1);
 }
 
-// Each contingency outcome is attested ONCE by its designated role,
+// Each contingency outcome is attested ONCE by its designated role (financing:
+// cleared by the deposit in a cash deal, by the lender's deposit in a loan),
 // anchored with a non-empty off-chain document commitment (`reportHash: Bytes<32>`).
 // A result can only be re-attested after the resolver voided it
 // (see voidContingencyResult); nobody can overwrite it in place.
@@ -1115,18 +1135,6 @@ export circuit submitInspection(passed: Boolean, reportHash: Bytes<32>): [] {
     inspectionSubmitted = true;
     inspectionPassed = disclose(passed);
     inspectionReport = h;
-    advanceIfAllCleared();
-}
-export circuit submitFinancing(approved: Boolean, reportHash: Bytes<32>): [] {
-    assert(status == EscrowStatus.ContingenciesPending, "Not in contingency review");
-    assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: the lender deposits or refuses the loan");
-    assert(!financingSubmitted, "Financing outcome already submitted");
-    onlyLender();
-    const h = disclose(reportHash);
-    assert(h != pad(32, ""), "Financing letter commitment cannot be empty");
-    financingSubmitted = true;
-    financingApproved = disclose(approved);
-    financingLetter = h;
     advanceIfAllCleared();
 }
 export circuit submitTitle(cleared: Boolean, reportHash: Bytes<32>): [] {
@@ -1154,11 +1162,9 @@ export circuit waiveContingency(which: Contingency): [] {
         inspectionPassed = true;
         inspectionWaived = true;
     } else if (c == Contingency.Financing) {
-        assert(financingMode == FinancingMode.Attested, "Loan-financed escrow: top up instead of waiving financing");
-        assert(!(financingSubmitted && financingApproved), "Financing already approved");
-        financingSubmitted = true;
-        financingApproved = true;
-        financingWaived = true;
+        // Cash deal: cleared by the deposit. Loan: the buyer tops up instead.
+        assert(financingMode == FinancingMode.Deposited, "Cash deal: financing is cleared by the buyer's deposit");
+        assert(false, "Loan-financed escrow: top up instead of waiving financing");
     } else {
         assert(!(titleSubmitted && titleCleared), "Title already cleared");
         titleSubmitted = true;
@@ -1352,6 +1358,7 @@ export circuit voidContingencyResult(which: Contingency): [] {
         inspectionPassed = false;
         inspectionReport = pad(32, "");
     } else if (c == Contingency.Financing) {
+        assert(financingMode == FinancingMode.Deposited, "Cash deal: financing is cleared by the buyer's deposit and cannot be voided");
         assert(financingSubmitted && !financingWaived, "No attested financing to void");
         if (financingMode == FinancingMode.Deposited) {
             // Only a refusal can be voided: a deposit is refunded, not erased,

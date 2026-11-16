@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import { FileCheck2 } from 'lucide-react';
-import type { ContingencyName } from '@/domain/escrowView';
 import { DEFAULT_BUNDLE_RECIPIENTS, bundleFileName, isEnvelopeKey, lastExports, recipientConflict, recipientSlug, upsertRecipient, type BundleRecipient, type DocumentBundle } from '@/domain/report';
 import { b64, sealTo, sealWithPassphrase } from '@/infrastructure/crypto/aead';
 import { documentCommitment, newSalt } from '@/infrastructure/crypto/escrowCrypto';
@@ -10,8 +9,10 @@ import { useT, type MessageKey } from '../../i18n';
 import { Alert, Card, Field, Mono } from '../ui';
 import { ConfirmDialog, FilePick, downloadJson, fmtTime, readFileBytes } from './helpers';
 
-const CIRCUIT = { Inspection: 'submitInspection', Financing: 'submitFinancing', Title: 'submitTitle' } as const;
-const ROLE = { Inspection: 'inspector', Financing: 'lender', Title: 'titleAgent' } as const;
+/** Attested contingencies. Financing is not attested: a cash deal clears it with the deposit, a loan with the lender's deposit. */
+type Attested = 'Inspection' | 'Title';
+const CIRCUIT = { Inspection: 'submitInspection', Title: 'submitTitle' } as const;
+const ROLE = { Inspection: 'inspector', Title: 'titleAgent' } as const;
 
 interface Doc {
   name: string;
@@ -26,7 +27,7 @@ interface Doc {
  * who it is for. Recipients' keys are remembered in this escrow's vault record (they are public keys), with the date
  * each one last received this report. A passphrase file remains for recipients without an envelope key.
  */
-function BundleExport({ doc, contingency }: { doc: Doc; contingency: ContingencyName }) {
+function BundleExport({ doc, contingency }: { doc: Doc; contingency: Attested }) {
   const { t } = useT();
   const { contractAddress, record, updateRecord, vaultUnlocked } = useEscrow();
   const saved = record.bundleRecipients ?? [];
@@ -145,7 +146,7 @@ function BundleExport({ doc, contingency }: { doc: Doc; contingency: Contingency
  * already submitted can be exported again at any time: the salt is in the vault, the report file is re-selected and
  * must hash to the anchored commitment.
  */
-export function AttestorPanel({ contingency }: { contingency: ContingencyName }) {
+export function AttestorPanel({ contingency }: { contingency: Attested }) {
   const { t } = useT();
   const { run, busy, updateRecord, view, record } = useEscrow();
   const [doc, setDoc] = useState<Doc | null>(null);

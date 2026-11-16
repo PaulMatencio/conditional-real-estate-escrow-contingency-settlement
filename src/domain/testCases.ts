@@ -40,7 +40,7 @@ export const TEST_CASES: readonly TestCase[] = [
     id: 'T01',
     label: 'Cash deal, happy path',
     tags: ['cash'],
-    steps: 'Deposit → open review → inspection, financing and title pass → seller KYC → release.',
+    steps: 'Deposit (clears financing) → open review → inspection and title pass → seller KYC → release.',
     expected: 'Closed: 250000 to the seller.',
     preset: CASH
   },

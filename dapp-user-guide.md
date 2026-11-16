@@ -14,7 +14,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 | Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price, waives or disputes contingencies |
 | Seller | `/seller` | Accepts the terms, proves KYC, receives the payout |
 | Inspector | `/inspector` | Attests the inspection result |
-| Lender | `/lender` | Attests the financing result |
+| Lender | `/lender` | Loan deals only: deposits (or refuses) the loan. A cash deal has no lender |
 | Title agent | `/title-agent` | Attests the title result |
 | Dispute resolver | `/resolver` | Settles disputes, voids wrong attestations, executes a settled payout |
 | Notary (custodian) | `/verify/<contract address>` | Verifies the escrow, issues the notarial certificate, keeps the custodian copy of the terms |
@@ -68,7 +68,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 4. Start the local proof server.
 5. Collect from the parties, by any channel:
    - the **role ids** of the buyer and seller (each generates its key on the *My role id* page and sends only the id);
-   - the role ids of the inspector, lender, title agent and dispute resolver (can come later, before configuring);
+   - the role ids of the inspector, title agent and dispute resolver, and of the lender in a loan deal (can come later, before configuring);
    - the buyer's and seller's **shielded payout keys** (each party's *My shielded payout key* card);
    - the **envelope public keys** of buyer, seller, resolver and custodian (for distributing the terms).
 
@@ -89,7 +89,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 
 ### 4. Fill in the initialization terms
 
-**Initialize** tab: the role ids of the inspector, lender, title agent and resolver (cash deal: no lender takes part, so click **Use the buyer's role id**; the buyer waives Financing during the review), the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
+**Initialize** tab: the role ids of the inspector, title agent and resolver, and of the lender in a loan deal (cash deal: leave the lender empty; choosing *Cash deal* on the Financing card counts the lender role as configured, and the buyer's deposit clears Financing), the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
 
 ### 5. Private terms package
 
@@ -165,8 +165,8 @@ None of these three is secret. Never send the secret role key to anyone.
 
 ### During the contingency review
 
-1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector, lender and title agent can attest.
-2. **Cash deal:** the *Financing (cash deal)* card → **Waive financing**. Your deposit already locks the full price, so there is no loan to approve, but the contract still needs Financing cleared. (Loan deals: the lender deposits instead.)
+1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector and title agent can attest (in a loan deal, the lender deposits or refuses the loan).
+2. **Cash deal:** nothing to do for Financing: your deposit locks the full price and already cleared it (the *Contingencies* card shows it passed). It cannot be waived or voided.
 3. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below).
 4. For each contingency you may:
    - **Waive contingency** (choose which): you accept the risk without that attestation. Final.
@@ -229,14 +229,13 @@ Same steps as the buyer: **Wallet Mode** → **Load** the contract → import yo
 
 After a dispute settled in your favour (**Settled**), the **resolver** executes the release.
 
-## Inspector, lender and title agent guide
+## Inspector and title agent guide
 
 Each attestor submits one result for their contingency, once, during the contingency review. Only a hash of the report goes on-chain; the report itself stays with you.
 
 | Attestor | Page | Contingency | Action |
 | --- | --- | --- | --- |
 | Inspector | `/inspector` | Inspection | Submit inspection |
-| Lender | `/lender` | Financing | Submit financing |
 | Title agent | `/title-agent` | Title | Submit title |
 
 ### Before the deploy
@@ -255,7 +254,7 @@ The app checks your role id is set on-chain for that escrow, adds it to your vau
 ### When the status is ContingenciesPending
 
 1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode** and **Load** the contract (or use your assignment notice). You can check everything without a wallet; connect one before **Submit on-chain**, which pays a small DUST fee.
-2. *My role key*: import your secret key. The card must show **This key holds: inspector** (or lender, titleAgent).
+2. *My role key*: import your secret key. The card must show **This key holds: inspector** (or titleAgent).
 3. *Attestation* card:
    1. **Choose document**: your report (PDF or any file). The browser hashes it locally with a fresh random salt; the file is never uploaded.
    2. Pick the **Outcome**: *Favourable (pass / approve / clear)* or *Unfavourable*.
@@ -480,7 +479,7 @@ Every transaction your browser builds is logged in your vault: when, which actio
 
 | Term | Meaning |
 | --- | --- |
-| Attestation (contingency) | The inspector's, lender's or title agent's on-chain result, anchored with a hash of their report |
+| Attestation (contingency) | The inspector's or title agent's on-chain result, anchored with a hash of their report (financing: cleared by the buyer's deposit in a cash deal, by the lender's deposit in a loan) |
 | CASP | Crypto-asset service provider: the regulated KYC provider whose signed attestations the escrow accepts |
 | Closing deadline | The deposit and the contingency review must be done before it; after it the escrow can be expired |
 | Commitment | A salted hash of a private value (price, payout key) stored on-chain instead of the value |

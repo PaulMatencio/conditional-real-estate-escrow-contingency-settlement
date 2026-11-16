@@ -288,12 +288,6 @@ function InitializeTab() {
         {(['inspector', 'lender', 'titleAgent', 'resolver'] as const).map((k) => (
           <Field key={k} label={`${k} role id`} htmlFor={k} hint={k === 'lender' ? t('init.lenderCashHint') : undefined}>
             <input id={k} className="input mono" value={f[k]} onChange={set(k)} placeholder="64 hex" spellCheck={false} />
-            {/* Cash deal: no lender. Contract v2 still needs a lender role id; the buyer holds it (spec: lenderId == buyerId). */}
-            {k === 'lender' && state.roles.buyer && (
-              <button type="button" className="btn-ghost mt-1 !py-1 text-xs" onClick={() => setF((x) => ({ ...x, lender: state.roles.buyer ?? '' }))}>
-                {t('init.useBuyerId')}
-              </button>
-            )}
           </Field>
         ))}
         <Field label="Closing deadline (unix s)" htmlFor="closing"><input id="closing" inputMode="numeric" className="input" value={f.closing} onChange={set('closing')} /></Field>

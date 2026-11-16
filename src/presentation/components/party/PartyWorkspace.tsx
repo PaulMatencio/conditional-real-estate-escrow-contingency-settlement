@@ -10,7 +10,6 @@ import { useApp } from '../../providers/AppProvider';
 import { ActionsPanel } from './ActionsPanel';
 import { AssignmentPanel } from './AssignmentPanel';
 import { AttestorPanel } from './AttestorPanel';
-import { CashFinancingCard } from './CashFinancingCard';
 import { ForfeitCard, FundingPanel, SettlementPanel, VaultTrackingCard } from './CustodyPanel';
 import { KycPanel } from './KycPanel';
 import { ModeBar, PayoutKeyCard, RoleKeyCard, VaultGate } from './PartySetup';
@@ -68,10 +67,9 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {isAttestorRole(initial) && <AssignmentPanel role={initial} />}
           <RoleKeyCard role={role} onRoleChange={setRole} />
           {(role === 'buyer' || role === 'seller' || (role === 'lender' && loanMode)) && <PayoutKeyCard party={role} />}
-          {view && vaultUnlocked && role === 'buyer' && <CashFinancingCard />}
           {view && <ActionsPanel role={role} onlyEnabled={role === 'resolver'} />}
           {view && role === 'inspector' && <AttestorPanel contingency="Inspection" />}
-          {view && role === 'lender' && !loanMode && <AttestorPanel contingency="Financing" />}
+          {view && role === 'lender' && !loanMode && <Alert tone="ok">{t('lender.cashDeal')}</Alert>}
           {role === 'lender' && loanMode && vaultUnlocked && <LenderTermsCard />}
           {role === 'lender' && loanMode && <LoanCard />}
           {view && role === 'titleAgent' && <AttestorPanel contingency="Title" />}

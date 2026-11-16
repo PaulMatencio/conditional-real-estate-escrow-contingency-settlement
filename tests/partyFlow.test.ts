@@ -49,7 +49,8 @@ describe('happy path: accept → finalize → deposit → attest → seller KYC 
     const lender = party(sim, K.lender, {});
     const title = party(sim, K.title, {});
     await act(inspector, 'inspector', 'submitInspection', [true, hex(0x51)]);
-    await act(lender, 'lender', 'submitFinancing', [true, hex(0x53)]);
+    // Cash deal: the buyer's deposit already cleared financing; no lender step.
+    expect(sim.view().contingencies.Financing).toMatchObject({ submitted: true, passed: true, waived: false });
     await act(title, 'titleAgent', 'submitTitle', [true, hex(0x54)]);
     expect(sim.view().status).toBe('ReadyToClose');
 

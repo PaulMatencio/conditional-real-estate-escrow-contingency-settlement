@@ -37,7 +37,6 @@ export interface CircuitArgs {
   submitSellerKyc: [];
   openContingencyReview: [];
   submitInspection: [passed: boolean, reportHash: string];
-  submitFinancing: [approved: boolean, reportHash: string];
   submitTitle: [cleared: boolean, reportHash: string];
   waiveContingency: [which: ContingencyName];
   cancelAndRefund: [];

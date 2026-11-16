@@ -167,8 +167,8 @@ await expectErr('empty inspection report hash rejected', e, 'inspector', 'submit
 await expectOk('inspection pass', e, 'inspector', 'submitInspection', true, DOC.insp);
 check('inspectionReport hash anchored on-chain', Buffer.from(L(e).inspectionReport).equals(Buffer.from(DOC.insp)));
 await expectErr('inspector overwrites', e, 'inspector', 'submitInspection', false, DOC.insp2);
-await expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
-check('financingLetter hash anchored on-chain', Buffer.from(L(e).financingLetter).equals(Buffer.from(DOC.fin)));
+check('cash deal: the deposit cleared financing (not a waiver)', L(e).financingSubmitted && L(e).financingApproved && !L(e).financingWaived);
+check('no financing attestation circuit any more', !('submitFinancing' in c.circuits));
 await expectOk('title ok', e, 'title', 'submitTitle', true, DOC.title);
 check('titleCommitment hash anchored on-chain', Buffer.from(L(e).titleCommitment).equals(Buffer.from(DOC.title)));
 console.log('   status:', st(e));
@@ -177,7 +177,6 @@ await expectErrMsg('release blocked without seller KYC', e, 'seller', 'releaseTo
 console.log('Resolver cannot flip a FAILED inspection into a seller payout');
 e = await toPending();
 await expectOk('inspection FAIL', e, 'inspector', 'submitInspection', false, DOC.insp);
-await expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
 await expectOk('title ok', e, 'title', 'submitTitle', true, DOC.title);
 await expectOk('seller disputes', e, 'seller', 'openDispute');
 await expectErr('resolver settles to seller', e, 'resolver', 'resolveDisputeSettlement');
@@ -198,7 +197,7 @@ e = await toPending();
 await expectOk('title FAIL', e, 'title', 'submitTitle', false, DOC.title);
 await expectOk('buyer waives title', e, 'buyer', 'waiveContingency', Contingency.Title);
 await expectOk('buyer waives inspection (pending)', e, 'buyer', 'waiveContingency', Contingency.Inspection);
-await expectOk('financing ok', e, 'lender', 'submitFinancing', true, DOC.fin);
+check('cash deal: ready to close without any financing step', st(e) === 'ReadyToClose');
 e.state; await expectOk('dispute', e, 'buyer', 'openDispute');
 await expectErr('resolver voids waived title', e, 'resolver', 'voidContingencyResult', Contingency.Title);
 await expectOk('resolver dismisses', e, 'resolver', 'dismissDispute');
@@ -285,7 +284,7 @@ await tryDeposit('AML risk too high', goodAtt({ amlRiskScore: 31n }), CASP, CASP
     Buffer.from(l.buyerKycRef).equals(Buffer.from(pureCircuits.kycReference(goodAtt()))), '| ticker', l.escrowTicker); }
 setKyc(goodAtt());
 
-const readyToClose = async () => { setKyc(goodAtt()); const e = await toPending(); await call(e, 'inspector', 'submitInspection', true, DOC.insp); await call(e, 'lender', 'submitFinancing', true, DOC.fin); await call(e, 'title', 'submitTitle', true, DOC.title); return e; };
+const readyToClose = async () => { setKyc(goodAtt()); const e = await toPending(); await call(e, 'inspector', 'submitInspection', true, DOC.insp); await call(e, 'title', 'submitTitle', true, DOC.title); return e; };
 
 console.log('Travel Rule anchor');
 { setKyc(goodAtt()); const e = await deploy(); await call(e, 'buyer', 'depositToEscrow');
@@ -404,10 +403,50 @@ const ins = (e) => (e.zswap?.inputs ?? []).map((i) => h(i.nonce));
 const key = (a) => `${a.to}:${a.value}`;
 const sameOuts = (got, want) => JSON.stringify([...got].map(key).sort()) === JSON.stringify([...want].map(key).sort());
 
+console.log('Cash deal: no lender, the deposit clears financing');
+{
+  TERMS_W = TERMS; LTERMS_W = lenderPart(TERMS); VAULT_W = { ...VAULT, mt_index: 0n }; setKyc(goodAtt());
+  const noLender = () => { const f = fullTerms(); f[1] = NONE32; return f; };
+  // The lender role follows the financing mode while initializing.
+  { const e = await deployRaw(noLender(), K.seller, true, false);
+    check('lender role missing before the financing mode is chosen', missing(e).includes('Lender'));
+    await call(e, 'seller', 'configureFinancing', ...financingOf(LOAN, FinancingMode.Deposited, OE, WIN));
+    check('loan mode without a lender role id: still missing', missing(e).includes('Lender'));
+    await call(e, 'seller', 'configureFinancing', ...financingOf(TERMS, FinancingMode.Attested, DL, 1));
+    check('cash mode: lender role counts as configured', !missing(e).includes('Lender') && missing(e).length === 0);
+    await call(e, 'seller', 'configureFinancing', ...financingOf(LOAN, FinancingMode.Deposited, OE, WIN));
+    check('back to a loan: the lender role id is required again', missing(e).includes('Lender')); }
+  // A cash deal with no lender at all goes from configuration to closing.
+  const e = await deployRaw(noLender(), K.seller, true, true);
+  check('cash deal fully configured without a lender role id', missing(e).length === 0);
+  const v = L(e).configVersion;
+  await call(e, 'buyer', 'acceptConfiguration', v); await call(e, 'seller', 'acceptConfiguration', v);
+  await expectOk('finalize a cash deal without a lender', e, 'seller', 'finalizeInitialization');
+  check('financing not cleared before the deposit', !L(e).financingSubmitted && !L(e).financingApproved);
+  await expectOk('buyer deposits the full price', e, 'buyer', 'depositToEscrow');
+  check('the deposit cleared financing', L(e).financingSubmitted && L(e).financingApproved && !L(e).financingWaived && st(e) === 'Funded');
+  await call(e, 'seller', 'openContingencyReview');
+  await expectErrMsg('buyer cannot waive financing in a cash deal', e, 'buyer', 'waiveContingency', "Cash deal: financing is cleared by the buyer's deposit", Contingency.Financing);
+  await expectOk('inspection passes', e, 'inspector', 'submitInspection', true, DOC.insp);
+  check('not ready while the title is pending', st(e) === 'ContingenciesPending');
+  await expectOk('title cleared', e, 'title', 'submitTitle', true, DOC.title);
+  check('ReadyToClose with inspection and title only', st(e) === 'ReadyToClose');
+  await expectOk('buyer disputes', e, 'buyer', 'openDispute');
+  await expectErrMsg('resolver cannot void the cash clearance', e, 'resolver', 'voidContingencyResult', 'cannot be voided', Contingency.Financing);
+  await expectOk('resolver dismisses', e, 'resolver', 'dismissDispute');
+  check('back to ReadyToClose', st(e) === 'ReadyToClose');
+  setKyc(sellerAtt()); await call(e, 'seller', 'submitSellerKyc'); setKyc(goodAtt());
+  await expectPayout('seller releases the price', e, 'seller', 'releaseToSeller', TERMS.sellerPayout);
+  // Lender independence only matters when there is a lender.
+  { const f = fullTerms(); f[1] = some(id(K.seller));
+    const e2 = await deployRaw(f, K.seller, true, true); const v2 = L(e2).configVersion;
+    await call(e2, 'buyer', 'acceptConfiguration', v2); await call(e2, 'seller', 'acceptConfiguration', v2);
+    await expectOk('cash deal: a leftover lender id equal to the seller is ignored', e2, 'seller', 'finalizeInitialization'); }
+}
+
 console.log('Loan: the lender deposits its exact share, the release pays the full price');
 {
   const e = await loanPending();
-  await expectErr('lender uses submitFinancing in loan mode', e, 'lender', 'submitFinancing', true, DOC.fin);
   await expectErr('buyer waives financing in loan mode', e, 'buyer', 'waiveContingency', Contingency.Financing);
   await expectErr('buyer deposits the loan', e, 'buyer', 'depositLoan', LOAN_COIN, LETTER);
   await expectErrMsg('loan coin with wrong value', e, 'lender', 'depositLoan', 'ERROR_LOAN_COIN_MISMATCH', { ...LOAN_COIN, value: 399n }, LETTER);
@@ -651,7 +690,7 @@ async function coolDeal({ terms = COOL, period = P, mode = FinancingMode.Atteste
   await call(e, 'buyer', 'depositToEscrow', coin);
   return e;
 }
-const cashCleared = async (e) => { await call(e, 'seller', 'openContingencyReview'); await clearOthers(e); await call(e, 'lender', 'submitFinancing', true, DOC.fin); };
+const cashCleared = async (e) => { await call(e, 'seller', 'openContingencyReview'); await clearOthers(e); };
 
 console.log('Cooling-off off (default): a buyer withdrawal forfeits the deposit');
 {

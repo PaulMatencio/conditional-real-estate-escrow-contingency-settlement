@@ -34,7 +34,8 @@ export function toEscrowView(contractAddress: string, data: LedgerInput, mainten
       buyer: h(L.buyerId),
       seller: h(L.sellerId),
       inspector: has('Inspector') ? h(L.inspectorId) : null,
-      lender: has('Lender') ? h(L.lenderId) : null,
+      // A cash deal marks the lender role configured without a lender: no role id then.
+      lender: has('Lender') && !/^0*$/.test(h(L.lenderId)) ? h(L.lenderId) : null,
       titleAgent: has('TitleAgent') ? h(L.titleAgentId) : null,
       resolver: has('Resolver') ? h(L.resolverId) : null
     },

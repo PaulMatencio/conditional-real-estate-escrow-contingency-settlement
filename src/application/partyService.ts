@@ -236,9 +236,12 @@ export function finalizeBlockers(view: EscrowView, record: VaultRecord, crypto: 
     }
   }
   const r = view.roles;
-  const others = [r.buyer, r.seller, r.inspector, r.lender, r.titleAgent];
+  // Same rules as finalizeInitialization: the lender only exists in a loan deal (a cash deal has none).
+  const lender = view.financing.mode === 'Deposited' ? r.lender : null;
+  const others = [r.buyer, r.seller, r.inspector, lender, r.titleAgent];
   if (r.resolver && others.includes(r.resolver)) out.push('The dispute resolver must be distinct from every other role');
-  if ([r.inspector, r.lender, r.titleAgent].includes(r.seller)) out.push('Attestors must be independent from the seller');
+  if ([r.inspector, lender, r.titleAgent].includes(r.seller)) out.push('Attestors must be independent from the seller');
+  if (lender && lender === r.buyer) out.push('The lender must be distinct from the buyer when it deposits the loan');
   if (view.disputeDeadline <= view.closingDeadline) out.push('Dispute deadline must follow closing deadline');
   if (nowSec >= view.closingDeadline) out.push('Closing deadline is already in the past');
   return out;

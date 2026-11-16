@@ -116,11 +116,6 @@ export class EscrowClient {
     return toTxData(await this.found.callTx.submitInspection(passed, reportHash));
   }
 
-  /** Calls circuit `submitFinancing`. */
-  async submitFinancing(approved: boolean, reportHash: Uint8Array): Promise<TxData> {
-    return toTxData(await this.found.callTx.submitFinancing(approved, reportHash));
-  }
-
   /** Calls circuit `submitTitle`. */
   async submitTitle(cleared: boolean, reportHash: Uint8Array): Promise<TxData> {
     return toTxData(await this.found.callTx.submitTitle(cleared, reportHash));
