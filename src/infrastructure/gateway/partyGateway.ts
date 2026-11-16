@@ -126,19 +126,25 @@ export class PartyGateway implements EscrowPartyGateway {
     }
   }
 
-  /** Position (0-based) of this contract's new coin among the coins the transaction inserts, and how many it inserts. */
+  /**
+   * Position (0-based) of this contract's new coin among the coins the transaction inserts into the global coin tree,
+   * and how many it inserts. Read from the offers themselves (guaranteed offer, then fallible offers by segment; in
+   * each, outputs then transients, in their stored order), not by replaying them: a replay on an empty tree rejects
+   * the depositor's own inputs ("use of unknown coin tree root …", the root they were spent against).
+   */
   private positionInTx(tx: Transaction<never, never, never>): { position: bigint; inserted: bigint } {
-    let local = new ZswapChainState();
-    const whitelist = new Set([this.contractAddress]);
+    const me = this.contractAddress.toLowerCase();
+    const offers = [tx.guaranteedOffer, ...[...(tx.fallibleOffer?.entries() ?? [])].sort(([a], [b]) => a - b).map(([, o]) => o)].filter(Boolean) as {
+      outputs: { contractAddress?: string }[];
+      transients: { contractAddress?: string }[];
+    }[];
     let position: bigint | null = null;
     let inserted = 0n;
-    const offers = [tx.guaranteedOffer, ...[...(tx.fallibleOffer?.entries() ?? [])].sort(([a], [b]) => a - b).map(([, o]) => o)].filter(Boolean);
     for (const offer of offers) {
-      const before = local.firstFree;
-      const [next, map] = local.tryApply(offer as never, whitelist as never);
-      for (const idx of map.values()) if (position === null) position = idx;
-      inserted += next.firstFree - before;
-      local = next;
+      for (const c of [...offer.outputs, ...offer.transients]) {
+        if (position === null && c.contractAddress?.toLowerCase() === me) position = inserted;
+        inserted += 1n;
+      }
     }
     if (position === null) throw new AppError('VALIDATION', "This transaction put no coin into this escrow: it is not this escrow's deposit. Check the hash and that the right escrow is open.");
     return { position, inserted };
