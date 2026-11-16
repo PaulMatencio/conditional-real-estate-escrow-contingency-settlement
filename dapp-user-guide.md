@@ -88,7 +88,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 
 ### 4. Fill in the initialization terms
 
-**Initialize** tab: the role ids of the inspector, lender, title agent and resolver, the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
+**Initialize** tab: the role ids of the inspector, lender, title agent and resolver (cash deal: no lender takes part, so click **Use the buyer's role id**; the buyer waives Financing during the review), the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
 
 ### 5. Private terms package
 
@@ -165,13 +165,14 @@ None of these three is secret. Never send the secret role key to anyone.
 ### During the contingency review
 
 1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector, lender and title agent can attest.
-2. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below).
-3. For each contingency you may:
+2. **Cash deal:** the *Financing (cash deal)* card → **Waive financing**. Your deposit already locks the full price, so there is no loan to approve, but the contract still needs Financing cleared. (Loan deals: the lender deposits instead.)
+3. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below).
+4. For each contingency you may:
    - **Waive contingency** (choose which): you accept the risk without that attestation. Final.
    - Wait for the attestor's result.
-4. When every contingency is passed or waived, the status becomes **ReadyToClose**.
-5. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
-6. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
+5. When every contingency is passed or waived, the status becomes **ReadyToClose**.
+6. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
+7. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
 
 #### Check an attestor's report
 

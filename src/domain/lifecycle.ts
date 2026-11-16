@@ -440,6 +440,21 @@ export function availableActions(v: EscrowView, role: PartyRole, nowSec: bigint,
     });
 }
 
+/**
+ * Cash deal (financing mode Attested): the buyer's deposit already locks the full price, so the Financing contingency
+ * guards nothing. Contract v2 still requires it to be cleared, so the dApp offers the buyer to waive it.
+ * - 'hidden':  not a cash deal, or Financing already cleared (passed or waived)
+ * - 'later':   cash deal, but the contingency review is not open yet (waiving needs ContingenciesPending)
+ * - 'now':     the buyer can waive Financing now
+ */
+export function cashFinancingWaiver(v: EscrowView): 'hidden' | 'later' | 'now' {
+  if (v.financing.mode !== 'Attested') return 'hidden';
+  const c = v.contingencies.Financing;
+  if (c.waived || (c.submitted && c.passed)) return 'hidden';
+  if (inStatus(v, 'Initializing', 'Created', 'Funded')) return 'later';
+  return ACTIONS.waiveContingency.check(v, 'buyer', 0n, 'Financing') === null ? 'now' : 'hidden';
+}
+
 /** Only what is enabled right now (the resolver workspace lists exactly these, §3.1.6). */
 export const enabledActions = (v: EscrowView, role: PartyRole, nowSec: bigint, m: LocalMaterial): AvailableAction[] =>
   availableActions(v, role, nowSec, m).filter((a) => a.enabled);
