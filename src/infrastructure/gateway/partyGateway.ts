@@ -109,7 +109,11 @@ export class PartyGateway implements EscrowPartyGateway {
         // midnight-js 5 returns the finalized transaction as an era-tagged handle; decode it with ledger 9.
         const handle = r.public.tx as { serialize(): Uint8Array };
         const tx = Transaction.deserialize('signature', 'proof', 'binding', handle.serialize()) as unknown as Transaction<never, never, never>;
-        receipt.vaultIndex = (await this.indexFromTx(tx, r.public.blockHash ?? null).catch(() => null)) ?? undefined;
+        // Exact index from the indexer (the transaction's zswapStartIndex); the block-snapshot estimate only as a fallback.
+        receipt.vaultIndex =
+          (await this.locateCoinIndex(circuit as DepositCircuit, r.public.txHash).catch(() => null)) ??
+          (await this.indexFromTx(tx, r.public.blockHash ?? null).catch(() => null)) ??
+          undefined;
       }
       return receipt;
     } catch (e) {
@@ -122,14 +126,8 @@ export class PartyGateway implements EscrowPartyGateway {
     }
   }
 
-  /**
-   * FR-FUND-03 (validation item V-2). The deposit transaction inserts its outputs into the global commitment tree in
-   * order (guaranteed offer, then fallible segments). Replaying those offers on an empty tree with this contract as the
-   * only tracked address gives the vault coin's position within the transaction; the indexer's Zswap state right after
-   * the deposit gives `firstFree`. Index = firstFree − (outputs inserted by the tx) + position. Assumes no later
-   * transaction in the same block inserted coins before the indexer snapshot; verify on the preview network.
-   */
-  private async indexFromTx(tx: Transaction<never, never, never>, blockHash: string | null): Promise<bigint | null> {
+  /** Position (0-based) of this contract's new coin among the coins the transaction inserts, and how many it inserts. */
+  private positionInTx(tx: Transaction<never, never, never>): { position: bigint; inserted: bigint } {
     let local = new ZswapChainState();
     const whitelist = new Set([this.contractAddress]);
     let position: bigint | null = null;
@@ -142,7 +140,24 @@ export class PartyGateway implements EscrowPartyGateway {
       inserted += next.firstFree - before;
       local = next;
     }
-    if (position === null) throw new AppError('VALIDATION', 'This transaction put no coin into this escrow: it is not this escrow\'s deposit. Check the hash and that the right escrow is open.');
+    if (position === null) throw new AppError('VALIDATION', "This transaction put no coin into this escrow: it is not this escrow's deposit. Check the hash and that the right escrow is open.");
+    return { position, inserted };
+  }
+
+  /**
+   * FR-FUND-03. Exact: the indexer gives the transaction's first index in the global coin tree (`zswapStartIndex`), and
+   * replaying its offers on an empty tree gives the vault coin's position inside it. Index = start + position.
+   * Without `range` (older indexer), an estimate from the coin-tree snapshot of the block (validation item V-2: wrong
+   * when another transaction in the block inserted coins after it). A wrong index makes the payout prove a path to a
+   * root the chain never had: "use of unknown coin tree root".
+   */
+  private async indexFromTx(tx: Transaction<never, never, never>, blockHash: string | null, range?: { start: number; end: number }): Promise<bigint> {
+    const { position, inserted } = this.positionInTx(tx);
+    if (range) {
+      if (BigInt(range.end - range.start) !== inserted)
+        throw new AppError('UNKNOWN', `The deposit inserted ${range.end - range.start} coins on-chain but ${inserted} when replayed (a failed segment?): the index cannot be derived safely. Enter the index the depositor sees.`);
+      return BigInt(range.start) + position;
+    }
     const cfg = blockHash ? { type: 'blockHash' as const, blockHash } : undefined;
     const both = await this.providers.publicDataProvider.queryZSwapAndContractState(this.contractAddress, cfg as never);
     if (!both) throw new AppError('UNKNOWN', 'The indexer returned no coin-tree state for the deposit block, so the index cannot be computed yet. Retry in a minute, or enter the index the depositor sees.');
@@ -171,7 +186,7 @@ export class PartyGateway implements EscrowPartyGateway {
     const found = await fetchTransaction(hash);
     if (!found) throw new AppError('VALIDATION', `No transaction with this hash or identifier on the ${networkConfig.networkId} indexer. Paste the deposit's transaction hash from the depositor's transaction log.`);
     const tx = Transaction.deserialize('signature', 'proof', 'binding', hexToBytes(found.raw)) as unknown as Transaction<never, never, never>;
-    return this.indexFromTx(tx, found.blockHash);
+    return this.indexFromTx(tx, found.blockHash, found.zswapRange);
   }
 
   async coinPublicKey(): Promise<string | null> {
@@ -197,21 +212,30 @@ const fail = (what: string) => (): never => {
 
 /**
  * Indexer lookup of a transaction (same query shape midnight-js uses), by hash, then by identifier: wallets and logs
- * show one or the other, and both are 64 hex. Null when the indexer knows neither; throws when it cannot be asked.
+ * show one or the other, and both are 64 hex. Also returns the transaction's range in the global coin tree
+ * (`zswapStartIndex`..`zswapEndIndex`) when the indexer reports it. Null when the indexer knows neither; throws when it
+ * cannot be asked.
  */
-export async function fetchTransaction(hashOrId: string): Promise<{ raw: string; blockHash: string; blockHeight: number } | null> {
-  const query = `query TX($offset: TransactionOffset!) { transactions(offset: $offset) { raw hash block { height hash } } }`;
+export async function fetchTransaction(hashOrId: string): Promise<{ raw: string; blockHash: string; blockHeight: number; zswapRange?: { start: number; end: number } } | null> {
+  const withRange = `query TX($offset: TransactionOffset!) { transactions(offset: $offset) { raw hash block { height hash } ... on RegularTransaction { zswapStartIndex zswapEndIndex } } }`;
+  const plain = `query TX($offset: TransactionOffset!) { transactions(offset: $offset) { raw hash block { height hash } } }`;
   const value = hashOrId.trim().toLowerCase().replace(/^0x/, '');
-  for (const offset of [{ hash: value }, { identifier: value }]) {
-    const res = await fetch(indexerHttpUrl(), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, variables: { offset } })
-    });
+  type Row = { raw: string; block: { height: number; hash: string }; zswapStartIndex?: number; zswapEndIndex?: number };
+  const ask = async (query: string, offset: Record<string, string>) => {
+    const res = await fetch(indexerHttpUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables: { offset } }) });
     if (!res.ok) throw new AppError('UNKNOWN', `The indexer did not answer the transaction lookup (HTTP ${res.status}). Check "Health".`);
-    const j = (await res.json()) as { data?: { transactions?: { raw: string; block: { height: number; hash: string } }[] } };
+    return (await res.json()) as { data?: { transactions?: Row[] }; errors?: { message: string }[] };
+  };
+  const offsets: Record<string, string>[] = [{ hash: value }, { identifier: value }];
+  for (const offset of offsets) {
+    let j = await ask(withRange, offset);
+    // An indexer without the zswap index fields rejects the whole query: ask again without them.
+    if (!j.data && j.errors?.some((e) => /zswap(Start|End)Index|RegularTransaction/.test(e.message))) j = await ask(plain, offset);
     const t = j.data?.transactions?.[0];
-    if (t) return { raw: t.raw, blockHash: t.block.hash, blockHeight: t.block.height };
+    if (t) {
+      const zswapRange = typeof t.zswapStartIndex === 'number' && typeof t.zswapEndIndex === 'number' ? { start: t.zswapStartIndex, end: t.zswapEndIndex } : undefined;
+      return { raw: t.raw, blockHash: t.block.hash, blockHeight: t.block.height, zswapRange };
+    }
   }
   return null;
 }
