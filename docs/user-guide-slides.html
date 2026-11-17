@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real-estate escrow dApp — User guide (Slides)</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --surface: #121a30;
+      --surface-2: #192340;
+      --border: #27355d;
+      --text: #e8edf8;
+      --muted: #9aa8cc;
+      --accent: #6366f1;
+      --accent-soft: rgba(99, 102, 241, 0.16);
+      --green: #10b981;
+      --green-soft: rgba(16, 185, 129, 0.15);
+      --amber: #f59e0b;
+      --amber-soft: rgba(245, 158, 11, 0.15);
+      --rose: #f43f5e;
+      --rose-soft: rgba(244, 63, 94, 0.15);
+      --cyan: #06b6d4;
+      --cyan-soft: rgba(6, 182, 212, 0.15);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.45;
+      overflow: hidden;
+    }
+
+    /* Top progress bar */
+    .progress-track {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: rgba(255,255,255,0.06);
+      z-index: 50;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--cyan));
+      transition: width 0.25s ease;
+    }
+
+    /* Deck container */
+    .deck {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      padding: 44px 64px 74px;
+      display: none;
+      flex-direction: column;
+      justify-content: flex-start;
+      overflow-y: auto;
+      background:
+        radial-gradient(circle at 90% 10%, rgba(99, 102, 241, 0.10), transparent 38%),
+        radial-gradient(circle at 10% 90%, rgba(6, 182, 212, 0.08), transparent 36%),
+        var(--bg);
+    }
+    .slide.active {
+      display: flex;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Title slide */
+    .slide.title-slide {
+      justify-content: center;
+      align-items: flex-start;
+      padding: 64px 84px;
+    }
+    .kicker {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--cyan);
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: clamp(32px, 4.2vw, 54px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.12;
+      margin-bottom: 16px;
+    }
+    .subtitle {
+      font-size: clamp(17px, 1.8vw, 22px);
+      color: var(--muted);
+      max-width: 780px;
+      margin-bottom: 28px;
+    }
+    h2 {
+      font-size: clamp(24px, 2.6vw, 34px);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-bottom: 6px;
+    }
+    .slide-lead {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 22px;
+      max-width: 960px;
+    }
+    h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+
+    /* Badges & pills */
+    .pill-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 13px; border-radius: 999px;
+      font-size: 13px; font-weight: 600;
+      background: var(--accent-soft); color: #c7d2fe;
+      border: 1px solid rgba(99, 102, 241, 0.35);
+    }
+    .pill.green { background: var(--green-soft); color: #a7f3d0; border-color: rgba(16,185,129,0.35); }
+    .pill.amber { background: var(--amber-soft); color: #fde68a; border-color: rgba(245,158,11,0.35); }
+    .pill.rose  { background: var(--rose-soft);  color: #fecdd3; border-color: rgba(244,63,94,0.35); }
+    .pill.cyan  { background: var(--cyan-soft);  color: #a5f3fc; border-color: rgba(6,182,212,0.35); }
+
+    /* Grids & Cards */
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+    .card.accent { border-color: rgba(99,102,241,0.5); background: linear-gradient(180deg, rgba(99,102,241,0.09), var(--surface)); }
+    .card.green  { border-color: rgba(16,185,129,0.45); }
+    .card.amber  { border-color: rgba(245,158,11,0.45); }
+    .card.rose   { border-color: rgba(244,63,94,0.45); }
+
+    ul, ol { padding-left: 20px; }
+    li { margin-bottom: 7px; font-size: 14.5px; color: var(--text); }
+    li:last-child { margin-bottom: 0; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    code {
+      font-family: var(--mono);
+      font-size: 0.88em;
+      background: rgba(255,255,255,0.07);
+      padding: 2px 6px;
+      border-radius: 5px;
+      color: #c7d2fe;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface-2);
+      font-weight: 700;
+      color: #c7d2fe;
+      font-size: 12.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:last-child td { border-bottom: none; }
+
+    /* Flow diagram */
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0 18px;
+    }
+    .state {
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .state.ok { border-color: var(--green); color: #a7f3d0; }
+    .state.warn { border-color: var(--amber); color: #fde68a; }
+    .state.bad { border-color: var(--rose); color: #fecdd3; }
+    .arrow { color: var(--muted); font-weight: 700; }
+
+    .callout {
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-left: 4px solid var(--cyan);
+      background: rgba(6, 182, 212, 0.09);
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+    }
+    .callout.warn {
+      border-left-color: var(--amber);
+      background: rgba(245, 158, 11, 0.09);
+    }
+    .callout.danger {
+      border-left-color: var(--rose);
+      background: rgba(244, 63, 94, 0.09);
+    }
+
+    /* Footer controls */
+    .controls {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 54px;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(11, 16, 32, 0.9);
+      backdrop-filter: blur(8px);
+      border-top: 1px solid var(--border);
+      z-index: 40;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .controls-right { display: flex; align-items: center; gap: 10px; }
+    button.nav-btn {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.nav-btn:hover { border-color: var(--accent); color: #fff; }
+    button.nav-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* Overview Grid Modal */
+    .overview {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 12, 24, 0.95);
+      z-index: 100;
+      display: none;
+      padding: 36px 48px;
+      overflow-y: auto;
+    }
+    .overview.open { display: block; }
+    .overview-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 20px;
+    }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
+    }
+    .thumb {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .thumb:hover, .thumb.current { border-color: var(--accent); }
+    .thumb-num { font-size: 12px; color: var(--cyan); font-weight: 700; margin-bottom: 4px; }
+    .thumb-title { font-size: 14px; font-weight: 600; color: var(--text); }
+
+    @media (max-width: 900px) {
+      .slide { padding: 28px 24px 70px; }
+      .slide.title-slide { padding: 36px 24px; }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      html, body { overflow: visible; background: #fff; color: #111; }
+      .progress-track, .controls, .overview { display: none !important; }
+      .deck { height: auto; }
+      .slide {
+        position: static;
+        display: flex !important;
+        page-break-after: always;
+        break-after: page;
+        min-height: 100vh;
+        background: #fff;
+        color: #111;
+        padding: 32px 40px;
+      }
+      .card, table { background: #f8fafc; border-color: #cbd5e1; color: #111; }
+      th { background: #e2e8f0; color: #1e293b; }
+      h3, li, td { color: #111; }
+      .muted { color: #475569; }
+      code { background: #e2e8f0; color: #1e293b; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress-track"><div class="progress-fill" id="progress"></div></div>
+
+  <main class="deck" id="deck">
+    <!-- 1. Title -->
+    <section class="slide title-slide active" data-title="Title">
+      <div class="kicker">Midnight Network · Preview Network · User Guide</div>
+      <h1>Real-estate escrow dApp</h1>
+      <p class="subtitle">
+        Conditional real-estate escrow with zero-knowledge contingency settlement, shielded token custody, and client-side encrypted terms.
+      </p>
+      <div class="pill-row">
+        <span class="pill">Shielded Token Escrow</span>
+        <span class="pill cyan">Private Price &amp; Payout Keys</span>
+        <span class="pill green">ZK Contingency Attestations</span>
+        <span class="pill amber">CASP KYC / AML</span>
+      </div>
+      <p class="muted small">Nov 17, 2026 · @Paul Matencio &nbsp;|&nbsp; Use <code>←</code> <code>→</code> or <code>Space</code> to navigate · <code>G</code> for slide grid · <code>Ctrl/Cmd + P</code> to export PDF</p>
+    </section>
+
+    <!-- 2. Overview & Modes -->
+    <section class="slide" data-title="Before You Start">
+      <h2>Before you start: How the escrow works</h2>
+      <p class="slide-lead">
+        The buyer locks the agreed price in a shielded coin on the Midnight preview network. Inspection, financing, and title contingencies are attested, and funds go either to the seller or back to the buyer.
+      </p>
+      <div class="grid-2">
+        <div class="card accent">
+          <h3>Privacy-First Design</h3>
+          <ul>
+            <li><strong>Private on-chain:</strong> Prices, payout keys, and report documents never appear on-chain—only salted commitments and report hashes.</li>
+            <li><strong>Local proving:</strong> Zero-knowledge proofs are generated on each user's computer via the local proof server.</li>
+            <li><strong>Client-side vault:</strong> Secret keys, terms, attestations, and salts stay encrypted (AES-GCM) in the browser.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Two Execution Modes</h3>
+          <ul>
+            <li><strong>Wallet Mode:</strong> Real escrow on the Midnight <code>preview</code> network—real transactions, DUST fees, and local proof server (<code>9.0.1</code>). <em>No wallet?</em> Every page still <strong>Loads</strong> the escrow read-only from the indexer; connect a wallet only to act.</li>
+            <li><strong>Simulator Mode:</strong> Compiled contract running inside the browser with no wallet, no fees, and a movable clock. Use <em>Create simulated escrow</em> to rehearse a full deal in minutes.</li>
+          </ul>
+          <div class="callout small">
+            Every action button checks its preconditions first; disabled buttons explain why underneath (wrong phase, deadline passed, missing key or terms).
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Who Does What -->
+    <section class="slide" data-title="Roles & Pages">
+      <h2>Who does what: 9 Roles, dedicated pages</h2>
+      <p class="slide-lead">Each participant interacts through a role-specific page on their own browser origin.</p>
+      <table>
+        <thead>
+          <tr><th>Role</th><th>Page</th><th>Main job</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Admin</strong></td><td><code>/admin</code></td><td>Deploys and initializes the escrow, prepares &amp; distributes private terms, whitelists CASP, finalizes</td></tr>
+          <tr><td><strong>Buyer</strong></td><td><code>/buyer</code></td><td>Accepts terms, proves KYC, deposits price (and optional top-up), waives inspection or title (financing only in a v2 cash deal), disputes</td></tr>
+          <tr><td><strong>Seller</strong></td><td><code>/seller</code></td><td>Accepts terms, proves KYC on-chain, opens review, receives payout</td></tr>
+          <tr><td><strong>Inspector</strong></td><td><code>/inspector</code></td><td>Attests the inspection result (salted report hash)</td></tr>
+          <tr><td><strong>Lender</strong></td><td><code>/lender</code></td><td>Loan deal: funds or refuses loan. v2 cash deal: attests financing. v3 cash deal: no lender</td></tr>
+          <tr><td><strong>Title agent</strong></td><td><code>/title-agent</code></td><td>Attests the title result (salted report hash)</td></tr>
+          <tr><td><strong>Dispute resolver</strong></td><td><code>/resolver</code></td><td>Settles disputes, voids wrong attestations, executes settled payout</td></tr>
+          <tr><td><strong>Notary (custodian)</strong></td><td><code>/verify/&lt;address&gt;</code></td><td>Read-only: verifies escrow, issues EU notarial certificate, holds custodian copy of terms</td></tr>
+          <tr><td><strong>Compliance officer</strong></td><td><code>/compliance</code></td><td>Checks KYC &amp; Travel Rule status, broadcasts signed CASP revocations</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 4. What Each Person Needs -->
+    <section class="slide" data-title="Prerequisites">
+      <h2>What each person needs</h2>
+      <p class="slide-lead">Requirements for running the dApp securely in Wallet Mode (and testing multiple roles locally).</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>1. Browser &amp; Secure Origin</h3>
+          <ul>
+            <li>Chromium or Firefox on <code>http://localhost:3000</code> or <code>http://&lt;role&gt;.localhost:3000</code>.</li>
+            <li><strong>No LAN IPs</strong> (e.g. <code>192.168.x.x</code>): browsers disable WebCrypto vault encryption.</li>
+            <li><strong>Own origin per role:</strong> use <code>admin.localhost</code>, <code>buyer.localhost</code>, <code>seller.localhost</code> so each role gets its own vault.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>2. Vault &amp; Role Key</h3>
+          <ul>
+            <li><strong>Vault passphrase</strong> (8+ chars) to encrypt keys, terms, and attestations in IndexedDB.</li>
+            <li><strong>Secret role key</strong> generated on <code>/role-id</code> (all roles except Notary &amp; Compliance Officer).</li>
+            <li>Only the derived <strong>role id</strong> is shared; the secret key never leaves your device.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>3. Wallet &amp; Proof Server</h3>
+          <ul>
+            <li><strong>Midnight wallet</strong> (Lace or 1AM) on <code>preview</code> with <strong>DUST</strong> for fees.</li>
+            <li>Buyer and seller must use <strong>separate wallet accounts</strong> (payout goes to that account's shielded key).</li>
+            <li><strong>Local proof server</strong> running on <code>127.0.0.1:6300</code> (<code>midnightntwrk/proof-server:9.0.1</code>).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Escrow Lifecycle -->
+    <section class="slide" data-title="Escrow Lifecycle">
+      <h2>The escrow at a glance: Statuses &amp; stages</h2>
+      <div class="flow">
+        <span class="state">Initializing</span><span class="arrow">→</span>
+        <span class="state">Created</span><span class="arrow">→</span>
+        <span class="state">Funded</span><span class="arrow">→</span>
+        <span class="state">ContingenciesPending</span><span class="arrow">→</span>
+        <span class="state ok">ReadyToClose</span><span class="arrow">→</span>
+        <span class="state ok">Closed</span>
+      </div>
+      <div class="flow">
+        <span class="state warn">Disputed</span><span class="arrow">→</span>
+        <span class="state ok">Settled</span><span class="arrow"> / </span>
+        <span class="state bad">Refunded</span><span class="arrow"> / </span>
+        <span class="state">Dismiss (resumes)</span>
+        <span class="muted" style="margin: 0 8px;">|</span>
+        <span class="state bad">Cancelled</span>
+        <span class="state warn">Withdrawn</span>
+        <span class="state bad">Expired</span>
+        <span class="state bad">Forfeited</span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Stage</th><th>Admin</th><th>Buyer</th><th>Seller</th><th>Attestors</th><th>Resolver</th><th>Notary</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Before deploy</strong></td><td>Collects keys &amp; ids</td><td>Sends role id, payout &amp; envelope keys</td><td>Sends role id, payout &amp; envelope keys</td><td>Send role ids</td><td>Sends role id &amp; envelope key</td><td>Sends custodian envelope key</td></tr>
+          <tr><td><strong>Initializing</strong></td><td>Deploys, registers, renounces, configures, whitelists CASP</td><td>Imports terms &amp; accepts</td><td>Imports terms &amp; accepts</td><td>—</td><td>Imports terms</td><td>Imports custodian copy</td></tr>
+          <tr><td><strong>Finalization</strong></td><td><strong>Finalize initialization</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><strong>Created</strong></td><td>—</td><td>Gets KYC, <strong>deposits</strong></td><td>Gets KYC, <strong>submits KYC</strong></td><td>—</td><td>—</td><td>Verifies locked funds</td></tr>
+          <tr><td><strong>Funded → Ready</strong></td><td>—</td><td>Opens review, waives, cancels/refunds, disputes</td><td>Opens review, withdraws, disputes</td><td><strong>Submit results</strong> + report hashes</td><td>Decides disputes</td><td>Verifies openings &amp; reports</td></tr>
+          <tr><td><strong>Closing</strong></td><td>—</td><td>Releases or claims refund</td><td>Releases, receives price</td><td>—</td><td>Executes settled payout</td><td>Issues certificate</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 6. Cancelling Before Funding -->
+    <section class="slide" data-title="Cancel Before Funding">
+      <h2>Cancelling before funding (even when immutable)</h2>
+      <p class="slide-lead">
+        Parties can walk away before money is locked—even after the admin renounces maintenance authority. Renouncing freezes code, not rules.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>When It Is Allowed</h3>
+          <ul>
+            <li><strong>Buyer or Seller:</strong> while <code>Initializing</code> or <code>Created</code> (up to buyer's deposit).</li>
+            <li><strong>Admin:</strong> only while <code>Initializing</code>.</li>
+            <li><strong>Blocked once Funded:</strong> after deposit, exit only via contingency failure, withdrawal, expiry, or dispute.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>What Happens</h3>
+          <ul>
+            <li>Status becomes <strong>Cancelled</strong> (final; lifecycle round +1).</li>
+            <li><strong>No funds move</strong> (only network fee paid by caller).</li>
+            <li>Cannot be reopened or undone; stays on-chain as a public record.</li>
+            <li><strong>To continue:</strong> Admin deploys a new escrow. Role/payout/envelope keys can be reused, but <strong>new KYC attestations</strong> are required.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout small">
+        <strong>Cleanup:</strong> Old vault records remain inert. Back up first, then use <strong>Erase locally</strong> (type <code>ERASE</code>) or <strong>Remove custodian copy</strong>.
+      </div>
+    </section>
+
+    <!-- 7. Contract v2 & v3: Cash vs Loan -->
+    <section class="slide" data-title="v2 & v3: Cash vs Loan">
+      <h2>Contract versions (v3 &amp; v2) and loan financing</h2>
+      <p class="slide-lead">
+        The dApp deploys <strong>v3</strong> for new escrows while continuing to support <strong>v2</strong> escrows.
+      </p>
+      <div class="grid-2">
+        <div class="card accent">
+          <h3>Cash Deal vs. Loan Deal</h3>
+          <ul>
+            <li><strong>v3 Cash Deal:</strong> No lender needed—the buyer's deposit automatically clears the financing contingency.</li>
+            <li><strong>v2 Cash Deal:</strong> Lender attests financing (or buyer waives it).</li>
+            <li><strong>Loan Deal:</strong> Buyer deposits own share; Lender deposits the loan into the same escrow (<code>price = buyer deposit + loan</code>).</li>
+            <li><strong>Amounts &amp; Units:</strong> Enter whole tokens (e.g. <code>250000.50 sEUR</code>); dApp converts to base units using deploy-time decimals (e.g. 6).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Loan Outcomes &amp; Statuses</h3>
+          <ul>
+            <li><strong>Released:</strong> Seller receives both coins (buyer deposit + loan or top-up).</li>
+            <li><strong>Refunded / Expired:</strong> Each coin returns to its depositor in separate transactions (<em>Refund buyer</em>, <em>Refund top-up</em>, <em>Refund lender</em>).</li>
+            <li><strong>Forfeited:</strong> Loan lost + refund term OFF + no top-up by closing deadline → Seller claims buyer deposit.</li>
+            <li><strong>Header Switcher:</strong> Manages multiple escrows; names &amp; decimals stay in your vault.</li>
+            <li><strong>Version detection:</strong> Each escrow keeps the version it was deployed with (shown as <em>Contract version v3 / v2</em>); no redeploy after a contract update. An unsupported version shows a banner with <strong>Archive</strong>.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. Loan Financing: Lender & Buyer Top-Up -->
+    <section class="slide" data-title="Lender & Top-Up">
+      <h2>Loan financing: Lender &amp; Buyer top-up flows</h2>
+      <p class="slide-lead">
+        Admin configures <em>Loan</em> mode, loan offer expiry, top-up window (default 7 days), total price, buyer deposit, lender payout key, and optional loan-refusal refund term.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Lender Guide (<code>/lender</code>)</h3>
+          <ul>
+            <li>Import <strong>lender package</strong> (checks 4 commitments: price, loan amount, refund term, lender payout key).</li>
+            <li><strong>Fund the loan:</strong> Deposits exact committed loan amount.</li>
+            <li><strong>Refuse the loan:</strong> Attaches refusal letter (hash only on-chain).</li>
+            <li><strong>Withdraw loan deposit:</strong> Available after loan offer expiry if still in review (counts as refusal).</li>
+            <li><strong>Refund the lender:</strong> Reclaims loan coin if deal unwinds.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Buyer Top-Up (<code>/buyer</code>)</h3>
+          <ul>
+            <li><strong>Self-fund:</strong> While no loan or top-up is held, buyer can deposit the loan amount directly.</li>
+            <li><strong>Loan refused/withdrawn + Refund term ON:</strong> Top-up window opens (ends at earlier of <code>now + window</code> or closing deadline). Top up, or <strong>Give up and get refunded at once</strong>.</li>
+            <li><strong>Refund term OFF:</strong> Must top up before closing deadline, or escrow becomes <strong>Forfeited</strong> to seller.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9. Cooling-Off Period -->
+    <section class="slide" data-title="Cooling-Off Period">
+      <h2>Optional cooling-off period</h2>
+      <p class="slide-lead">
+        Lets the buyer walk away for any reason for a set number of days after deposit, paying at most a committed penalty to the seller. Off by default.
+      </p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Admin Setup</h3>
+          <ul>
+            <li><strong>Initialize → Financing:</strong> Set <em>Cooling-off period (days)</em> (public; <code>0</code> = off).</li>
+            <li><strong>Terms &amp; KYC:</strong> Set private <em>Penalty (% of price)</em> (8th commitment; must be &lt; deposit).</li>
+            <li>Parties must import terms <strong>before</strong> accepting configuration.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Buyer Withdrawal</h3>
+          <ul>
+            <li><strong>Inside period:</strong> Sets <code>Withdrawn</code> (works even if <code>Disputed</code>). <em>Refund the withdrawal</em> pays <code>deposit - penalty</code>.</li>
+            <li><strong>After period / no period:</strong> Sets <code>Forfeited</code> (seller claims full deposit).</li>
+            <li><strong>Failed contingency:</strong> Always full refund via <em>Cancel and refund</em> (no penalty).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Seller &amp; Notary</h3>
+          <ul>
+            <li><strong>No release before end:</strong> Seller cannot release until cooling-off ends, even if contingencies clear.</li>
+            <li><strong>Claim penalty:</strong> After withdrawal refund, seller claims penalty (requires valid seller KYC).</li>
+            <li><strong>Notary:</strong> Verifies penalty opening &amp; records cooling-off section on certificate.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. Admin Guide -->
+    <section class="slide" data-title="Admin Guide">
+      <h2>Admin guide: 9-step setup &amp; finalization</h2>
+      <p class="slide-lead">
+        Run on <code>http://admin.localhost:3000/admin</code>. Once <strong>Finalize initialization</strong> succeeds, the admin has zero power over funds.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Steps 1–4: Deploy &amp; Make Immutable</h3>
+          <ol>
+            <li><strong>Prepare:</strong> Create/unlock vault, generate admin secret key (back it up), connect wallet + DUST, start proof server, collect party keys/ids.</li>
+            <li><strong>Deploy:</strong> Enter buyer/seller role ids, token color, ticker, decimals → <strong>Deploy (staged)</strong> (6 init circuits, current contract v3). Authority key saved in vault.</li>
+            <li><strong>Register &amp; Renounce:</strong> Register remaining circuits (batches of 4), then <strong>Renounce authority</strong> (<code>RENOUNCE</code>). <em>Deposit is blocked until renounced.</em></li>
+            <li><strong>Initialize:</strong> Set attestor/resolver role ids (v3 cash deal: no lender), Unix deadlines (verify local time preview), and KYC policy → <strong>Apply</strong>.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>Steps 5–9: Terms, CASP &amp; Finalize</h3>
+          <ol start="5">
+            <li><strong>Private terms:</strong> Enter amount (whole tokens), payout keys → <strong>Generate package</strong> → <strong>Commit (configure)</strong>.</li>
+            <li><strong>Distribute &amp; back up:</strong> Encrypt <code>terms-for-&lt;role&gt;.json</code> per envelope key + download 12+ char passphrase backup. Send attestors an <em>assignment link</em> or sealed notice.</li>
+            <li><strong>Whitelist CASP:</strong> Whitelist active CASP issuer key (required before anyone can accept).</li>
+            <li><strong>Finalize:</strong> Wait for <code>buyer ✓ / seller ✓</code> at current config version + confirmed backup → <strong>Finalize initialization</strong> (→ <code>Created</code>).</li>
+            <li><strong>After finalization:</strong> Follow the <em>Contract</em> and <em>Log</em> tabs; back up the vault after each important step.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11. Buyer Guide -->
+    <section class="slide" data-title="Buyer Guide">
+      <h2>Buyer guide: Setup, KYC &amp; deposit</h2>
+      <p class="slide-lead">Run on <code>http://buyer.localhost:3000/buyer</code> with your own wallet account.</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>1. Keys, Terms &amp; Acceptance</h3>
+          <ul>
+            <li><strong>Send 3 public items to Admin:</strong> Role id (from <code>/role-id</code>), Shielded payout key (from wallet), Envelope public key (from vault). <em>Never share your secret role key.</em></li>
+            <li><strong>Import &amp; Accept:</strong> Load contract → import role key (<code>buyer</code>) → import <code>terms-for-buyer.json</code> → verify all commitments show <strong>match</strong> → <strong>Accept configuration</strong>.</li>
+            <li><strong>Get KYC:</strong> Request CASP attestation (e.g. <code>buyer-clean</code>) or import file; pre-checked locally, nothing on-chain yet.</li>
+          </ul>
+        </div>
+        <div class="card green">
+          <h3>2. 7-Point Deposit Checklist</h3>
+          <ol>
+            <li>Status is <strong>Created</strong> (finalized)</li>
+            <li>Contract is <strong>immutable</strong> (authority renounced)</li>
+            <li>Vault unlocked &amp; buyer role key loaded</li>
+            <li>Terms imported (all 8 commitments <strong>match</strong>)</li>
+            <li>Buyer KYC imported from whitelisted CASP</li>
+            <li>Sufficient shielded token balance + DUST for fees</li>
+            <li>Local proof server running on <code>127.0.0.1:6300</code></li>
+          </ol>
+        </div>
+      </div>
+      <div class="callout warn small">
+        Check that your connected wallet's shielded key matches the committed <code>buyerPayout</code> key <strong>before</strong> depositing—refunds always go to the committed key.
+      </div>
+    </section>
+
+    <!-- 12. Seller Guide -->
+    <section class="slide" data-title="Seller Guide">
+      <h2>Seller guide: KYC, review &amp; getting paid</h2>
+      <p class="slide-lead">Run on <code>http://seller.localhost:3000/seller</code> with your own wallet account (never the buyer's).</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Setup &amp; On-Chain Seller KYC</h3>
+          <ul>
+            <li>Send Admin your <strong>Role id</strong>, <strong>Shielded payout key</strong> (must differ from buyer's), and <strong>Envelope public key</strong>.</li>
+            <li>Import role key &amp; <code>terms-for-seller.json</code> (verify <em>sellerPayout</em> &amp; amount) → <strong>Accept configuration</strong>.</li>
+            <li><strong>Seller KYC:</strong> Request/import attestation → <strong>Submit seller KYC</strong> on-chain (validates from <code>Created</code> onward; must not be expired or revoked at release).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Review, Withdrawal &amp; Payout</h3>
+          <ul>
+            <li><strong>During review:</strong> Open contingency review, monitor results, <strong>Open dispute</strong>, or <strong>Withdraw (seller)</strong> (refunds buyer).</li>
+            <li><strong>Getting paid (<code>ReadyToClose</code>):</strong> Click <strong>Release to seller</strong> (app verifies KYC &amp; locates vault coin index from deposit tx).</li>
+            <li><strong>Other payouts:</strong> <em>Claim forfeited deposit</em> or <em>Claim cooling-off penalty</em>; use <em>Export payout coin</em> if wallet doesn't list it yet.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13. Attestors & Dispute Resolver -->
+    <section class="slide" data-title="Attestors & Resolver">
+      <h2>Inspector, lender, title agent &amp; dispute resolver</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Attestors (<code>/inspector</code>, <code>/lender</code>, <code>/title-agent</code>)</h3>
+          <ul>
+            <li>Must be independent of the seller; 1 result per contingency. Lender attests financing only in a <strong>v2 cash deal</strong>.</li>
+            <li><strong>Assignment:</strong> open the admin's link (<em>Add and open</em>) or <em>Import assignment notice</em>.</li>
+            <li><strong>Submit in <code>ContingenciesPending</code>:</strong>
+              <ol>
+                <li>Choose local report file (hashed with random salt; never uploaded).</li>
+                <li>Pick <em>Favourable</em> or <em>Unfavourable</em> → <strong>Submit on-chain</strong>.</li>
+                <li><strong>Export sealed file</strong> per named recipient (buyer, seller, notary, resolver, others) or <em>Export for all</em>; recipients check it in <em>Attestor reports</em>.</li>
+              </ol>
+            </li>
+            <li>Back up your vault—report salts are stored there.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Dispute Resolver (<code>/resolver</code>)</h3>
+          <p class="small muted" style="margin-bottom: 10px;">Acts only in <code>Disputed</code> before the <strong>dispute deadline</strong>; must import <code>terms-for-resolver.json</code>.</p>
+          <table>
+            <thead><tr><th>Action</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Resolve: settle to seller</strong></td><td><code>Settled</code> (all contingencies must be cleared; only resolver executes release)</td></tr>
+              <tr><td><strong>Resolve: refund buyer</strong></td><td><code>Refunded</code> (resolver, buyer, or seller can execute refund)</td></tr>
+              <tr><td><strong>Void a contingency result</strong></td><td>Clears wrong attestation so attestor can resubmit (not a v3 cash deal's financing)</td></tr>
+              <tr><td><strong>Dismiss dispute</strong></td><td>Escrow resumes previous state</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 14. Notary & Compliance Officer -->
+    <section class="slide" data-title="Notary & Compliance">
+      <h2>Notary portal &amp; compliance officer</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Notary Portal (<code>/verify/&lt;address&gt;</code>)</h3>
+          <p class="small muted" style="margin-bottom: 8px;">Read-only, no wallet, no fees. Refreshes every 20 seconds.</p>
+          <ul>
+            <li><strong>Custodian role:</strong> Holds no role key (cannot act). Imports <code>terms-for-custodian.json</code> to back up terms and restore to parties who lost their vault.</li>
+            <li><strong>Openings &amp; reports:</strong> <em>Load opening</em> (one private term each), <em>Verify the amounts now</em> as custodian, CASP KYC records, and attestors' report bundles, all checked against on-chain commitments.</li>
+            <li><strong>Checklist before the deed:</strong> status, locked funds, price, contingencies, KYC, cooling-off, then the certificate in the same visit.</li>
+            <li><strong>Certificate:</strong> Exports <em>EU Notarial Escrow Certificate (V2)</em> as JSON proof bundle or Print/PDF.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Compliance Officer (<code>/compliance</code>)</h3>
+          <p class="small muted" style="margin-bottom: 8px;">Talks to CASP via server-side <code>/api/casp/*</code> proxy (tokens stay in <code>.env.local</code>).</p>
+          <ul>
+            <li><strong>Inspect KYC (no wallet needed):</strong> Verifies CASP connection, whitelisted issuer keys, attestation status, and Travel Rule records.</li>
+            <li><strong>Revocations:</strong> Enter <code>kycRef</code> + reason → <strong>Request signed revocation</strong> (or import file) → <strong>Broadcast on-chain</strong> (anyone can send; contract checks CASP signature).</li>
+            <li><strong>Effect:</strong> Revoked seller KYC or issuer key blocks <strong>Release to seller</strong> until renewed.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 15. Keys, Vault & Backups -->
+    <section class="slide" data-title="Keys, Vault & Backups">
+      <h2>Keys, encrypted vault &amp; backups</h2>
+      <table style="margin-bottom: 16px;">
+        <thead>
+          <tr><th>Key</th><th>Who has it</th><th>Share it?</th><th>Used for</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Secret role key</strong></td><td>All except notary &amp; compliance</td><td><span class="pill rose" style="padding:2px 8px;font-size:12px;">NEVER</span></td><td>Proving your role in zero knowledge</td></tr>
+          <tr><td><strong>Role id</strong></td><td>Derived from secret role key</td><td>Yes (to admin)</td><td>On-chain identifier for your role</td></tr>
+          <tr><td><strong>Shielded payout key</strong></td><td>Buyer, seller (from wallet)</td><td>Yes (to admin)</td><td>Receiving price or refund</td></tr>
+          <tr><td><strong>Envelope public key</strong></td><td>Buyer, seller, resolver, custodian</td><td>Yes (to admin)</td><td>Receiving encrypted <code>terms-for-&lt;role&gt;.json</code></td></tr>
+        </tbody>
+      </table>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Browser Vault &amp; Backups</h3>
+          <ul>
+            <li>AES-GCM encrypted in IndexedDB, isolated per browser origin (<code>*.localhost:3000</code>).</li>
+            <li>Back up with a 12+ char passphrase after every step (role key, terms, KYC, report salt).</li>
+            <li>Admin backups hold authority/admin keys; party backups never do.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Restore &amp; Removal</h3>
+          <ul>
+            <li><strong>Move origin / browser:</strong> Use <em>Restore a vault from a backup</em> on the empty vault screen, or <em>Restore (merge)</em> into an existing vault.</li>
+            <li><strong>Remove key (<code>REMOVE</code>):</strong> Recoverable from vault history.</li>
+            <li><strong>Erase locally (<code>ERASE</code>):</strong> Permanent local deletion—back up first.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 16. Tx Log, Fees & Troubleshooting -->
+    <section class="slide" data-title="Logs, Fees & Troubleshooting">
+      <h2>Transaction log, DUST fees &amp; troubleshooting</h2>
+      <div class="grid-2" style="margin-bottom: 14px;">
+        <div class="card">
+          <h3>Transaction Log &amp; DUST Fees</h3>
+          <ul>
+            <li><strong>Tx Log:</strong> Tracks local txs (<code>confirmed</code>, <code>failed</code>, <code>interrupted</code>), <strong>Import history from chain</strong>, and CSV/JSON export (public facts only).</li>
+            <li><strong>DUST Fees:</strong> Paid by sender's wallet; generated by <strong>NIGHT</strong> (up to 5 DUST/NIGHT). Separate from escrow token. Notary &amp; Simulator are free.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Quick FAQ</h3>
+          <ul>
+            <li><strong>Change amount after accept?</strong> Only before finalization (re-configure &amp; both re-accept).</li>
+            <li><strong>Act on behalf of someone?</strong> No—every circuit proves the caller's own role key.</li>
+            <li><strong>Redeploy after a contract update?</strong> No—supported versions (v3, v2) keep working.</li>
+          </ul>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause &amp; Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Vault error / <code>reading 'importKey'</code></td><td>Insecure origin (LAN IP) → use <code>localhost</code> or <code>*.localhost</code></td></tr>
+          <tr><td>Deposit blocked: <em>authority still active</em></td><td>Admin must register all circuits and click <strong>Renounce authority</strong></td></tr>
+          <tr><td><code>TERMS_COMMITMENT_MISMATCH</code> / wrong envelope</td><td>Wrong <code>terms-for-&lt;role&gt;.json</code> or origin → re-export to active envelope key</td></tr>
+          <tr><td><em>Local proof server not reachable</em></td><td>Start proof server: <code>npm run proof-server:start</code> (image <code>9.0.1</code>)</td></tr>
+          <tr><td><code>ERROR_SELLER_KYC_REQUIRED</code> / <code>EXPIRED</code></td><td>Seller must request a fresh attestation and click <strong>Submit seller KYC</strong></td></tr>
+          <tr><td>Banner <em>unsupported contract version</em></td><td>Escrow from a version no longer supported → <strong>Archive</strong>; vault data is kept</td></tr>
+          <tr><td>Banner <em>page out of date</em> / Health: no v2 keys</td><td>Restart the dApp and reload; compile the earlier version's full ZK build if missing</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer class="controls">
+    <div>Real-estate escrow dApp — User guide</div>
+    <div class="controls-right">
+      <button class="nav-btn" id="gridBtn" title="Slide overview (G)">Grid (G)</button>
+      <button class="nav-btn" id="prevBtn">← Prev</button>
+      <span id="counter">1 / 16</span>
+      <button class="nav-btn" id="nextBtn">Next →</button>
+    </div>
+  </footer>
+
+  <div class="overview" id="overview">
+    <div class="overview-header">
+      <h2>Slide Overview</h2>
+      <button class="nav-btn" id="closeGridBtn">Close (Esc)</button>
+    </div>
+    <div class="overview-grid" id="overviewGrid"></div>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const counter = document.getElementById('counter');
+    const progress = document.getElementById('progress');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const overview = document.getElementById('overview');
+    const overviewGrid = document.getElementById('overviewGrid');
+    let index = 0;
+
+    function buildOverview() {
+      overviewGrid.innerHTML = '';
+      slides.forEach((s, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'thumb' + (i === index ? ' current' : '');
+        btn.innerHTML = `<div class="thumb-num">Slide ${i + 1}</div><div class="thumb-title">${s.dataset.title || 'Slide'}</div>`;
+        btn.onclick = () => { go(i); toggleOverview(false); };
+        overviewGrid.appendChild(btn);
+      });
+    }
+
+    function go(n) {
+      index = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach((s, i) => s.classList.toggle('active', i === index));
+      counter.textContent = `${index + 1} / ${slides.length}`;
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      prevBtn.disabled = index === 0;
+      nextBtn.disabled = index === slides.length - 1;
+      if (location.hash !== `#${index + 1}`) history.replaceState(null, '', `#${index + 1}`);
+    }
+
+    function toggleOverview(force) {
+      const open = force !== undefined ? force : !overview.classList.contains('open');
+      if (open) buildOverview();
+      overview.classList.toggle('open', open);
+    }
+
+    prevBtn.onclick = () => go(index - 1);
+    nextBtn.onclick = () => go(index + 1);
+    document.getElementById('gridBtn').onclick = () => toggleOverview(true);
+    document.getElementById('closeGridBtn').onclick = () => toggleOverview(false);
+
+    document.addEventListener('keydown', (e) => {
+      if (overview.classList.contains('open')) {
+        if (e.key === 'Escape' || e.key.toLowerCase() === 'g') toggleOverview(false);
+        return;
+      }
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(index + 1); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(index - 1); }
+      else if (e.key === 'Home') { e.preventDefault(); go(0); }
+      else if (e.key === 'End') { e.preventDefault(); go(slides.length - 1); }
+      else if (e.key.toLowerCase() === 'g') { e.preventDefault(); toggleOverview(true); }
+    });
+
+    const initial = parseInt(location.hash.slice(1), 10);
+    go(Number.isFinite(initial) && initial >= 1 ? initial - 1 : 0);
+  </script>
+</body>
+</html>
+
