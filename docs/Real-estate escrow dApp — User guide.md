@@ -282,7 +282,7 @@ Your vault now holds keys you cannot get back from anyone else. Open **Vault bac
 
 ### Before depositing: get your KYC attestation
 
-*Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored in your vault and pre-checked at once: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**.
+*Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored in your vault and pre-checked at once: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**. You have nothing to do on the compliance console (see *Buyer and seller: nothing to do on this console*).
 
 ### Making the deposit
 
@@ -359,6 +359,7 @@ Same steps as the buyer: **Wallet Mode** → **Load** the contract → import yo
 1. *Seller KYC (beneficiary)* card → **Request attestation** (test persona `seller-clean`), or **Import attestation file** from a real CASP. The pre-check must pass.
 2. *Actions* → **Submit seller KYC**. It can be sent from **Created** onwards and must be on-chain and valid before the release. The *Commitments and compliance anchors* card then shows *KYC seller: verified* with its expiry.
 3. If the card warns that the seller KYC **expires soon**, request a new attestation and submit it again: an expired attestation blocks the release.
+4. You have nothing to do on the compliance console: it is the compliance officer's tool (see *Buyer and seller: nothing to do on this console*).
 
 ### While the escrow is funded
 
@@ -532,6 +533,26 @@ How loaded openings behave:
 ## Compliance officer guide
 
 The compliance officer watches the KYC side of the escrow and, when a CASP withdraws an attestation or a key, puts that revocation on-chain. The page is `/compliance`; it talks to the CASP through the dApp's server, so the CASP's officer token never reaches the browser.
+
+### Buyer and seller: nothing to do on this console
+
+The compliance console is the compliance officer's tool. A buyer or seller who has just requested a KYC attestation does nothing there: the attestation does not appear on the console until it is on-chain. Each party continues on their own page.
+
+**Buyer** (`/buyer`, *Buyer KYC (originator)* card):
+
+1. Check that the pre-check passes and note the validity dates. The attestation is now encrypted in your vault; nothing is on-chain yet.
+2. Back up your vault.
+3. When the status is *Created*, **Deposit into escrow**. The deposit puts your KYC on-chain at the same time, and *KYC buyer* turns *verified*.
+
+**Seller** (`/seller`, *Seller KYC (beneficiary)* card):
+
+1. Check that the pre-check passes, then back up your vault.
+2. From *Created* onwards: *Actions* → **Submit seller KYC** (a separate transaction). The *Commitments and compliance anchors* card then shows *KYC seller: verified* with its expiry.
+3. If the card warns that it **expires soon**, request a new attestation and submit it again: an expired attestation blocks the release.
+
+**Where the console comes in.** Once a party's KYC is on-chain, the compliance officer can pick its reference (`buyerKycRef` / `sellerKycRef`) and look up its status at the CASP. If the CASP revokes it, the officer broadcasts the revocation; for the seller, that blocks **Release to seller** until a fresh attestation is submitted. Neither party has anything to do for this, except the seller re-submitting after a revocation.
+
+If a notary asks for proof of KYC, send them your attestation file: they check it on the Notary portal with **Load CASP record**, not on the compliance console.
 
 ### Set up (once)
 
