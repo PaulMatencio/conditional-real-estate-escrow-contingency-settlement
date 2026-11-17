@@ -16,10 +16,11 @@ import { indexerHttpUrl, networkConfig } from '../config/network';
 import { contractArgs, witnessInputs } from '../contract/callArgs';
 import { allCircuitIds, makeCompiledContract } from '../contract/compiled';
 import { operationNames, readContractState } from '../contract/chainState';
-import { assertCompatible, decodeCompatible } from '../contract/compat';
+import { decodeCompatible, resolveVersion } from '../contract/compat';
+import type { ContractVersion } from '../contract/versions';
 import { maintenanceOf, toEscrowView, type LedgerInput } from '../contract/view';
 import type { PrivateInputs } from '../contract/witnesses';
-import type { AppProviders } from '../wallet/providers';
+import { providersFor, type AppProviders } from '../wallet/providers';
 import type { WalletSession } from '../wallet/connector';
 import { describeError, AdminGateway } from './adminGateway';
 import { IndexerChainHistory } from '../indexer/chainHistorySource';
@@ -59,18 +60,24 @@ export class PartyGateway implements EscrowPartyGateway {
   private found: Found | null = null;
   private busy = false;
 
+  /** The escrow's contract version, once resolved from the chain (calls, keys and proofs use it). */
+  private version: ContractVersion | null = null;
+
   constructor(
     readonly contractAddress: string,
     private readonly providers: AppProviders,
-    private readonly session: WalletSession | null
+    private readonly session: WalletSession | null,
+    /** The contract version recorded for this escrow in the vault, if any (decides during a staged deploy). */
+    private readonly versionHint: string | null = null
   ) {}
 
   private async open(): Promise<Found> {
     if (this.found) return this.found;
     const have = await AdminGateway.registered(this.providers, this.contractAddress);
-    const all = allCircuitIds();
-    // An escrow deployed by another build carries circuits this build lacks: refuse clearly, before midnight-js.
-    assertCompatible(this.contractAddress, have, all);
+    // The escrow's own contract version; an unsupported one is refused clearly, before midnight-js.
+    const version = resolveVersion(this.contractAddress, have, this.versionHint);
+    this.version = version;
+    const all = allCircuitIds(version);
     const subset = all.every((c) => have.has(c)) ? undefined : all.filter((c) => have.has(c));
     const self = this;
     const compiled = makeCompiledContract(() => self.current.secretKey(), subset, {
@@ -80,15 +87,15 @@ export class PartyGateway implements EscrowPartyGateway {
       secondCoin: () => (self.current.secondCoin ?? fail('the loan or top-up coin'))(),
       lenderTerms: () => (self.current.lenderTerms ?? fail('the lender terms'))(),
       penaltyCoin: () => (self.current.penaltyCoin ?? fail('the penalty coin'))()
-    });
-    this.found = (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(this.providers, { contractAddress: this.contractAddress, compiledContract: compiled })) as Found;
+    }, version);
+    this.found = (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(providersFor(this.providers, version), { contractAddress: this.contractAddress, compiledContract: compiled })) as Found;
     return this.found;
   }
 
   async readView(): Promise<EscrowView> {
     const s = await readContractState(this.providers.publicDataProvider, this.contractAddress);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
-    return decodeCompatible(this.contractAddress, operationNames(s), () => toEscrowView(this.contractAddress, s.data as unknown as LedgerInput, maintenanceOf(s)));
+    return decodeCompatible(this.contractAddress, operationNames(s), (v) => toEscrowView(this.contractAddress, s.data as unknown as LedgerInput, maintenanceOf(s), v.id), this.versionHint);
   }
 
   /** Wall clock: the node's block time tracks it closely; deadlines are hours/days apart. */

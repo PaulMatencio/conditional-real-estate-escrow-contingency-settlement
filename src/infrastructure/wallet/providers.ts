@@ -8,7 +8,7 @@ import type { KeyValueStore } from '@/application/ports';
 import type { StepSink } from '@/application/deployProgress';
 import { compactText, deepMessage } from '@/domain/errors';
 import { indexerHttpUrl, networkConfig } from '../config/network';
-import { ZK_ASSET_PATH } from '../contract/compiled';
+import { CURRENT_VERSION, circuitsOf, zkPathOf, type ContractVersion } from '../contract/versions';
 import { GuardedZkConfigProvider } from '../contract/guardedZkConfig';
 import { withFallback } from '../indexer/fallbackIndexer';
 import { sharedIndexerBreaker, type IndexerBreaker } from '../indexer/indexerBreaker';
@@ -68,7 +68,17 @@ async function stage<T>(name: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export type AppProviders = MidnightProviders<string, string, unknown>;
+export type AppProviders = MidnightProviders<string, string, unknown> & {
+  /**
+   * The same providers with the ZK artefacts (keys, ZKIR) and prover of another supported contract version: an escrow
+   * is always proved with the version it was deployed with (CLAUDE.md "Backward compatibility after a contract
+   * upgrade"). Absent on providers built outside createWalletProviders (tests).
+   */
+  forVersion?: (v: ContractVersion) => AppProviders;
+};
+
+/** Providers for an escrow of `v` (the base providers when they cannot switch, or for the current version). */
+export const providersFor = (p: AppProviders, v: ContractVersion): AppProviders => (v.current || !p.forVersion ? p : p.forVersion(v));
 
 /** How long a built transaction stays valid (midnight-js 5 `config.ttlSeconds`). */
 const TTL_SECONDS = 3600;
@@ -90,25 +100,30 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
       ? withFallback(indexerPublicDataProvider(indexerHttpUrl(), networkConfig.indexerWS), walletIndexer, indexerBreaker)
       : walletIndexer;
   // midnight-js 5 checks every artefact against the compiler's contract-manifest.json (served by the /zk route).
-  // Guarded: a circuit this build lacks, or a key the server lacks, is a clear contract-version error, not a 404.
-  const zkConfigProvider = new GuardedZkConfigProvider(`${window.location.origin}${ZK_ASSET_PATH}`, { fetchFunc: fetch.bind(window) as never });
-  // Proving always uses the LOCAL proof server from midnight.config.json — never the wallet's hosted one
-  // (cfg.proverServerUri) nor the wallet's in-extension prover. A proof request carries the circuit's private inputs
-  // (witnesses such as the role secret key), which must not leave this machine. Compact 0.36 circuits are ZKIR v3:
-  // the proof server must be version 9 (it proves both the contract's v3 and the wallet's v2 circuits).
-  const baseProofProvider = httpClientProofProvider(networkConfig.proofServer, zkConfigProvider);
-  // midnight-js order: build unproven tx → prove → balance → submit → confirm. Each wrapper reports its stage.
-  const proofProvider: ProofProvider = {
-    supportedEras: baseProofProvider.supportedEras,
-    proveTx: async (...a: Parameters<ProofProvider['proveTx']>) => {
-      await assertProofServerReachable(networkConfig.proofServer);
-      sink?.done('build');
-      sink?.begin('prove');
-      const r = await baseProofProvider.proveTx(...a);
-      sink?.done('prove');
-      return r;
-    }
+  // One ZK artefact provider and prover per contract version (keys under /zk/<version name>).
+  const zkFor = (v: ContractVersion) => {
+    // Guarded: a circuit the version lacks, or a key the server lacks, is a clear contract-version error, not a 404.
+    const zkConfigProvider = new GuardedZkConfigProvider(`${window.location.origin}${zkPathOf(v)}`, { fetchFunc: fetch.bind(window) as never }, () => circuitsOf(v));
+    // Proving always uses the LOCAL proof server from midnight.config.json — never the wallet's hosted one
+    // (cfg.proverServerUri) nor the wallet's in-extension prover. A proof request carries the circuit's private inputs
+    // (witnesses such as the role secret key), which must not leave this machine. Compact 0.36 circuits are ZKIR v3:
+    // the proof server must be version 9 (it proves both the contract's v3 and the wallet's v2 circuits).
+    const baseProofProvider = httpClientProofProvider(networkConfig.proofServer, zkConfigProvider);
+    // midnight-js order: build unproven tx → prove → balance → submit → confirm. Each wrapper reports its stage.
+    const proofProvider: ProofProvider = {
+      supportedEras: baseProofProvider.supportedEras,
+      proveTx: async (...a: Parameters<ProofProvider['proveTx']>) => {
+        await assertProofServerReachable(networkConfig.proofServer);
+        sink?.done('build');
+        sink?.begin('prove');
+        const r = await baseProofProvider.proveTx(...a);
+        sink?.done('prove');
+        return r;
+      }
+    };
+    return { zkConfigProvider, proofProvider };
   };
+  const { zkConfigProvider, proofProvider } = zkFor(CURRENT_VERSION);
 
   // The wallet providers come from midnight-js (one handler per ledger era); this wrapper around the connector adds
   // stage reporting, the DUST diagnosis on a fee failure, and the wallet's recent history on a submit failure. It also
@@ -156,7 +171,7 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
 
   const privateStateProvider: PrivateStateProvider<string, unknown> = persistentPrivateStateProvider(store, vaultSigningKeys(sharedVault()));
 
-  return {
+  const base: AppProviders = {
     privateStateProvider,
     publicDataProvider,
     zkConfigProvider,
@@ -165,4 +180,15 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
     midnightProvider,
     config: { networkId: cfg.networkId, ttlSeconds: TTL_SECONDS }
   };
+  const byVersion = new Map<string, AppProviders>();
+  base.forVersion = (v) => {
+    if (v.current) return base;
+    let p = byVersion.get(v.id);
+    if (!p) {
+      p = { ...base, ...zkFor(v) };
+      byVersion.set(v.id, p);
+    }
+    return p;
+  };
+  return base;
 }

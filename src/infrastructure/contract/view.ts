@@ -1,5 +1,6 @@
 import { bytesToHex } from '@/domain/hex';
-import { CONTINGENCIES, FINANCING_MODES, INIT_ATTRIBUTES, STATUS, isZeroHex, type EscrowView, type MaintenanceStatus } from '@/domain/escrowView';
+import { CONTINGENCIES, FINANCING_MODES, INIT_ATTRIBUTES, STATUS, isZeroHex, type ContractVersionId, type EscrowView, type MaintenanceStatus } from '@/domain/escrowView';
+import { contractConfig } from '../config/network';
 import { InitAttribute, ledger, type Ledger } from './module';
 
 export type LedgerInput = Parameters<typeof ledger>[0];
@@ -12,7 +13,11 @@ export function maintenanceOf(state: unknown): MaintenanceStatus | null {
   return { committeeSize: a.committee.length, threshold: Number(a.threshold), counter: a.counter.toString() };
 }
 
-export function toEscrowView(contractAddress: string, data: LedgerInput, maintenance: MaintenanceStatus | null = null): EscrowView {
+/**
+ * Every supported contract version shares this ledger layout (checked by tests/contractVersions.test.ts); a version
+ * with another layout gets its own decoder here.
+ */
+export function toEscrowView(contractAddress: string, data: LedgerInput, maintenance: MaintenanceStatus | null = null, contractVersion: ContractVersionId = contractConfig.version as ContractVersionId): EscrowView {
   const L: Ledger = ledger(data);
   const h = bytesToHex;
   const configured = new Set([...L.configured]);
@@ -20,6 +25,7 @@ export function toEscrowView(contractAddress: string, data: LedgerInput, mainten
   const commit = (b: Uint8Array) => (isZeroHex(h(b)) ? null : h(b));
   return {
     contractAddress,
+    contractVersion,
     maintenance,
     status: STATUS[L.status] ?? 'Initializing',
     lifecycleRound: L.lifecycleRound,

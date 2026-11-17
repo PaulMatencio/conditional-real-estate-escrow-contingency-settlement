@@ -21,6 +21,8 @@ import { TxLogPanel } from '../TxLogPanel';
 import { ReportBundleCard } from '../notary/ReportBundleCard';
 import { LenderTermsCard, LoanCard } from './LenderPanel';
 import { TopUpCard } from './TopUpCard';
+import { CashFinancingCard } from './CashFinancingCard';
+import { rulesOf } from '@/domain/escrowView';
 import { PenaltyCard, WithdrawCard } from './CoolingOffCard';
 import { VaultBackupSection, backupEscrows } from '../vault/VaultBackup';
 
@@ -69,7 +71,9 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {(role === 'buyer' || role === 'seller' || (role === 'lender' && loanMode)) && <PayoutKeyCard party={role} />}
           {view && <ActionsPanel role={role} onlyEnabled={role === 'resolver'} />}
           {view && role === 'inspector' && <AttestorPanel contingency="Inspection" />}
-          {view && role === 'lender' && !loanMode && <Alert tone="ok">{t('lender.cashDeal')}</Alert>}
+          {view && role === 'lender' && !loanMode && !rulesOf(view).cashFinancingAttested && <Alert tone="ok">{t('lender.cashDeal')}</Alert>}
+          {/* Contract v2 cash deal: the lender attests financing (the buyer may waive it instead). */}
+          {view && role === 'lender' && !loanMode && rulesOf(view).cashFinancingAttested && <AttestorPanel contingency="Financing" />}
           {role === 'lender' && loanMode && vaultUnlocked && <LenderTermsCard />}
           {role === 'lender' && loanMode && <LoanCard />}
           {view && role === 'titleAgent' && <AttestorPanel contingency="Title" />}
@@ -79,6 +83,8 @@ export function PartyWorkspace({ role: initial }: { role: Exclude<PartyRole, 'ad
           {view && vaultUnlocked && role === 'buyer' && loanMode && ['ContingenciesPending', 'ReadyToClose', 'Refunded', 'Expired', 'Forfeited'].includes(view.status) && <TopUpCard />}
           {view && vaultUnlocked && (role === 'seller' || role === 'resolver') && <VaultTrackingCard />}
           {view && vaultUnlocked && role === 'buyer' && <WithdrawCard />}
+          {/* Contract v2 cash deal only (hidden otherwise): the buyer may waive the redundant financing contingency. */}
+          {view && vaultUnlocked && role === 'buyer' && <CashFinancingCard />}
           {view && vaultUnlocked && role === 'seller' && <PenaltyCard />}
           {view && role === 'seller' && view.status === 'Forfeited' && <ForfeitCard />}
           {view && (role === 'buyer' || role === 'seller' || role === 'resolver') && <SettlementPanel party={role} />}

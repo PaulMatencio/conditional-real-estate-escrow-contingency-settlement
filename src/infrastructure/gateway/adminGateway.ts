@@ -11,7 +11,8 @@ import { toSigningKey, verifyingKeyId } from '../storage/signingKeyCodec';
 import { sharedVault, vaultSigningKeys } from '../storage/vaultInstance';
 import { LedgerTransaction, SucceedEntirely } from '@midnight-ntwrk/midnight-js-types';
 import { operationNames, readContractState, type ChainContractState } from '../contract/chainState';
-import { assertCompatible, olderContractError } from '../contract/compat';
+import { olderContractError, resolveVersion } from '../contract/compat';
+import { CURRENT_VERSION, type ContractVersion } from '../contract/versions';
 import { AppError, compactText, deepMessage } from '@/domain/errors';
 import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms, TxReceipt } from '@/domain/escrow';
@@ -22,7 +23,7 @@ import { FinancingMode, InitAttribute, ledger } from '../contract/module';
 import { randomBytes } from '../crypto/identity';
 import { shortError, withTxLog, type TxLogStart } from '@/application/txLog';
 import { sharedTxLog } from '../storage/txLogStore';
-import type { AppProviders } from '../wallet/providers';
+import { providersFor, type AppProviders } from '../wallet/providers';
 
 type CallTx = Record<string, (...args: unknown[]) => Promise<{ public: { txId: string; txHash: string; blockHeight: number } }>>;
 interface Found {
@@ -72,12 +73,19 @@ function maybeTerms(t: ConfigureTerms) {
 }
 
 export class AdminGateway {
+  /** Providers of this escrow's contract version (its keys and prover). */
+  private readonly providers: AppProviders;
+
   private constructor(
     readonly contractAddress: string,
     private found: Found,
-    private readonly providers: AppProviders,
-    private readonly getSecretKey: () => Uint8Array
-  ) {}
+    providers: AppProviders,
+    private readonly getSecretKey: () => Uint8Array,
+    /** The contract version this escrow was deployed with: calls, keys and proofs all use it. */
+    readonly version: ContractVersion
+  ) {
+    this.providers = providersFor(providers, version);
+  }
 
   /** Circuit names whose verifier key is currently registered on-chain. */
   static async registered(providers: AppProviders, address: string): Promise<Set<string>> {
@@ -90,15 +98,17 @@ export class AdminGateway {
    * Opens the contract with exactly the circuits registered on-chain: midnight-js verifies that every circuit of the
    * definition it is given has a matching on-chain verifier key, so a staged deploy needs the subset until all keys exist.
    */
-  private static async open(providers: AppProviders, address: string, getSecretKey: () => Uint8Array): Promise<Found> {
+  private static async open(providers: AppProviders, address: string, getSecretKey: () => Uint8Array, hint?: string | null): Promise<{ found: Found; version: ContractVersion }> {
     const have = await AdminGateway.registered(providers, address);
-    const all = allCircuitIds();
-    assertCompatible(address, have, all); // another build's escrow: clear error, nothing changed
+    // The escrow's own contract version (an unsupported one: clear error, nothing changed).
+    const version = resolveVersion(address, have, hint);
+    const all = allCircuitIds(version);
     const subset = all.every((c) => have.has(c)) ? undefined : all.filter((c) => have.has(c));
-    return (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(providers, {
+    const found = (await (findDeployedContract as unknown as (p: unknown, o: unknown) => Promise<Found>)(providersFor(providers, version), {
       contractAddress: address,
-      compiledContract: makeCompiledContract(getSecretKey, subset)
+      compiledContract: makeCompiledContract(getSecretKey, subset, {}, version)
     })) as Found;
+    return { found, version };
   }
 
   static async deploy(
@@ -132,7 +142,7 @@ export class AdminGateway {
       logged = true;
       let gateway: AdminGateway;
       try {
-        gateway = await AdminGateway.connect(providers, d.contractAddress, getSecretKey);
+        gateway = await AdminGateway.connect(providers, d.contractAddress, getSecretKey, CURRENT_VERSION.id);
       } catch (e) {
         // The deploy itself succeeded; never lose the address.
         throw new AppError('CONTRACT_REJECTED', `Contract deployed at ${d.contractAddress} (tx ${d.txHash}), but opening it failed: ${describeError(e)}. Attach to that address to continue.`, { cause: e });
@@ -148,17 +158,18 @@ export class AdminGateway {
     }
   }
 
-  static async connect(providers: AppProviders, contractAddress: string, getSecretKey: () => Uint8Array): Promise<AdminGateway> {
-    const found = await AdminGateway.open(providers, contractAddress, getSecretKey);
-    return new AdminGateway(contractAddress, found, providers, getSecretKey);
+  /** `hint`: the contract version recorded for this escrow in the vault, if any (decides during a staged deploy). */
+  static async connect(providers: AppProviders, contractAddress: string, getSecretKey: () => Uint8Array, hint?: string | null): Promise<AdminGateway> {
+    const { found, version } = await AdminGateway.open(providers, contractAddress, getSecretKey, hint);
+    return new AdminGateway(contractAddress, found, providers, getSecretKey, version);
   }
 
   /** Public state of the contract, decoded (what the details panel shows). */
   static async readState(providers: AppProviders, address: string): Promise<AdminState> {
     const s = await readContractState(providers.publicDataProvider, address);
     if (!s) throw new AppError('CONTRACT_REJECTED', 'Contract state not found on this network');
-    assertCompatible(address, operationNames(s));
-    let L: ReturnType<typeof ledger>;
+    const version = resolveVersion(address, operationNames(s));
+    let L: ReturnType<typeof ledger>; // every supported version shares this ledger layout (tests/contractVersions.test.ts)
     try {
       L = ledger(s.data);
     } catch (e) {
@@ -167,9 +178,10 @@ export class AdminGateway {
     const hex = (b: Uint8Array) => bytesToHex(b);
     const configured = new Set([...L.configured]);
     const have = await AdminGateway.registered(providers, address);
-    const all = allCircuitIds();
+    const all = allCircuitIds(version);
     return {
       contractAddress: address,
+      contractVersion: version.id,
       status: L.status,
       ticker: L.escrowTicker,
       tokenColor: hex(L.escrowColor),
@@ -334,7 +346,7 @@ export class AdminGateway {
 
   async missingCircuits(): Promise<string[]> {
     const have = await AdminGateway.registered(this.providers, this.contractAddress);
-    return allCircuitIds().filter((c) => !have.has(c));
+    return allCircuitIds(this.version).filter((c) => !have.has(c));
   }
 
   /** Registers one circuit (a batch of one). Kept for callers that register a single circuit. */
@@ -347,7 +359,7 @@ export class AdminGateway {
    * `contract.maintenanceBatchSize`, default 4). The update is signed once with the deploy-time authority key.
    */
   async registerCircuits(circuits: string[]): Promise<TxReceipt> {
-    const unknown = circuits.filter((c) => !allCircuitIds().includes(c));
+    const unknown = circuits.filter((c) => !allCircuitIds(this.version).includes(c));
     if (unknown.length) throw new AppError('VALIDATION', `Unknown circuit(s): ${unknown.join(', ')}`);
     if (circuits.length === 0) return { txId: '', txHash: '(nothing to register)' };
     try {
@@ -374,7 +386,7 @@ export class AdminGateway {
         await new Promise((r) => setTimeout(r, everyMs));
         const have = await AdminGateway.registered(this.providers, this.contractAddress).catch(() => new Set<string>());
         if (circuits.every((c) => have.has(c))) {
-          this.found = await AdminGateway.open(this.providers, this.contractAddress, this.getSecretKey);
+          this.found = (await AdminGateway.open(this.providers, this.contractAddress, this.getSecretKey, this.version.id)).found;
           return { txId: '', txHash: '(confirmed from chain state)' } as T;
         }
       }
@@ -414,7 +426,7 @@ export class AdminGateway {
       stop.done = true;
     }
     if (r && r.status !== SucceedEntirely) throw new AppError('CONTRACT_REJECTED', `Maintenance transaction ${r.txHash} finished with status ${r.status}; registered circuits are re-checked on the next run.`);
-    this.found = await AdminGateway.open(this.providers, this.contractAddress, this.getSecretKey);
+    this.found = (await AdminGateway.open(this.providers, this.contractAddress, this.getSecretKey, this.version.id)).found;
     return r ? { txId: String(r.txId ?? r.txHash), txHash: r.txHash, blockHeight: r.blockHeight } : { txId: '', txHash: '(confirmed from chain state)' };
   }
 

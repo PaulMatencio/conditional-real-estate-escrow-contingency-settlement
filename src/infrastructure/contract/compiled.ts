@@ -1,11 +1,10 @@
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import type { ContractState } from '@midnight-ntwrk/compact-runtime';
-import { Contract } from './module';
 import { createWitnesses, type PrivateInputs } from './witnesses';
-import { contractConfig } from '../config/network';
+import { CURRENT_VERSION, circuitsOf, zkPathOf, type ContractVersion } from './versions';
 
-/** Route (see src/app/zk) that serves keys/ and zkir/ of the compiled contract. */
-export const ZK_ASSET_PATH = `/zk/${contractConfig.name}`;
+/** Route (see src/app/zk) that serves keys/ and zkir/ of the CURRENT compiled contract (earlier versions: zkPathOf). */
+export const ZK_ASSET_PATH = zkPathOf(CURRENT_VERSION);
 
 /**
  * midnight-js bundles its own compact-runtime typings, so the compiled
@@ -28,10 +27,9 @@ export function onlyOperations(state: ContractState, keep: readonly string[]): C
   return next;
 }
 
-/** Every provable circuit the compiled contract exposes. */
-export function allCircuitIds(): string[] {
-  const probe = new Contract<undefined>(createWitnesses({ secretKey: () => new Uint8Array(32) }));
-  return Object.keys(probe.provableCircuits);
+/** Every provable circuit of a contract version (default: the current one). */
+export function allCircuitIds(version: ContractVersion = CURRENT_VERSION): string[] {
+  return circuitsOf(version);
 }
 
 /**
@@ -39,9 +37,9 @@ export function allCircuitIds(): string[] {
  * from the contract's provable circuits, so this shrinks the deploy transaction; the omitted circuits are
  * registered afterwards (see ChainGateway.registerCircuit).
  */
-function subsetOf(keep: readonly string[]) {
-  return class SubsetContract extends Contract<undefined> {
-    constructor(w: ConstructorParameters<typeof Contract>[0]) {
+function subsetOf(keep: readonly string[], Base: ContractVersion['Contract']) {
+  return class SubsetContract extends Base<undefined> {
+    constructor(w: ConstructorParameters<ContractVersion['Contract']>[0]) {
       super(w as never);
       const pick = <T extends object>(o: T) => Object.fromEntries(Object.entries(o).filter(([k]) => keep.includes(k))) as T;
       this.provableCircuits = pick(this.provableCircuits);
@@ -64,11 +62,17 @@ function subsetOf(keep: readonly string[]) {
   };
 }
 
-export function makeCompiledContract(getSecretKey: () => Uint8Array, circuits?: readonly string[], extra: Omit<PrivateInputs, 'secretKey'> = {}): unknown {
+/** The compiled contract of `version` (default: current), optionally restricted to `circuits`. */
+export function makeCompiledContract(
+  getSecretKey: () => Uint8Array,
+  circuits?: readonly string[],
+  extra: Omit<PrivateInputs, 'secretKey'> = {},
+  version: ContractVersion = CURRENT_VERSION
+): unknown {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const make = CompiledContract.make as any;
-  return make(contractConfig.name, circuits ? subsetOf(circuits) : Contract).pipe(
+  return make(version.name, circuits ? subsetOf(circuits, version.Contract) : version.Contract).pipe(
     (CompiledContract.withWitnesses as any)(createWitnesses({ secretKey: getSecretKey, ...extra })),
-    (CompiledContract.withCompiledFileAssets as any)(ZK_ASSET_PATH)
+    (CompiledContract.withCompiledFileAssets as any)(zkPathOf(version))
   );
 }

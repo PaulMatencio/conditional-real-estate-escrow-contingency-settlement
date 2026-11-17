@@ -9,10 +9,13 @@ import { useT, type MessageKey } from '../../i18n';
 import { Alert, Card, Field, Mono } from '../ui';
 import { ConfirmDialog, FilePick, downloadJson, fmtTime, readFileBytes } from './helpers';
 
-/** Attested contingencies. Financing is not attested: a cash deal clears it with the deposit, a loan with the lender's deposit. */
-type Attested = 'Inspection' | 'Title';
-const CIRCUIT = { Inspection: 'submitInspection', Title: 'submitTitle' } as const;
-const ROLE = { Inspection: 'inspector', Title: 'titleAgent' } as const;
+/**
+ * Attested contingencies. Financing is attested only in a contract v2 cash deal (by the lender); from v3 the deposit
+ * clears it, and in a loan the lender's deposit does.
+ */
+type Attested = 'Inspection' | 'Title' | 'Financing';
+const CIRCUIT = { Inspection: 'submitInspection', Title: 'submitTitle', Financing: 'submitFinancing' } as const;
+const ROLE = { Inspection: 'inspector', Title: 'titleAgent', Financing: 'lender' } as const;
 
 interface Doc {
   name: string;

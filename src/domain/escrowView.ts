@@ -125,8 +125,32 @@ export function authorityLevel(m: MaintenanceStatus | null | undefined): Authori
   return m.committeeSize < m.threshold ? 'immutable' : 'controlled';
 }
 
+/**
+ * Contract versions this dApp supports (CLAUDE.md "Backward compatibility after a contract upgrade"). Each escrow keeps
+ * the version it was deployed with, and the rules that mirror the contract follow that version.
+ */
+export type ContractVersionId = 'v2' | 'v3';
+
+/** What differs between supported contract versions, for the rules that mirror the contract (lifecycle.ts). */
+export interface VersionRules {
+  /**
+   * Cash deal: the lender attests the financing contingency (submitFinancing) and the buyer may waive it (v2). From v3
+   * the buyer's deposit clears it: no lender, nothing to attest or waive.
+   */
+  cashFinancingAttested: boolean;
+}
+
+export const VERSION_RULES: Record<ContractVersionId, VersionRules> = {
+  v2: { cashFinancingAttested: true },
+  v3: { cashFinancingAttested: false }
+};
+
+export const rulesOf = (v: { contractVersion?: ContractVersionId }): VersionRules => VERSION_RULES[v.contractVersion ?? 'v3'] ?? VERSION_RULES.v3;
+
 export interface EscrowView {
   contractAddress: string;
+  /** The contract version this escrow was deployed with (detected from its on-chain circuits). */
+  contractVersion: ContractVersionId;
   /** Null in Simulator Mode or when the authority could not be read. */
   maintenance: MaintenanceStatus | null;
   status: StatusName;

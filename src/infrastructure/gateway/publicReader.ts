@@ -19,10 +19,11 @@ function provider() {
   return pdp;
 }
 
-export async function readPublicView(contractAddress: string): Promise<EscrowView> {
+/** `hint`: the contract version recorded for this escrow in the vault, if any. */
+export async function readPublicView(contractAddress: string, hint?: string | null): Promise<EscrowView> {
   const addr = contractAddress.trim().toLowerCase().replace(/^0x/, '');
   if (!/^[0-9a-f]{64}$/.test(addr)) throw new AppError('VALIDATION', 'Contract address must be 64 hex characters.');
   const s = await readContractState(provider(), addr);
   if (!s) throw new AppError('CONTRACT_REJECTED', `No escrow at ${addr.slice(0, 10)}… on ${networkConfig.networkId}.`);
-  return decodeCompatible(addr, operationNames(s), () => toEscrowView(addr, s.data as unknown as LedgerInput, maintenanceOf(s)));
+  return decodeCompatible(addr, operationNames(s), (v) => toEscrowView(addr, s.data as unknown as LedgerInput, maintenanceOf(s), v.id), hint);
 }

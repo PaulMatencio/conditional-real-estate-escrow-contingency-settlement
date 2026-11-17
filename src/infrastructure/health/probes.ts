@@ -128,6 +128,8 @@ export interface ProbeConfig {
    * or dev server older than the last compile (keys requested for circuits the server no longer has).
    */
   buildCircuits?: readonly string[];
+  /** Earlier supported contract versions (their keys must be served too, for escrows deployed with them). */
+  previousVersions?: readonly { id: string; zkBase: string }[];
   /** Same-origin CASP simulator proxy (`/api/casp`, see src/app/api/casp). */
   caspBase: string;
 }
@@ -173,6 +175,13 @@ export function createHealthProbes(cfg: ProbeConfig, connector: WalletConnector,
           if (d.added.length || d.removed.length) return { status: 'degraded', detail: { code: 'stale-bundle', info: driftText(d) } };
         }
       }
+      // Escrows deployed with an earlier supported version are proved with that version's keys.
+      const missing: string[] = [];
+      for (const p of cfg.previousVersions ?? []) {
+        const r = await env.fetch(`${p.zkBase}/keys/${cfg.keyCircuit}.verifier`, { signal });
+        if (!r.ok) missing.push(p.id);
+      }
+      if (missing.length) return { status: 'degraded', detail: { code: 'no-keys', info: `contract ${missing.join(', ')}` } };
       return { status: 'ok' };
     }),
     probe('casp', `${cfg.caspBase} → CASP simulator`, true, async (signal) => {

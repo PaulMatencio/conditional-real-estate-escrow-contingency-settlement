@@ -4,7 +4,7 @@
  * and as a cheap pre-flight before proving (FR-FUND-04). The contract stays the authority: this table only
  * avoids sending transactions that are bound to fail.
  */
-import { CONTINGENCIES, allCleared, anyFailed, coolingOffOver, hasUsableSellerKyc, insideCoolingOff, isFullyConfigured, type ContingencyName, type EscrowView, type StatusName } from './escrowView';
+import { CONTINGENCIES, rulesOf, allCleared, anyFailed, coolingOffOver, hasUsableSellerKyc, insideCoolingOff, isFullyConfigured, type ContingencyName, type EscrowView, type StatusName } from './escrowView';
 import type { Caller, PartyRole } from './roles';
 
 export type PartyCircuit =
@@ -15,6 +15,7 @@ export type PartyCircuit =
   | 'openContingencyReview'
   | 'submitInspection'
   | 'submitTitle'
+  | 'submitFinancing'
   | 'waiveContingency'
   | 'cancelAndRefund'
   | 'sellerWithdraw'
@@ -143,6 +144,19 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     witnesses: ['localSecretKey'],
     check: (v) => first(phase(v, 'Not in contingency review', 'ContingenciesPending'), v.contingencies.Title.submitted ? 'Title outcome already submitted' : null)
   },
+  submitFinancing: {
+    circuit: 'submitFinancing',
+    callers: ['lender'],
+    witnesses: ['localSecretKey'],
+    // Contract v2 only: in a cash deal the lender attests financing. From v3 the buyer's deposit clears it.
+    check: (v) =>
+      first(
+        rulesOf(v).cashFinancingAttested ? null : "This contract version has no financing attestation: the buyer's deposit clears financing",
+        phase(v, 'Not in contingency review', 'ContingenciesPending'),
+        isLoanMode(v) ? 'Loan-financed escrow: the lender deposits or refuses the loan' : null,
+        v.contingencies.Financing.submitted ? 'Financing outcome already submitted' : null
+      )
+  },
   waiveContingency: {
     circuit: 'waiveContingency',
     callers: ['buyer'],
@@ -152,8 +166,10 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
       const p = phase(v, 'Not in contingency review', 'ContingenciesPending');
       if (p) return p;
       if (!which) return CONTINGENCIES.some((k) => !(v.contingencies[k].submitted && v.contingencies[k].passed)) ? null : 'Every contingency is already cleared';
-      // Mirrors the contract: financing is never waived (cash: the deposit clears it; loan: the buyer tops up).
-      if (which === 'Financing') return isLoanMode(v) ? 'Loan-financed escrow: top up instead of waiving financing' : "Cash deal: financing is cleared by the buyer's deposit";
+      // Mirrors the escrow's contract version. Loan: the buyer tops up instead. Cash: v3 clears it at the deposit;
+      // v2 lets the buyer waive it (the lender would otherwise attest it).
+      if (which === 'Financing' && isLoanMode(v)) return 'Loan-financed escrow: top up instead of waiving financing';
+      if (which === 'Financing' && !rulesOf(v).cashFinancingAttested) return "Cash deal: financing is cleared by the buyer's deposit";
       const c = v.contingencies[contingencyKey(which)];
       return c.submitted && c.passed ? `${which} already cleared` : null;
     }
@@ -211,9 +227,11 @@ export const ACTIONS: Record<PartyCircuit, ActionSpec> = {
     check: (v, _c, _n, which) => {
       const p = phase(v, 'Escrow is not disputed', 'Disputed');
       if (p) return p;
-      const voidable = (k: ContingencyName) => v.contingencies[k].submitted && !v.contingencies[k].waived && (k !== 'Financing' || isLoanMode(v));
+      // v3 cash deal: financing is cleared by the deposit, not attested, so there is nothing to void (v2: the lender's).
+      const cashCleared = !isLoanMode(v) && !rulesOf(v).cashFinancingAttested;
+      const voidable = (k: ContingencyName) => v.contingencies[k].submitted && !v.contingencies[k].waived && (k !== 'Financing' || !cashCleared);
       if (!which) return CONTINGENCIES.some(voidable) ? null : 'No attested result to void';
-      if (which === 'Financing' && !isLoanMode(v)) return "Cash deal: financing is cleared by the buyer's deposit and cannot be voided";
+      if (which === 'Financing' && cashCleared) return "Cash deal: financing is cleared by the buyer's deposit and cannot be voided";
       const c = v.contingencies[which];
       if (which === 'Financing' && isLoanMode(v) && c.submitted && !(v.financing.loanLost && !v.financing.loanWithdrawn && !v.financing.topUpHeld)) return 'Only a loan refusal can be voided';
       return c.submitted && !c.waived ? null : `No attested ${which.toLowerCase()} to void`;
@@ -454,6 +472,22 @@ export function nextDeadline(v: EscrowView, nowSec?: bigint): { kind: 'closing' 
     default:
       return null;
   }
+}
+
+/**
+ * Contract v2 cash deal (financing mode Attested): the buyer's deposit already locks the full price, but that version
+ * still requires the Financing contingency to be cleared (the lender attests it), so the dApp offers the buyer to
+ * waive it. From v3 the deposit clears it and this is always 'hidden'.
+ * - 'hidden':  not applicable (v3, a loan deal, or Financing already cleared)
+ * - 'later':   v2 cash deal, but the contingency review is not open yet (waiving needs ContingenciesPending)
+ * - 'now':     the buyer can waive Financing now
+ */
+export function cashFinancingWaiver(v: EscrowView): 'hidden' | 'later' | 'now' {
+  if (!rulesOf(v).cashFinancingAttested || v.financing.mode !== 'Attested') return 'hidden';
+  const c = v.contingencies.Financing;
+  if (c.waived || (c.submitted && c.passed)) return 'hidden';
+  if (inStatus(v, 'Initializing', 'Created', 'Funded')) return 'later';
+  return ACTIONS.waiveContingency.check(v, 'buyer', 0n, 'Financing') === null ? 'now' : 'hidden';
 }
 
 export type { Caller, PartyRole };

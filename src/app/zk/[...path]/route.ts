@@ -12,6 +12,12 @@ export const dynamic = 'force-dynamic';
  * the compiler's integrity manifest / contract info (compiler/contract-manifest.json, compiler/contract-info.json),
  * from which it checks every artefact's hash and reads the runtime version (ledger era) the contract was built for.
  */
+/** Compiler output of every supported contract version, by the name it is served under (/zk/<name>/...). */
+const MANAGED_DIRS = new Map<string, string>([
+  [contractConfig.name, contractConfig.managedDir],
+  ...(contractConfig.previousVersions ?? []).map((v) => [v.name, v.managedDir] as [string, string])
+]);
+
 const ALLOWED = /^(keys\/[A-Za-z0-9_]+\.(prover|verifier)|zkir\/[A-Za-z0-9_]+\.bzkir|compiler\/contract-(manifest|info)\.json)$/;
 
 /**
@@ -31,11 +37,12 @@ function reportStale(req: NextRequest, rel: string) {
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path: parts } = await ctx.params;
-  // parts[0] is the contract name segment; the rest is the artefact path.
-  if (parts[0] !== contractConfig.name) return new NextResponse('Not found', { status: 404 });
+  // parts[0] is the contract version's name (current: contract.name; earlier supported versions: previousVersions).
+  const managedDir = MANAGED_DIRS.get(parts[0]);
+  if (!managedDir) return new NextResponse('Not found', { status: 404 });
   const rel = parts.slice(1).join('/');
   if (!ALLOWED.test(rel)) return new NextResponse('Not found', { status: 404 });
-  const file = path.resolve(process.cwd(), contractConfig.managedDir, rel);
+  const file = path.resolve(process.cwd(), managedDir, rel);
   try {
     const st = statSync(file);
     const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;

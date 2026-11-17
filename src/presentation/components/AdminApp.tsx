@@ -19,6 +19,7 @@ import { VaultGate } from './party/PartySetup';
 import { useEscrow } from '../providers/EscrowProvider';
 import { deployedMeta } from '@/application/escrowDirectory';
 import { buildFingerprint } from '@/infrastructure/contract/compat';
+import { CURRENT_VERSION } from '@/infrastructure/contract/versions';
 import { LABEL_MAX, normalizeWireMeta } from '@/domain/escrowMeta';
 import { DEFAULT_DECIMALS, isValidDecimals } from '@/domain/amount';
 import { TEST_CASES, metaForCase, testCase } from '@/domain/testCases';
@@ -179,7 +180,7 @@ function DeployTab() {
           if (!addr) return;
           try {
             const build = await buildFingerprint();
-            await saveMeta(addr, () => ({ ...deployedMeta(wire, networkConfig.networkId, Date.now(), decimalsNum ?? undefined), build }));
+            await saveMeta(addr, () => ({ ...deployedMeta(wire, networkConfig.networkId, Date.now(), decimalsNum ?? undefined), build, contractVersion: CURRENT_VERSION.id }));
             await switchEscrow(addr);
           } catch (e) {
             setError((e as Error).message);
@@ -225,7 +226,7 @@ function ContractTab() {
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <div>
               <dt className="label">{t('contract.status')}</dt>
-              <dd><Badge tone={state.status === 0 ? 'warn' : 'ok'}>{statusName}</Badge> v{String(state.configVersion)}</dd>
+              <dd><Badge tone={state.status === 0 ? 'warn' : 'ok'}>{statusName}</Badge> v{String(state.configVersion)} · <Badge tone={state.contractVersion === contractConfig.version ? 'muted' : 'warn'}>{`${t('status.contractVersion')} ${state.contractVersion}`}</Badge></dd>
             </div>
             <div>
               <dt className="label">Token</dt>
@@ -269,6 +270,18 @@ function ContractTab() {
   );
 }
 
+/** Unix seconds -> "MM/DD/YYYY, HH:MM:SS AM/PM" (browser local time); '—' when empty or invalid. */
+function formatUnixSeconds(s: string): string {
+  const v = s.trim();
+  if (!/^\d+$/.test(v)) return '—';
+  const d = new Date(Number(v) * 1000);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', {
+    month: '2-digit', day: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+  });
+}
+
 const hexOrUndef = (s: string) => (s.trim() ? s.trim() : undefined);
 const bigOrUndef = (s: string) => (s.trim() ? BigInt(s.trim()) : undefined);
 
@@ -288,12 +301,24 @@ function InitializeTab() {
       <p className="mb-3 text-sm">{t('init.missing')}: {state.missingAttributes.length ? state.missingAttributes.map((a) => <Badge key={a} tone="warn">{a}</Badge>) : '—'}</p>
       <div className="grid gap-x-4 sm:grid-cols-2">
         {(['inspector', 'lender', 'titleAgent', 'resolver'] as const).map((k) => (
-          <Field key={k} label={`${k} role id`} htmlFor={k} hint={k === 'lender' ? t('init.lenderCashHint') : undefined}>
+          <Field key={k} label={`${k} role id`} htmlFor={k} hint={k === 'lender' && state.contractVersion !== 'v2' ? t('init.lenderCashHint') : undefined}>
             <input id={k} className="input mono" value={f[k]} onChange={set(k)} placeholder="64 hex" spellCheck={false} />
+            {/* Contract v2 cash deal: a lender role id is still required (it attests financing); the buyer may hold it. */}
+            {k === 'lender' && state.contractVersion === 'v2' && state.roles.buyer && (
+              <button type="button" className="btn-ghost mt-1 !py-1 text-xs" onClick={() => setF((x) => ({ ...x, lender: state.roles.buyer ?? '' }))}>
+                {t('init.useBuyerId')}
+              </button>
+            )}
           </Field>
         ))}
-        <Field label="Closing deadline (unix s)" htmlFor="closing"><input id="closing" inputMode="numeric" className="input" value={f.closing} onChange={set('closing')} /></Field>
-        <Field label="Dispute deadline (unix s)" htmlFor="dispute"><input id="dispute" inputMode="numeric" className="input" value={f.dispute} onChange={set('dispute')} /></Field>
+        <Field label="Closing deadline (unix s)" htmlFor="closing">
+          <input id="closing" inputMode="numeric" className="input" value={f.closing} onChange={set('closing')} />
+          <output htmlFor="closing" className="mono mt-1 block text-xs text-slate-400" data-testid="closing-date">{formatUnixSeconds(f.closing)}</output>
+        </Field>
+        <Field label="Dispute deadline (unix s)" htmlFor="dispute">
+          <input id="dispute" inputMode="numeric" className="input" value={f.dispute} onChange={set('dispute')} />
+          <output htmlFor="dispute" className="mono mt-1 block text-xs text-slate-400" data-testid="dispute-date">{formatUnixSeconds(f.dispute)}</output>
+        </Field>
         <Field label="Min KYC level" htmlFor="kyc"><input id="kyc" inputMode="numeric" className="input" value={f.kyc} onChange={set('kyc')} /></Field>
         <Field label="Max AML risk score" htmlFor="aml"><input id="aml" inputMode="numeric" className="input" value={f.aml} onChange={set('aml')} /></Field>
       </div>

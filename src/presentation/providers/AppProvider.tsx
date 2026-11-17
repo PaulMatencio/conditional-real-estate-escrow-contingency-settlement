@@ -9,6 +9,7 @@ import { bytesToHex } from '@/domain/hex';
 import type { AdminState, ConfigureTerms, DeployParams, FinancingTerms } from '@/domain/escrow';
 import { MAINTENANCE_BATCH_SIZE, contractConfig, indexerHttpUrl, networkConfig } from '@/infrastructure/config/network';
 import { ZK_ASSET_PATH, allCircuitIds } from '@/infrastructure/contract/compiled';
+import { SUPPORTED_VERSIONS, zkPathOf } from '@/infrastructure/contract/versions';
 import { generateSecretKey, roleIdHex, secretKeyFromHex } from '@/infrastructure/crypto/identity';
 import { AdminGateway } from '@/infrastructure/gateway/adminGateway';
 import { createHealthProbes } from '@/infrastructure/health/probes';
@@ -87,7 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () =>
       new CheckInfrastructure(
         createHealthProbes(
-          { ...networkConfig, indexerHttp: indexerHttpUrl(), zkBase: ZK_ASSET_PATH, keyCircuit: contractConfig.deployCircuits[0] ?? 'configure', buildCircuits: allCircuitIds(), caspBase: '/api/casp' },
+          { ...networkConfig, indexerHttp: indexerHttpUrl(), zkBase: ZK_ASSET_PATH, keyCircuit: contractConfig.deployCircuits[0] ?? 'configure', buildCircuits: allCircuitIds(), previousVersions: SUPPORTED_VERSIONS.filter((v) => !v.current).map((v) => ({ id: v.id, zkBase: zkPathOf(v) })), caspBase: '/api/casp' },
           connector,
           { fetch: (...a) => fetch(...a), WebSocket: typeof WebSocket === 'undefined' ? undefined : WebSocket }
         )

@@ -1,10 +1,13 @@
 'use client';
+import { contractConfig } from '@/infrastructure/config/network';
 import { CheckCircle2, CircleDashed, ListChecks, ShieldCheck, XCircle } from 'lucide-react';
 import { CONTINGENCIES, INIT_ATTRIBUTES, authorityLevel, isZeroHex, type EscrowView, type MaintenanceStatus, type StatusName } from '@/domain/escrowView';
 import { nextDeadline } from '@/domain/lifecycle';
 import { shortHex } from '@/domain/hex';
 import { useT } from '../../i18n';
 import { Alert, Badge, Card, Mono, Stat } from '../ui';
+
+const CURRENT_CONTRACT_VERSION = contractConfig.version;
 import { Countdown, fmtTime } from './helpers';
 
 const PATH: StatusName[] = ['Initializing', 'Created', 'Funded', 'ContingenciesPending', 'ReadyToClose', 'Closed'];
@@ -35,6 +38,10 @@ export function StatusOverview({ view, now, compact = false }: { view: EscrowVie
       <Card title={t('status.title')} icon={<ShieldCheck size={16} aria-hidden />}>
         <div className="mb-4 flex flex-wrap items-center gap-2" aria-live="polite">
           <Badge tone={tone(view.status)}>{view.status}</Badge>
+          {/* The contract version this escrow was deployed with (its rules apply). */}
+          <span title={t('status.contractVersion')}>
+            <Badge tone={view.contractVersion === CURRENT_CONTRACT_VERSION ? 'muted' : 'warn'}>{`${t('status.contractVersion')} ${view.contractVersion}`}</Badge>
+          </span>
           <span className="text-xs text-slate-400">
             {t('status.round')} {view.lifecycleRound.toString()} · v{view.configVersion.toString()} · {view.escrowTicker}
           </span>

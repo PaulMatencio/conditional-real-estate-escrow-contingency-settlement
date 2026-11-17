@@ -14,7 +14,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 | Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price, waives or disputes contingencies |
 | Seller | `/seller` | Accepts the terms, proves KYC, receives the payout |
 | Inspector | `/inspector` | Attests the inspection result |
-| Lender | `/lender` | Attests the financing result |
+| Lender | `/lender` | Loan deal: funds or refuses the loan. v2 cash deal: attests the financing result. v3 cash deal: no lender |
 | Title agent | `/title-agent` | Attests the title result |
 | Dispute resolver | `/resolver` | Settles disputes, voids wrong attestations, executes a settled payout |
 | Notary (custodian) | `/verify/<contract address>` | Verifies the escrow, issues the notarial certificate, keeps the custodian copy of the terms |
@@ -93,7 +93,13 @@ A v2 escrow can be a **cash deal** (the lender only attests the financing, as in
 2. **Terms & KYC** tab → *Private terms*: enter the **total price**, the **buyer deposit** (the loan amount is the difference), the **lender payout key**, and the optional **loan refusal refund term**. The commitments are written in two transactions.
 3. Distribute the packages: buyer and seller get the full terms package; the lender gets a **lender package** holding only what it needs (price, loan amount, refund term, its payout key).
 
+**Amounts and units.** Type the price and the deposit in **whole tokens**, as your wallet shows them: `250000` or `250000.50` for 250,000.50 sEUR. The dApp converts them to the token's **base unit** with the decimals chosen at deploy, and the terms and the contract count in base units: with 6 decimals, 250,000 sEUR is 250,000,000,000. Every page shows amounts back in whole tokens ("250,000.00 sEUR"), always with at least two decimals, so a tiny amount can't pass for a large one. An entry with more decimals than the token has is refused.
+
+Escrows deployed before this change have no decimals setting and are shown with 6. If one was committed with base-unit numbers typed as whole tokens ("250000" for 250,000 sEUR), it really holds 0.25 sEUR: redeploy it to test with the intended amount.
+
 ### Lender guide
+
+**Cash deals.** In a v3 cash deal there is no lender: the buyer's deposit clears the financing contingency, so there is no loan to fund and nothing for you to attest. In a v2 cash deal you attest the financing result like the other attestors, or the buyer waives it with the *Financing (cash deal)* card. The rest of this guide is for loan deals.
 
 On the **Lender** page, load the contract and import your lender package. The *Lender terms* card checks its four commitments against the ledger. During the contingency review, the *Loan* card offers:
 
@@ -125,6 +131,15 @@ Each amount has its own commitment, so the notary verifies them separately: **to
 - **Forfeited**: loan lost, refund term off, no top-up by the closing deadline. Only the seller can claim the buyer deposit.
 - **Released**: the seller receives two coins, the buyer deposit and the loan (or top-up).
 - **Refunded / Expired**: each coin goes back to whoever deposited it: buyer deposit and top-up to the buyer, loan to the lender. Each coin is paid back in its own transaction: Refund buyer (the deposit), Refund the top-up (if the buyer topped up) and Refund the lender (the loan). The escrow closes once every held coin is paid.
+
+## Contract versions: v3 and v2
+
+The dApp deploys **contract v3** for new escrows, and escrows deployed with **contract v2** keep working in the same dApp.
+
+- **v3 cash deal:** the deposit clears the financing contingency, so no lender attestation is needed for a cash deal.
+- **v2 escrows** keep the rules they were deployed with, including **Submit financing** for the lender. The page shows the escrow's version and offers only the actions that version supports.
+- **Unsupported older versions:** the escrow shows its address and an *older contract version* badge, with only archive, vault backup export and the explorer link. Other escrows and your vault data are not affected.
+- **Several escrows:** the switcher in the header lists the escrows in your vault. Their names, test cases and token decimals are kept only in your vault and the encrypted packages, never on-chain.
 
 ## Cooling-off period
 
@@ -171,7 +186,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 4. Start the local proof server.
 5. Collect from the parties, by any channel:
    - the **role ids** of the buyer and seller (each generates its key on the *My role id* page and sends only the id);
-   - the role ids of the inspector, lender, title agent and dispute resolver (can come later, before configuring);
+   - the role ids of the inspector, lender, title agent and dispute resolver (can come later, before configuring), except the lender in a v3 cash deal, which has none;
    - the buyer's and seller's **shielded payout keys** (each party's *My shielded payout key* card);
    - the **envelope public keys** of buyer, seller, resolver and custodian (for distributing the terms).
 
@@ -179,7 +194,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 
 **Deploy** tab:
 
-1. Fill in the buyer and seller role ids, the **escrowed token color** (the on-chain id of the shielded token, e.g. a EUR stablecoin) and its **ticker**. The admin role id is filled from your key.
+1. Fill in the buyer and seller role ids, the **escrowed token color** (the on-chain id of the shielded token, e.g. a EUR stablecoin) and its **ticker**. The admin role id is filled from your key. Set Token decimals too (6 for sEUR and EURe): amounts are then typed and shown in whole tokens everywhere. Give the deployment a label, or pick a test case, in Name this deployment.
 2. Click **Deploy (staged)**. The progress panel shows build → prove → balance → submit → confirm. The deploy carries the 5 initialization circuits; the new address is loaded automatically.
 3. The contract's **maintenance authority key** is created by the deploy and stored only in your encrypted vault.
 
@@ -192,7 +207,9 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 
 ### 4. Fill in the initialization terms
 
-**Initialize** tab: the role ids of the inspector, lender, title agent and resolver, the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
+**Initialize** tab: the role ids of the inspector, lender, title agent and resolver (in a v3 cash deal leave the lender field empty, because there is no lender; a v2 escrow still needs it, and the "Use the buyer’s role id (cash deal)" button can fill it), the **closing deadline** (the deposit and the contingencies must be done before it), the **dispute deadline** (later than the closing deadline) and the **KYC policy** (minimum KYC level, maximum AML risk score). Submit with **Apply**. You can apply changes several times while the escrow is *Initializing*; each change starts a new configuration version and clears both acceptances, so finish all changes before the parties accept.
+
+Type each deadline in Unix seconds. Under the **Closing deadline** and **Dispute deadline** fields, the page shows the same moment as `MM/DD/YYYY, HH:MM:SS AM/PM` in your browser's local time zone, and `—` while the field is empty or not a valid number. Check both dates there before you click **Apply**.
 
 ### 5. Private terms package
 
@@ -285,6 +302,8 @@ Then **Deposit into escrow** → confirm. The wallet signs, the proof runs local
 4. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
 5. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
 
+**Cash deal.** In a v3 cash deal your deposit already clears the Financing contingency, so there is nothing to waive. In a v2 cash deal, the *Financing (cash deal)* card on your page waives it in one click once the review is open. That waiver is final and does not affect inspection or title; the lender can attest it instead.
+
 ### Closing
 
 - **Deal goes ahead (ReadyToClose):** buyer or seller clicks **Release to seller**. It needs the seller's KYC on-chain and valid. The funds go to the seller's committed payout key; the status becomes **Closed**.
@@ -340,6 +359,8 @@ Each attestor submits one result for their contingency, once, during the conting
 | Inspector | `/inspector` | Inspection | Submit inspection |
 | Lender | `/lender` | Financing | Submit financing |
 | Title agent | `/title-agent` | Title | Submit title |
+
+The lender attests the financing result only in a **v2 cash deal**. In a **v3 cash deal** there is no lender and no financing attestation: the buyer's deposit clears the financing contingency. In a **loan deal** the lender's deposit is its approval (see the *Lender guide*).
 
 ### Before the deploy
 

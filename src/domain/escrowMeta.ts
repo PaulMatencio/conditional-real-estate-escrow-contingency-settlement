@@ -1,3 +1,4 @@
+import type { ContractVersionId } from './escrowView';
 /**
  * Escrow directory metadata: a human name, a test case and a description for each escrow this browser knows. Kept in
  * the encrypted vault record (never on-chain, never sent to a server) and carried, optionally, inside the encrypted
@@ -34,6 +35,8 @@ export interface EscrowMeta extends WireMeta {
    * deploy). Differs from the running build → the escrow is an older contract version (CLAUDE.md).
    */
   build?: string;
+  /** Contract version id this escrow was deployed with (recorded at deploy; the chain remains the reference). */
+  contractVersion?: ContractVersionId;
 }
 
 export const LABEL_MAX = 80;

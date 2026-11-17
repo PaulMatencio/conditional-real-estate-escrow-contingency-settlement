@@ -2,7 +2,7 @@
 
 Conditional real-estate escrow with contingency settlement on Midnight, **preview** network. The Compact contract
 lives in `contract/`; the dApp (Next.js, TypeScript, clean architecture) in `src/`. Branch `feature/v2-dapp`: the dApp
-supports **contract v2 only** (v1 dApp is tagged `v1.0-dapp`).
+deploys **contract v3** (cash deal cleared by the deposit) and keeps escrows deployed with **contract v2** working (v1 dApp is tagged `v1.0-dapp`).
 
 ## Architecture & Tech Stack
 
@@ -10,6 +10,7 @@ supports **contract v2 only** (v1 dApp is tagged `v1.0-dapp`).
 
 | Area | Technology |
 |---|---|
+| Contract versions | current **v3** (`contract/managed/escrow`); supported earlier: **v2** (`contract/versions/v2`, `contract/managed/escrow-v2`). See *Backward compatibility after a contract upgrade* |
 | Smart contract | Compact **0.36.0** (`pragma language_version >= 0.23`), compact-runtime **0.21** (async circuits), ledger **v9** (`@midnightntwrk/ledger-v9`), onchain-runtime v4 |
 | Chain access | midnight-js **5.0.0** (contracts, indexer public data provider, http-client proof provider, fetch-zk-config provider, dapp-connector proof provider) |
 | Wallets | DApp Connector API **4.1.0** (`@midnightntwrk/dapp-connector-api`, Lace and 1AM browser wallets), shielded tokens (sEUR / EURe, 6 decimals), fees in DUST |
@@ -94,6 +95,11 @@ compact compile +0.36.0 conditional-real-estate-escrow-contingency-settlement.co
 npm run compile                  # --skip-zk build (JS only, fast)
 npm test                         # contract simulator suite (test/escrow.sim.mjs) + KYC module check
 cd .. && npm run generate:sdk    # regenerate sdk/escrow after any circuit change
+
+# earlier supported contract versions (frozen sources in contract/versions/v<N>/), full ZK build each
+cd contract
+compact compile +0.36.0 versions/v2/conditional-real-estate-escrow-contingency-settlement.compact managed/escrow-v2
+npm run compile:v2               # --skip-zk build of v2 (JS only)
 ```
 
 CASP simulator (test only): `npm run start-server` in `../../eu-counterparty-simulator`, port 8787.
@@ -109,9 +115,9 @@ CASP simulator (test only): `npm run start-server` in `../../eu-counterparty-sim
 - Time inside circuits: a caller-supplied `now` checked as `blockTimeGte(now) && blockTimeLt(now + 600)`; the dApp
   sends wall clock − 120 s (`TIME_MARGIN`).
 - Ledger reads inside `&&`/ternaries after a witness comparison trigger disclosure errors: read into a `const` first.
-- Any contract change ⇒ the ledger layout changes ⇒ **existing deployments become unreadable** by the new dApp;
-  redeploy test escrows. Rebuild/restart the dApp before deploying. The dApp must still handle the old escrows
-  cleanly (see *Contract updates must not break the dApp*).
+- Any contract change ⇒ a new **contract version** (new circuits, keys and ledger layout). Escrows already deployed
+  keep the version they were deployed with and must stay usable (see *Backward compatibility after a contract
+  upgrade*). Rebuild/restart the dApp before deploying.
 
 ## dApp conventions
 
@@ -148,6 +154,35 @@ never breaks it. Escrows deployed by an older build stay in the vault and the sw
   of older escrows; archiving is the user's choice.
 - **Test it.** Each contract change adds or keeps an application test that opens an escrow with an unknown circuit
   and a changed ledger, and expects the clean `CONTRACT_VERSION` error, not a crash.
+
+## Backward compatibility after a contract upgrade
+
+After a contract upgrade the dApp stays **backward compatible**: escrows deployed with any supported earlier
+version keep working (read, every action still available in that version, payouts, notary certificate, compliance)
+with the new dApp. The "older contract version" refusal above is only for versions outside the supported list.
+
+- **Keep every supported version's build.** The current version compiles to `contract/managed/escrow/`. Each earlier
+  supported version keeps its frozen source in `contract/versions/v<N>/` (contract + its own `KycAttestationV1`
+  copy) and its compiler output in `contract/managed/escrow-v<N>/` (full ZK build), listed in `midnight.config.json`
+  `contract.previousVersions` and registered in `src/infrastructure/contract/versions.ts`. The `/zk` route serves
+  keys per version (`/zk/escrow-v<N>/...`). Freeze the source **before** changing the contract.
+- **Detect the version from the chain.** Identify a deployed escrow's version from its on-chain verifier keys /
+  circuit set (and `VaultRecord.meta.build` when present), then load that version's module, keys, ledger decoder,
+  witnesses and `callArgs`. Never decode or call an escrow with another version's layout.
+- **One adapter per version.** Infrastructure maps each version's ledger to the shared `EscrowView` and each
+  `PartyCircuit` to that version's circuit (or marks it unavailable with a clear reason). Domain, application and UI
+  code stay version-agnostic; `lifecycle.ts` mirrors the asserts of the escrow's own version.
+- **Rules follow the escrow's version.** An escrow keeps the rules it was deployed with (e.g. v2 escrows keep
+  `submitFinancing`; cash-deal auto-clearing applies only to versions that have it). The UI shows the version and
+  only offers actions that version supports.
+- **Terms packages stay readable.** Packages, lender packages, custodian copies and assignment notices of every
+  supported version import and verify; a format change adds a new reader, it never drops an old one.
+- **Dropping a version is a decision.** Removing a version from the supported list is explicit (noted in the user
+  guide and `CLAUDE.md`), only once none of its escrows can still hold funds, and those escrows then fall back to
+  the clean "older contract version" handling.
+- **Test every supported version.** The contract simulator suite and the application tests (Simulator Mode) run the
+  main flows against each supported version's compiled module, plus a mixed directory (escrows of several versions
+  in one vault).
 
 ## Testing and delivery
 

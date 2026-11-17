@@ -909,14 +909,22 @@ export const en = {
   'adminTerms.acceptance': 'Acceptance on-chain, configuration version',
   'fund.trackHint': 'Locate vault index finds the deposit on the public chain by itself: no hash needed, even if someone else deposited. Paste a deposit transaction hash or an index only if that fails.',
   'health.detail.stale-bundle': 'This page was built for another version of the contract than the one the server serves (circuits differ). Restart the dApp and reload the page.',
-  'dir.olderContract': 'older contract',
+  'dir.olderContract': 'unsupported contract',
   'compat.staleTitle': 'This page is out of date',
   'compat.staleBody': 'Its code was built for another version of the contract than the one the dApp server now serves, so some actions would fail. Restart the dApp (npm run dev, or npm run build && npm start), then reload the page.',
   'compat.reload': 'Reload the page',
-  'compat.olderTitle': 'This escrow uses an older contract version',
-  'compat.olderBody': 'It was deployed before the last contract update, so this version of the dApp cannot read or act on it. Its vault record, keys and terms are kept. Archive it, then deploy or open an escrow made with the current contract.',
+  'compat.olderTitle': 'This escrow uses an unsupported contract version',
+  'compat.olderBody': 'It was deployed with a contract version this dApp no longer supports, so it cannot read or act on it. (Escrows of supported earlier versions keep working.) Its vault record, keys and terms are kept. Archive it, then deploy or open an escrow made with a supported contract.',
   'compat.archived': 'Archived. Pick another escrow in the switcher.',
-  'compat.explorer': 'Open in the explorer'
+  'compat.explorer': 'Open in the explorer',
+  'cashFin.title': 'Financing (cash deal)',
+  'cashFin.body': 'This is a cash deal: your deposit already locks the full price, so there is no loan to approve. The contract still needs the Financing contingency cleared before closing, so waive it.',
+  'cashFin.later': 'You can waive it as soon as the contingency review is open (Open contingency review, after the deposit).',
+  'cashFin.waive': 'Waive financing',
+  'cashFin.confirmBody': 'Waive the Financing contingency? Final: no financing result will be needed. Inspection and title are not affected.',
+  'init.useBuyerId': 'Use the buyer’s role id (cash deal)',
+  'circuit.submitFinancing': 'Submit financing',
+  'status.contractVersion': 'Contract version',
 } as const;
 
 export type MessageKey = keyof typeof en;

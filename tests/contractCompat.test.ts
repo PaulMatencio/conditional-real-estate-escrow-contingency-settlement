@@ -21,16 +21,17 @@ import contractInfo from '@contract/managed/escrow/compiler/contract-info.json';
 
 const ADDR = 'ab'.repeat(32);
 const build = allCircuitIds();
-const olderOnChain = [...build.filter((c) => c !== 'depositToEscrow'), 'submitFinancing'];
+// Circuits no supported version has (a dropped version, or another contract altogether).
+const olderOnChain = [...build.filter((c) => c !== 'depositToEscrow'), 'retiredCircuit'];
 
-describe('escrow deployed with another contract version', () => {
+describe('escrow deployed with an unsupported contract version', () => {
   it('names the circuits this build does not know', () => {
-    expect(foreignCircuitsOf(olderOnChain)).toEqual(['submitFinancing']);
+    expect(foreignCircuitsOf(olderOnChain)).toEqual(['retiredCircuit']);
     expect(foreignCircuitsOf(build)).toEqual([]);
   });
 
   it('is refused with CONTRACT_VERSION before anything else', () => {
-    expect(() => assertCompatible(ADDR, olderOnChain)).toThrowError(/older contract version.*submitFinancing/);
+    expect(() => assertCompatible(ADDR, olderOnChain)).toThrowError(/no longer supports.*retiredCircuit/);
     try {
       assertCompatible(ADDR, olderOnChain);
     } catch (e) {
@@ -50,7 +51,7 @@ describe('escrow deployed with another contract version', () => {
     const decode = vi.fn((): EscrowView => {
       throw new TypeError("Cannot read properties of undefined (reading 'asArray')");
     });
-    expect(() => decodeCompatible(ADDR, build, decode)).toThrowError(/older contract version.*ledger layout/);
+    expect(() => decodeCompatible(ADDR, build, decode)).toThrowError(/no longer supports.*ledger layout/);
     try {
       decodeCompatible(ADDR, build, decode);
     } catch (e) {

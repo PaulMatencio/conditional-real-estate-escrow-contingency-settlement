@@ -12,3 +12,14 @@ if (actual !== pinned) {
   process.exit(1);
 }
 console.log(`KycAttestationV1.compact sha256 ok (${pinned.slice(0, 12)}…)`);
+
+// Frozen earlier contract versions (contract/versions/v<N>/) carry their own copy: it must stay the same module.
+for (const v of ['v2']) {
+  const copy = readFileSync(new URL(`../versions/${v}/KycAttestationV1.compact`, import.meta.url));
+  const h = createHash('sha256').update(copy).digest('hex');
+  if (h !== pinned) {
+    console.error(`versions/${v}/KycAttestationV1.compact differs from the pinned format: ${h} != ${pinned}`);
+    process.exit(1);
+  }
+}
+console.log('frozen versions use the same KycAttestationV1 module');

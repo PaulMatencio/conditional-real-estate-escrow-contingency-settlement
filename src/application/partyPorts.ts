@@ -38,6 +38,8 @@ export interface CircuitArgs {
   openContingencyReview: [];
   submitInspection: [passed: boolean, reportHash: string];
   submitTitle: [cleared: boolean, reportHash: string];
+  /** Contract v2 only (cash deal): the lender attests financing. */
+  submitFinancing: [approved: boolean, reportHash: string];
   waiveContingency: [which: ContingencyName];
   cancelAndRefund: [];
   sellerWithdraw: [];

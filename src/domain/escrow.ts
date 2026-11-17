@@ -1,3 +1,4 @@
+import type { ContractVersionId } from './escrowView';
 /** Domain types for the admin side of the escrow. Pure and framework-free. */
 
 export interface TxReceipt {
@@ -70,6 +71,8 @@ export interface DeployParams {
 
 export interface AdminState {
   contractAddress: string;
+  /** The contract version this escrow was deployed with. */
+  contractVersion: ContractVersionId;
   status: number;
   ticker: string;
   tokenColor: string;

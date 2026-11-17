@@ -8,6 +8,7 @@ import { pureCircuits } from '@/infrastructure/contract/module';
 import { attestationFromWire } from '@/infrastructure/crypto/escrowCrypto';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
 import { EscrowSimulator } from '@/infrastructure/simulator/escrowSimulator';
+import type { ContractVersion } from '@/infrastructure/contract/versions';
 
 export const key = (n: number): Uint8Array => {
   const b = new Uint8Array(32);
@@ -60,11 +61,13 @@ export function makeCasp(secret = 0x1234567890abcdefn, issuerId = hex(0xc0)) {
 export interface CoolingOffOpts {
   coolingOffDays?: number;
   penaltyRate?: string;
+  /** Contract version to simulate (default: the current one). */
+  version?: ContractVersion;
 }
 export const DAY = 86_400;
 
 export async function configuredEscrow(opts: CoolingOffOpts = {}): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
-  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
+  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0, version: opts.version });
   const days = opts.coolingOffDays ?? 0;
   const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, mode: 'attested', penaltyRate: opts.penaltyRate, coolingOff: days > 0 });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };
@@ -104,7 +107,7 @@ export const WINDOW = 100_000n;
 
 /** v2: a loan-financed simulator escrow (price 250000 = buyer deposit 100000 + loan 150000), still Initializing. */
 export async function configuredLoanEscrow(refundOnLoss = true, opts: CoolingOffOpts = {}): Promise<{ sim: EscrowSimulator; pkg: TermsPackage; casp: ReturnType<typeof makeCasp> }> {
-  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0 });
+  const sim = await EscrowSimulator.create({ adminRoleId: rid(K.admin), buyerRoleId: rid(K.buyer), sellerRoleId: rid(K.seller), tokenColor: COLOR, ticker: 'EURe' }, { time: T0, version: opts.version });
   const days = opts.coolingOffDays ?? 0;
   const pkg0 = createTermsPackage(termsCrypto, { price: '250000', buyerDeposit: '100000', buyerPayout: BUYER_KEY, sellerPayout: SELLER_KEY, lenderPayout: LENDER_KEY, refundOnLoss, mode: 'deposited', penaltyRate: opts.penaltyRate, coolingOff: days > 0 });
   const pkg: TermsPackage = { ...pkg0, contractAddress: sim.contractAddress, escrowColor: COLOR, escrowTicker: 'EURe' };

@@ -9,6 +9,7 @@
   "contract": {
     "source": "contract/conditional-real-estate-escrow-contingency-settlement.compact",
     "name": "escrow",
+    "version": "v3",
     "managedDir": "contract/managed/escrow",
     "sdkDir": "sdk/escrow",
     "testsDir": "tests",
@@ -21,6 +22,14 @@
       "acceptConfiguration",
       "finalizeInitialization"
     ],
-    "maintenanceBatchSize": 4
+    "maintenanceBatchSize": 4,
+    "previousVersions": [
+      {
+        "version": "v2",
+        "name": "escrow-v2",
+        "source": "contract/versions/v2/conditional-real-estate-escrow-contingency-settlement.compact",
+        "managedDir": "contract/managed/escrow-v2"
+      }
+    ]
   }
 }

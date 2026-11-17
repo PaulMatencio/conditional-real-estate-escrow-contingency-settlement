@@ -1,15 +1,16 @@
 /**
- * Contract-version compatibility (CLAUDE.md "Contract updates must not break the dApp").
+ * Contract-version compatibility (CLAUDE.md "Contract updates must not break the dApp" and "Backward compatibility
+ * after a contract upgrade").
  *
- * A contract update changes the circuits and the ledger layout, so an escrow deployed by an older build cannot be
- * used by this one. Every path that opens or reads an escrow goes through here first, and stops with ONE clear
- * `CONTRACT_VERSION` error before any midnight-js call, proof or ZK artefact fetch: never a bare 404 or a misread
- * ledger.
+ * Every path that opens or reads an escrow goes through here first: it resolves the escrow's contract version among
+ * the supported ones (versions.ts), so the caller decodes, calls and proves with that version. An escrow of no
+ * supported version stops with ONE clear `CONTRACT_VERSION` error before any midnight-js call, proof or ZK artefact
+ * fetch: never a bare 404 or a misread ledger.
  */
 import { AppError } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
-import contractInfo from '@contract/managed/escrow/compiler/contract-info.json';
 import { allCircuitIds } from './compiled';
+import { CURRENT_VERSION, circuitsOf, detectVersion, knownCircuits, type ContractVersion } from './versions';
 
 /** Marker carried by every compatibility error, so the UI can tell it from other failures. */
 export const OLDER_CONTRACT = 'older-contract' as const;
@@ -40,32 +41,43 @@ const short = (address: string) => `${address.replace(/^0x/, '').slice(0, 10)}â€
 export function olderContractError(address: string, circuits: string[], detail?: string, cause?: unknown): ContractVersionError {
   const what = circuits.length ? ` (circuits unknown to this build: ${circuits.join(', ')})` : detail ? ` (${detail})` : '';
   return new ContractVersionError(
-    `Escrow ${short(address)} was deployed with an older contract version${what}. This build cannot use it: archive it in the escrow switcher and use an escrow deployed with the current contract. Its vault record, keys and terms stay in the vault.`,
+    `Escrow ${short(address)} was deployed with a contract version this dApp no longer supports${what}. Archive it in the escrow switcher and use an escrow deployed with a supported contract. Its vault record, keys and terms stay in the vault.`,
     OLDER_CONTRACT,
     circuits,
     cause === undefined ? undefined : { cause }
   );
 }
 
-/** On-chain circuits this build does not know: the escrow was deployed by another build. */
-export function foreignCircuitsOf(onChain: Iterable<string>, build: readonly string[] = allCircuitIds()): string[] {
+/** On-chain circuits no supported version knows (default: any supported version's circuits count as known). */
+export function foreignCircuitsOf(onChain: Iterable<string>, build: readonly string[] = knownCircuits()): string[] {
   return [...onChain].filter((c) => !build.includes(c)).sort();
 }
 
-/** Throws the clear `CONTRACT_VERSION` error when the escrow carries circuits this build does not have. */
-export function assertCompatible(address: string, onChain: Iterable<string>, build: readonly string[] = allCircuitIds()): void {
-  const foreign = foreignCircuitsOf(onChain, build);
-  if (foreign.length > 0) throw olderContractError(address, foreign);
+/**
+ * The supported contract version of an escrow, from its on-chain circuits (and the version recorded in the vault at
+ * deploy, `hint`). Throws the clear `CONTRACT_VERSION` error when no supported version fits.
+ */
+export function resolveVersion(address: string, onChain: Iterable<string>, hint?: string | null): ContractVersion {
+  const ops = [...onChain];
+  const v = detectVersion(ops, hint);
+  if (v) return v;
+  const foreign = foreignCircuitsOf(ops);
+  throw olderContractError(address, foreign.length ? foreign : foreignCircuitsOf(ops, circuitsOf(CURRENT_VERSION)));
+}
+
+/** Throws when the escrow's circuits fit no supported version (kept for callers that only need the check). */
+export function assertCompatible(address: string, onChain: Iterable<string>): void {
+  resolveVersion(address, onChain);
 }
 
 /**
- * Checks the circuits, then decodes the ledger. A ledger that does not decode with this build's layout is reported as
- * an older contract version too, never shown half-read.
+ * Resolves the version, then decodes the ledger with it. A ledger that does not decode with that version's layout is
+ * reported as an unsupported version too, never shown half-read.
  */
-export function decodeCompatible(address: string, onChain: Iterable<string>, decode: () => EscrowView, build: readonly string[] = allCircuitIds()): EscrowView {
-  assertCompatible(address, onChain, build);
+export function decodeCompatible(address: string, onChain: Iterable<string>, decode: (v: ContractVersion) => EscrowView, hint?: string | null): EscrowView {
+  const v = resolveVersion(address, onChain, hint);
   try {
-    return decode();
+    return decode(v);
   } catch (e) {
     if (e instanceof AppError) throw e;
     throw olderContractError(address, [], 'its ledger layout differs from this build', e);
@@ -100,19 +112,23 @@ export function staleBundleError(circuits: string[], cause?: unknown): ContractV
   );
 }
 
-let fingerprint: Promise<string> | null = null;
+const fingerprints = new Map<string, Promise<string>>();
 
 /**
- * Identifies the contract build this bundle was compiled against: SHA-256 (first 16 hex) of the compiler's circuit
- * and ledger description. Stored with each escrow at deploy (`EscrowMeta.build`), so "older version" can be told
- * from "wrong network" without reading the chain.
+ * Identifies a contract build: SHA-256 (first 16 hex) of the compiler's circuit and ledger description. Stored with
+ * each escrow at deploy (`EscrowMeta.build`, with `EscrowMeta.contractVersion`), so a version can be told from
+ * "wrong network" without reading the chain.
  */
-export function buildFingerprint(): Promise<string> {
-  fingerprint ??= (async () => {
-    const info = contractInfo as unknown as { circuits?: unknown; ledger?: unknown };
-    const text = JSON.stringify({ circuits: info.circuits, ledger: info.ledger });
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
-  })();
-  return fingerprint;
+export function buildFingerprint(version: ContractVersion = CURRENT_VERSION): Promise<string> {
+  let f = fingerprints.get(version.id);
+  if (!f) {
+    f = (async () => {
+      const info = version.info as { circuits?: unknown; ledger?: unknown };
+      const text = JSON.stringify({ circuits: info.circuits, ledger: info.ledger });
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+    })();
+    fingerprints.set(version.id, f);
+  }
+  return f;
 }

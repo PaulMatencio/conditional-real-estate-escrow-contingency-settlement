@@ -135,6 +135,9 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
   const [vaultExists, setVaultExists] = useState<boolean | null>(null);
   const [vaultUnlocked, setUnlocked] = useState(false);
   const [record, setRecord] = useState<VaultRecord>({});
+  /** Latest record for callbacks that must not re-run when it changes (e.g. the recorded contract version). */
+  const recordRef = useRef<VaultRecord>(record);
+  recordRef.current = record;
   const [identity, setIdentity] = useState<VaultRecord['identity'] | null>(null);
   const [identityHistory, setIdentityHistory] = useState<NonNullable<VaultRecord['identity']>[]>([]);
   const [view, setView] = useState<EscrowView | null>(null);
@@ -313,9 +316,9 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     if (!contractAddress) throw new Error('Load an escrow address first.');
     if (!session) throw new Error('Connect a wallet (Lace or 1AM) for Wallet Mode, or switch to Simulator Mode.');
     providersRef.current ??= await createWalletProviders(session, prefs, activeSink);
-    gwRef.current ??= new PartyGateway(contractAddress, providersRef.current, session);
+    gwRef.current ??= new PartyGateway(contractAddress, providersRef.current, session, record.meta?.contractVersion ?? null);
     return gwRef.current;
-  }, [mode, sim, contractAddress, session, prefs, record.terms]);
+  }, [mode, sim, contractAddress, session, prefs, record.terms, record.meta?.contractVersion]);
 
   const readOnly = mode === 'wallet' && !!contractAddress && !session;
   const [publicRead, setPublicRead] = useState<{ slow: boolean; error: string | null }>({ slow: false, error: null });
@@ -330,7 +333,7 @@ export function EscrowProvider({ children }: { children: ReactNode }) {
     publicInFlight.current = true;
     const timer = setTimeout(() => setPublicRead((p) => ({ ...p, slow: true })), 15_000);
     try {
-      const v = await readPublicView(address);
+      const v = await readPublicView(address, recordRef.current?.meta?.contractVersion);
       setPublicRead({ slow: false, error: null });
       setIncompatible(null);
       return v;

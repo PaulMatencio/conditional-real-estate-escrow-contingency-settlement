@@ -8,6 +8,7 @@ import { shortHex } from '@/domain/hex';
 import { TEST_CASES, testMatrixMarkdown } from '@/domain/testCases';
 import { networkConfig } from '@/infrastructure/config/network';
 import { buildFingerprint, isContractVersionError } from '@/infrastructure/contract/compat';
+import { SUPPORTED_VERSIONS } from '@/infrastructure/contract/versions';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { sharedVault } from '@/infrastructure/storage/vaultInstance';
 import { useEscrow } from '../providers/EscrowProvider';
@@ -71,9 +72,10 @@ export function EscrowSwitcher() {
   const [form, setForm] = useState({ label: '', caseId: '', description: '', tags: '' });
   const [msg, setMsg] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
-  const [build, setBuild] = useState<string | null>(null);
+  // Fingerprints of every supported contract version: an escrow recorded with another one is unsupported.
+  const [builds, setBuilds] = useState<string[] | null>(null);
   useEffect(() => {
-    void buildFingerprint().then(setBuild, () => undefined);
+    void Promise.all(SUPPORTED_VERSIONS.map((v) => buildFingerprint(v))).then(setBuilds, () => undefined);
   }, []);
 
   useEffect(() => setRole(PAGE_ROLE[path] ?? 'all'), [path]);
@@ -90,13 +92,13 @@ export function EscrowSwitcher() {
     let alive = true;
     for (const e of directory) {
       if (e.meta?.archived && !showArchived) continue;
-      // Deployed by another build (fingerprint recorded at deploy): no need to read the chain to know it is not usable.
+      // Deployed by an unsupported build (fingerprint recorded at deploy): no need to read the chain to know it.
       const read: Promise<string> =
         e.meta?.network === 'simulator'
           ? Promise.resolve(sim?.contractAddress === e.address ? sim.view().status : ENDED)
-          : e.meta?.build && build && e.meta.build !== build
+          : e.meta?.build && builds && !builds.includes(e.meta.build)
             ? Promise.resolve(OLDER)
-            : readPublicView(e.address).then(
+            : readPublicView(e.address, e.meta?.contractVersion).then(
                 (v) => v.status as string,
                 (err) => (isContractVersionError(err) ? OLDER : UNREADABLE)
               );
@@ -110,7 +112,7 @@ export function EscrowSwitcher() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, showArchived, build]);
+  }, [open, showArchived, builds]);
 
   const runs = useMemo(() => runLabels(directory), [directory]);
   const current = directory.find((e) => e.address === contractAddress);

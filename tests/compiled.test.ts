@@ -5,6 +5,7 @@ import { CIRCUITS } from '../sdk/escrow/types';
 import { EscrowClient } from '../sdk/escrow/client';
 import { contractConfig } from '@/infrastructure/config/network';
 import { allCircuitIds } from '@/infrastructure/contract/compiled';
+import { versionById } from '@/infrastructure/contract/versions';
 import { pureCircuits } from '@/infrastructure/contract/module';
 import { roleIdHex } from '@/infrastructure/crypto/identity';
 
@@ -18,6 +19,17 @@ describe('compiled contract (full ZK build)', () => {
       expect(keys, c).toContain(`${c}.verifier`);
     }
     expect(existsSync(path.join(managed, 'zkir', 'configure.bzkir'))).toBe(true);
+  });
+
+  it('every earlier supported version has its full ZK build too (escrows deployed with it are proved with it)', () => {
+    for (const prev of contractConfig.previousVersions ?? []) {
+      const v = versionById(prev.version)!;
+      const keys = readdirSync(path.join(path.resolve(prev.managedDir), 'keys'));
+      for (const c of allCircuitIds(v)) {
+        expect(keys, `${prev.version} ${c}`).toContain(`${c}.prover`);
+        expect(keys, `${prev.version} ${c}`).toContain(`${c}.verifier`);
+      }
+    }
   });
 
   it('exposes the same circuits to the app, the SDK and the compiler', () => {

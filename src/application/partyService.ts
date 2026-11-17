@@ -5,7 +5,7 @@
  */
 import { AppError } from '@/domain/errors';
 import { decimalsOf, formatAmount } from '@/domain/amount';
-import { authorityLevel, isFullyConfigured, type EscrowView } from '@/domain/escrowView';
+import { authorityLevel, isFullyConfigured, rulesOf, type EscrowView } from '@/domain/escrowView';
 import { ACTIONS, needsSecondCoin, type PartyCircuit } from '@/domain/lifecycle';
 import type { Caller } from '@/domain/roles';
 import type { VaultRecord } from './partyPorts';
@@ -236,12 +236,13 @@ export function finalizeBlockers(view: EscrowView, record: VaultRecord, crypto: 
     }
   }
   const r = view.roles;
-  // Same rules as finalizeInitialization: the lender only exists in a loan deal (a cash deal has none).
-  const lender = view.financing.mode === 'Deposited' ? r.lender : null;
+  // Same rules as the escrow's finalizeInitialization. v3: the lender only exists in a loan deal (a cash deal has none);
+  // v2: a cash deal still has a lender (it attests financing), checked against the resolver and the seller.
+  const lender = view.financing.mode === 'Deposited' || rulesOf(view).cashFinancingAttested ? r.lender : null;
   const others = [r.buyer, r.seller, r.inspector, lender, r.titleAgent];
   if (r.resolver && others.includes(r.resolver)) out.push('The dispute resolver must be distinct from every other role');
   if ([r.inspector, lender, r.titleAgent].includes(r.seller)) out.push('Attestors must be independent from the seller');
-  if (lender && lender === r.buyer) out.push('The lender must be distinct from the buyer when it deposits the loan');
+  if (lender && view.financing.mode === 'Deposited' && lender === r.buyer) out.push('The lender must be distinct from the buyer when it deposits the loan');
   if (view.disputeDeadline <= view.closingDeadline) out.push('Dispute deadline must follow closing deadline');
   if (nowSec >= view.closingDeadline) out.push('Closing deadline is already in the past');
   return out;

@@ -26,6 +26,20 @@ export interface ContractConfig {
   deployCircuits: string[];
   /** Circuits registered per maintenance transaction after the deploy (default 4). */
   maintenanceBatchSize?: number;
+  /** Version id of the current contract (new escrows are deployed with it), e.g. "v3". */
+  version: string;
+  /**
+   * Earlier contract versions the dApp still supports (CLAUDE.md "Backward compatibility after a contract upgrade"):
+   * each keeps its frozen source and compiler output; the /zk route serves its keys under `/zk/<name>`.
+   */
+  previousVersions?: PreviousContractVersion[];
+}
+
+export interface PreviousContractVersion {
+  version: string;
+  name: string;
+  source: string;
+  managedDir: string;
 }
 
 export const networkConfig: NetworkConfig = raw as NetworkConfig;

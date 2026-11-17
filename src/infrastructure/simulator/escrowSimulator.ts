@@ -14,7 +14,8 @@ import { bytesToHex, hex32ToBytes } from '@/domain/hex';
 import type { PartyCircuit } from '@/domain/lifecycle';
 import { contractArgs, witnessInputs } from '../contract/callArgs';
 import { maybeFinancingArgs } from '../contract/financingArgs';
-import { Contract } from '../contract/module';
+import type { Contract } from '../contract/module';
+import { CURRENT_VERSION, type ContractVersion } from '../contract/versions';
 import { toEscrowView, type LedgerInput } from '../contract/view';
 import { createWitnesses, type PrivateInputs } from '../contract/witnesses';
 
@@ -52,6 +53,8 @@ export class EscrowSimulator {
   private state: unknown;
   private inputs: PrivateInputs = { secretKey: () => ZERO32 };
   private readonly contract: Contract<undefined>;
+  /** Contract version simulated (default: the current one; tests run earlier supported versions too). */
+  readonly version: ContractVersion;
   private counter = 0;
   /** Simulated block time, unix seconds. */
   time: number;
@@ -62,12 +65,13 @@ export class EscrowSimulator {
    * compact-runtime 0.21 (compiler 0.36) runs the constructor and every circuit asynchronously, so the simulator is
    * built with the async factory `EscrowSimulator.create(...)`.
    */
-  private constructor(opts: { time?: number; contractAddress?: string }) {
+  private constructor(opts: { time?: number; contractAddress?: string; version?: ContractVersion }) {
+    this.version = opts.version ?? CURRENT_VERSION;
     this.contractAddress = opts.contractAddress ?? rt.sampleContractAddress();
     this.time = opts.time ?? Math.floor(Date.now() / 1000);
     // Witnesses read the per-call inputs, so one Contract instance serves every role.
     const self = this;
-    this.contract = new Contract<undefined>(
+    this.contract = new this.version.Contract<undefined>(
       createWitnesses({
         secretKey: () => self.inputs.secretKey(),
         privateTerms: () => (self.inputs.privateTerms ?? missing('the private terms'))(),
@@ -80,7 +84,7 @@ export class EscrowSimulator {
     );
   }
 
-  static async create(params: DeployParams, opts: { time?: number; contractAddress?: string } = {}): Promise<EscrowSimulator> {
+  static async create(params: DeployParams, opts: { time?: number; contractAddress?: string; version?: ContractVersion } = {}): Promise<EscrowSimulator> {
     const sim = new EscrowSimulator(opts);
     const r = await (sim.contract.initialState as unknown as (...a: unknown[]) => Promise<{ currentContractState: unknown }>)(
       rt.createConstructorContext(undefined, CPK),
@@ -105,7 +109,7 @@ export class EscrowSimulator {
   }
 
   view(): EscrowView {
-    return toEscrowView(this.contractAddress, this.state as LedgerInput);
+    return toEscrowView(this.contractAddress, this.state as LedgerInput, null, this.version.id);
   }
 
   setTime(sec: number) {

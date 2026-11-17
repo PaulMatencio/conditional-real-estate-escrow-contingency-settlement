@@ -14,6 +14,7 @@ import { ConfirmDialog, downloadJson } from './helpers';
 /** Circuits with their own panel (document hashing) are not repeated here. */
 const DEDICATED: PartyCircuit[] = [
   'submitInspection',
+  'submitFinancing', // contract v2: lender page (Attestation card)
   'submitTitle',
   'revokeKycAttestation',
   'revokeKycIssuer',
