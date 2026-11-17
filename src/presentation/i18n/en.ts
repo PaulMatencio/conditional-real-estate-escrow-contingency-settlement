@@ -925,6 +925,23 @@ export const en = {
   'init.useBuyerId': 'Use the buyer’s role id (cash deal)',
   'circuit.submitFinancing': 'Submit financing',
   'status.contractVersion': 'Contract version',
+  'kycShare.title': 'Send to the notary',
+  'kycShare.hint': 'Only if the notary asks for it: the attestation carries your KYC level and AML score, so it is sealed to the notary’s envelope key (shown on the notary’s custodian card) or protected with a passphrase you give separately.',
+  'kycShare.notaryKey': 'Notary’s envelope public key',
+  'kycShare.notaryKeyPlaceholder': 'from the notary’s custodian card',
+  'kycShare.badKey': 'Not an envelope public key (44 characters ending with “=”).',
+  'kycShare.keyTaken': 'This key is already saved for another recipient of this escrow.',
+  'kycShare.exportSealed': 'Export sealed for the notary',
+  'kycShare.or': 'or',
+  'kycShare.exportPass': 'Export with passphrase',
+  'kycShare.exported': 'Exported {file}, sealed to the notary. Only the notary’s vault can open it.',
+  'kycShare.exportedPass': 'Exported {file}. Give the notary the passphrase separately.',
+  'kycShare.passIfAny': 'Passphrase (if the file has one)',
+  'kycShare.open.not-for-me': 'Sealed to another envelope key: ask the party to export it to the key on your custodian card.',
+  'kycShare.open.unlock': 'Sealed to an envelope key: unlock your vault on this page first.',
+  'kycShare.open.need-pass': 'This file is protected with a passphrase: type it next to the button, then load the file again.',
+  'kycShare.open.wrong-pass': 'Wrong passphrase for this file.',
+  'kycShare.open.short-pass': 'The passphrase must have at least 8 characters.'
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -6,12 +6,13 @@ import { buildCertificate, lockedFundsStatement } from '@/application/notaryServ
 import { openingLabel, verifyOpening } from '@/application/termsService';
 import { friendlyMessage } from '@/domain/errors';
 import type { EscrowView } from '@/domain/escrowView';
-import { fmtRate, isAttestationBundle, type Opening } from '@/domain/terms';
+import { fmtRate, type AttestationBundle, type Opening } from '@/domain/terms';
 import { decimalsOf, formatAmount } from '@/domain/amount';
 import { shortHex } from '@/domain/hex';
 import { networkConfig } from '@/infrastructure/config/network';
 import { documentCommitment } from '@/infrastructure/crypto/escrowCrypto';
 import { termsCrypto } from '@/infrastructure/crypto/termsCrypto';
+import { KycFileError, openKycFile } from '@/infrastructure/crypto/kycShare';
 import { readPublicView } from '@/infrastructure/gateway/publicReader';
 import { useEscrow } from '../../providers/EscrowProvider';
 import { useT, type MessageKey } from '../../i18n';
@@ -31,13 +32,15 @@ type Verdict = { label: string; ok: boolean; detail: string };
 export function NotaryPortal({ address }: { address?: string }) {
   const { t } = useT();
   const router = useRouter();
-  const { sim } = useEscrow();
+  const { sim, identities } = useEscrow();
   const [input, setInput] = useState(address ?? '');
   const [view, setView] = useState<EscrowView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [openings, setOpenings] = useState<Opening[]>([]);
   const [verdicts, setVerdicts] = useState<Verdict[]>([]);
   const [docSalt, setDocSalt] = useState('');
+  /** Passphrase of a passphrase-protected KYC attestation file (one sealed to this vault's envelope key needs none). */
+  const [caspPass, setCaspPass] = useState('');
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -85,8 +88,13 @@ export function NotaryPortal({ address }: { address?: string }) {
 
   const onCasp = async (f: File) => {
     if (!view) return;
-    const b = await readJsonFile(f);
-    if (!isAttestationBundle(b)) return add({ label: f.name, ok: false, detail: t('kyc.badFile') });
+    let b: AttestationBundle;
+    try {
+      b = await openKycFile(await readJsonFile(f), identities, caspPass || undefined);
+    } catch (e) {
+      const problem = e instanceof KycFileError ? e.problem : 'bad-file';
+      return add({ label: `CASP ${f.name}`, ok: false, detail: problem === 'bad-file' ? t('kyc.badFile') : t(`kycShare.open.${problem}` as MessageKey) });
+    }
     const issuer = view.kycIssuers.find((i) => i.issuerId === b.issuerId.toLowerCase());
     const sig = issuer ? termsCrypto.verifyBundleSignature(b, issuer.publicKey) : false;
     const ref = termsCrypto.kycReference(b);
@@ -157,6 +165,14 @@ export function NotaryPortal({ address }: { address?: string }) {
               <div className="flex flex-wrap gap-2">
                 <FilePick label={t('notary.loadOpening')} accept="application/json,.json" onFile={(f) => void onOpening(f)} />
                 <FilePick label={t('notary.loadCasp')} accept="application/json,.json" onFile={(f) => void onCasp(f)} />
+                <input
+                  type="password"
+                  className="input !w-56"
+                  placeholder={t('kycShare.passIfAny')}
+                  aria-label={t('kycShare.passIfAny')}
+                  value={caspPass}
+                  onChange={(e) => setCaspPass(e.target.value)}
+                />
               </div>
               <Field label={t('notary.docSalt')} tip={t('tip.notary.docSalt')} htmlFor="doc-salt">
                 <div className="flex gap-2">

@@ -713,7 +713,7 @@
           <p class="small muted" style="margin-bottom: 8px;">Read-only, no wallet, no fees. Refreshes every 20 seconds.</p>
           <ul>
             <li><strong>Custodian role:</strong> Holds no role key (cannot act). Imports <code>terms-for-custodian.json</code> to back up terms and restore to parties who lost their vault.</li>
-            <li><strong>Openings &amp; reports:</strong> <em>Load opening</em> (one private term each), <em>Verify the amounts now</em> as custodian, CASP KYC records, and attestors' report bundles, all checked against on-chain commitments.</li>
+            <li><strong>Openings &amp; reports:</strong> <em>Load opening</em> (one private term each), <em>Verify the amounts now</em> as custodian, parties' KYC attestations (sealed to you or with a passphrase; optional), and attestors' report bundles, all checked against on-chain commitments.</li>
             <li><strong>Checklist before the deed:</strong> status, locked funds, price, contingencies, KYC, cooling-off, then the certificate in the same visit.</li>
             <li><strong>Certificate:</strong> Exports <em>EU Notarial Escrow Certificate (V2)</em> as JSON proof bundle or Print/PDF.</li>
           </ul>
@@ -725,7 +725,7 @@
             <li><strong>Inspect KYC (no wallet needed):</strong> Verifies CASP connection, whitelisted issuer keys, attestation status, and Travel Rule records.</li>
             <li><strong>Revocations:</strong> Enter <code>kycRef</code> + reason → <strong>Request signed revocation</strong> (or import file) → <strong>Broadcast on-chain</strong> (anyone can send; contract checks CASP signature).</li>
             <li><strong>Effect:</strong> Revoked seller KYC or issuer key blocks <strong>Release to seller</strong> until renewed.</li>
-            <li><strong>Buyer &amp; seller: nothing to do here.</strong> After requesting an attestation they continue on their own page: the buyer's KYC goes on-chain with the <em>Deposit</em>; the seller sends <em>Submit seller KYC</em>. A notary checks an attestation file with <em>Load CASP record</em>.</li>
+            <li><strong>Buyer &amp; seller: nothing to do here.</strong> After requesting an attestation they continue on their own page: the buyer's KYC goes on-chain with the <em>Deposit</em>; the seller sends <em>Submit seller KYC</em>. If the notary asks, they export it sealed to the notary (<em>Send to the notary</em> on their KYC card); the notary checks it with <em>Load CASP attestation</em>.</li>
           </ul>
         </div>
       </div>

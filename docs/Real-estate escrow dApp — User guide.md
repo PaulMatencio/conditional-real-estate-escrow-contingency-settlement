@@ -284,6 +284,8 @@ Your vault now holds keys you cannot get back from anyone else. Open **Vault bac
 
 *Buyer KYC (originator)* card → **Request attestation** (in tests, choose a CASP simulator persona; `buyer-clean` passes the default policy). The signed attestation is stored in your vault and pre-checked at once: issuer whitelisted, bound to your role id and payout key, KYC level and AML score within the policy, not expired. Nothing goes on-chain yet. A real CASP may send a file instead: use **Import attestation file**. You have nothing to do on the compliance console (see *Buyer and seller: nothing to do on this console*).
 
+**If the notary asks for your attestation:** *Send to the notary* section of the same card. Paste the notary's **envelope public key** (from the notary's custodian card; it is remembered for this escrow) and click **Export sealed for the notary**: only the notary's vault can open `kyc-buyer-for-notary.json`. Or type a passphrase (8+ characters), **Export with passphrase**, and give the passphrase separately. The attestation carries your KYC level and AML score, so it is never exported as a plain file. Do this only on request: the notary does not need it to verify the escrow.
+
 ### Making the deposit
 
 The deposit is one button, **Deposit into escrow** in the *Actions* card. It stays disabled, with the reason shown next to it, until every point below is met (buyer page, Wallet Mode):
@@ -356,7 +358,7 @@ Same steps as the buyer: **Wallet Mode** → **Load** the contract → import yo
 
 ### Your KYC: attestation, then on-chain
 
-1. *Seller KYC (beneficiary)* card → **Request attestation** (test persona `seller-clean`), or **Import attestation file** from a real CASP. The pre-check must pass.
+1. *Seller KYC (beneficiary)* card → **Request attestation** (test persona `seller-clean`), or **Import attestation file** from a real CASP. The pre-check must pass. If the notary asks for it, the card's *Send to the notary* section exports it sealed (see the buyer's *Before depositing*).
 2. *Actions* → **Submit seller KYC**. It can be sent from **Created** onwards and must be on-chain and valid before the release. The *Commitments and compliance anchors* card then shows *KYC seller: verified* with its expiry.
 3. If the card warns that the seller KYC **expires soon**, request a new attestation and submit it again: an expired attestation blocks the release.
 4. You have nothing to do on the compliance console: it is the compliance officer's tool (see *Buyer and seller: nothing to do on this console*).
@@ -512,7 +514,7 @@ How loaded openings behave:
 | You receive | From | Load with | Proves |
 | --- | --- | --- | --- |
 | An opening file (`opening-price.json`, …) | buyer, seller or your custodian copy | **Load opening** | that one term matches its on-chain commitment (see *Openings* above) |
-| A KYC attestation file | buyer or seller | **Load CASP record** | it is signed by a whitelisted CASP and anchored as the buyer's or seller's KYC |
+| A KYC attestation file (`kyc-<party>-for-notary.json` sealed to your key, `kyc-<party>.json` with a passphrase, or a plain file from a CASP) | buyer or seller | **Load CASP attestation** (type the passphrase in the field next to it first, if the file has one; a file sealed to your key needs your vault unlocked) | it is signed by a whitelisted CASP and anchored as the buyer's or seller's KYC. Optional: the on-chain KYC anchors already prove this; the result is shown, not added to the certificate |
 | A report bundle | an attestor | *Attestor reports* card → passphrase (if any), **Open report bundle** | the report is the one committed on-chain for that contingency (and its outcome) |
 | A report + its document salt (plain) | an attestor | enter the **Document salt**, then **Load document** | the same, without a bundle |
 
@@ -526,7 +528,7 @@ How loaded openings behave:
 2. **Proof of locked funds**: the price is locked and nothing has been paid out yet.
 3. **Verify the price**: as custodian, **Verify the amounts now**; otherwise **Load opening** with the price opening from the buyer or seller. Add the deposit or loan openings in a loan deal, and the payout keys only if the deed must state who is paid.
 4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a v3 cash deal shows Financing *passed* (cleared by the buyer's deposit), with no attestor report. In a v2 cash deal, Financing is either *waived* by the buyer or *passed* by the lender's attestation (check the lender's report bundle like the others).
-5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP record** if a party sends you the file).
+5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP attestation** if a party sends you the file; optional).
 6. **Deadlines and timing**: the cooling-off period, if any, is over (no release before). Note the dispute deadline: once it passes, an escrow still waiting for the seller's valid KYC can be expired and the buyer refunded.
 7. **Issue the certificate** in the same visit (**Export JSON bundle** or **Print / save as PDF**) and seal or sign it.
 
@@ -552,7 +554,7 @@ The compliance console is the compliance officer's tool. A buyer or seller who h
 
 **Where the console comes in.** Once a party's KYC is on-chain, the compliance officer can pick its reference (`buyerKycRef` / `sellerKycRef`) and look up its status at the CASP. If the CASP revokes it, the officer broadcasts the revocation; for the seller, that blocks **Release to seller** until a fresh attestation is submitted. Neither party has anything to do for this, except the seller re-submitting after a revocation.
 
-If a notary asks for proof of KYC, send them your attestation file: they check it on the Notary portal with **Load CASP record**, not on the compliance console.
+If a notary asks for proof of KYC, export your attestation from the *Send to the notary* section of your KYC card (sealed to the notary's envelope key, or with a passphrase): they check it on the Notary portal with **Load CASP attestation**, not on the compliance console.
 
 ### Set up (once)
 
