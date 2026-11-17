@@ -10,6 +10,7 @@ import { compactText, deepMessage } from '@/domain/errors';
 import { indexerHttpUrl, networkConfig } from '../config/network';
 import { CURRENT_VERSION, circuitsOf, zkPathOf, type ContractVersion } from '../contract/versions';
 import { GuardedZkConfigProvider } from '../contract/guardedZkConfig';
+import { isUserRejection, submitWithRetry, walletErrorText } from './submitRetry';
 import { withFallback } from '../indexer/fallbackIndexer';
 import { sharedIndexerBreaker, type IndexerBreaker } from '../indexer/indexerBreaker';
 import { persistentPrivateStateProvider } from '../storage/privateStateProvider';
@@ -154,14 +155,20 @@ export async function createWalletProviders(session: WalletSession, store: KeyVa
     submitTransaction: async (tx: string) => {
       sink?.begin('submit');
       try {
-        await stage('wallet.submitTransaction', () => api.submitTransaction(tx));
+        // A first submit sometimes fails while the wallet is still settling (it then reports an opaque
+        // "object: [object Object]"); the same proved transaction is resubmitted once, so no new proof is needed.
+        await submitWithRetry(() => api.submitTransaction(tx), {
+          onRetry: (_n, reason) => console.warn(`[wallet] submitTransaction failed (${reason}); retrying the same transaction once`)
+        });
       } catch (e) {
         // A node "temporarily banned" / "already imported" rejection usually means an earlier attempt is
         // still pending or was dropped: show what the wallet itself last saw.
+        console.error('[wallet] wallet.submitTransaction failed', e);
         const hist = await api.getTxHistory(0, 5).catch(() => null);
         const recent = hist ? hist.map((h) => `${String(h.txHash).slice(0, 10)}…=${h.txStatus.status}`).join(', ') : 'unavailable';
         console.error('[wallet] submit failed; recent wallet history:', hist);
-        throw new Error(`${e instanceof Error ? e.message : String(e)} [wallet recent: ${recent}]`, { cause: e });
+        const hint = isUserRejection(e) ? '' : ' The wallet refused it twice: check the wallet is synced and has DUST, then run the action again (a new attempt usually goes through).';
+        throw new Error(`${compactText(walletErrorText(e))} (during wallet.submitTransaction) [wallet recent: ${recent}]${hint}`, { cause: e });
       }
       sink?.done('submit');
       sink?.begin('confirm');
