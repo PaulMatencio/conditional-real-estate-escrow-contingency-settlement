@@ -624,7 +624,7 @@
           <ul>
             <li><strong>Send 3 public items to Admin:</strong> Role id (from <code>/role-id</code>), Shielded payout key (from wallet), Envelope public key (from vault). <em>Never share your secret role key.</em></li>
             <li><strong>Import &amp; Accept:</strong> Load contract → import role key (<code>buyer</code>) → import <code>terms-for-buyer.json</code> → verify all commitments show <strong>match</strong> → <strong>Accept configuration</strong>.</li>
-            <li><strong>Get KYC:</strong> Request CASP attestation (e.g. <code>buyer-clean</code>) or import file; pre-checked locally, nothing on-chain yet.</li>
+            <li><strong>Get KYC:</strong> Request CASP attestation (e.g. <code>buyer-clean</code>) or import file; pre-checked locally, nothing on-chain yet. It goes on-chain with the deposit; nothing to do on the compliance console.</li>
           </ul>
         </div>
         <div class="card green">
@@ -655,7 +655,7 @@
           <ul>
             <li>Send Admin your <strong>Role id</strong>, <strong>Shielded payout key</strong> (must differ from buyer's), and <strong>Envelope public key</strong>.</li>
             <li>Import role key &amp; <code>terms-for-seller.json</code> (verify <em>sellerPayout</em> &amp; amount) → <strong>Accept configuration</strong>.</li>
-            <li><strong>Seller KYC:</strong> Request/import attestation → <strong>Submit seller KYC</strong> on-chain (validates from <code>Created</code> onward; must not be expired or revoked at release).</li>
+            <li><strong>Seller KYC:</strong> Request/import attestation → <strong>Submit seller KYC</strong> on-chain (nothing to do on the compliance console) (validates from <code>Created</code> onward; must not be expired or revoked at release).</li>
           </ul>
         </div>
         <div class="card">
@@ -725,6 +725,7 @@
             <li><strong>Inspect KYC (no wallet needed):</strong> Verifies CASP connection, whitelisted issuer keys, attestation status, and Travel Rule records.</li>
             <li><strong>Revocations:</strong> Enter <code>kycRef</code> + reason → <strong>Request signed revocation</strong> (or import file) → <strong>Broadcast on-chain</strong> (anyone can send; contract checks CASP signature).</li>
             <li><strong>Effect:</strong> Revoked seller KYC or issuer key blocks <strong>Release to seller</strong> until renewed.</li>
+            <li><strong>Buyer &amp; seller: nothing to do here.</strong> After requesting an attestation they continue on their own page: the buyer's KYC goes on-chain with the <em>Deposit</em>; the seller sends <em>Submit seller KYC</em>. A notary checks an attestation file with <em>Load CASP record</em>.</li>
           </ul>
         </div>
       </div>
