@@ -1,6 +1,6 @@
 # Real-estate escrow dApp — User guide
 
-Nov 11, 2026 · @Paul Matencio
+Nov 17, 2026 · @Paul Matencio
 
 ## Before you start
 
@@ -11,7 +11,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 | Role | Page | Main job |
 | --- | --- | --- |
 | Admin | `/admin` | Deploys and initializes the escrow, prepares and distributes the private terms, whitelists the KYC provider (CASP), finalizes |
-| Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price, waives or disputes contingencies |
+| Buyer | `/buyer` | Accepts the terms, proves KYC, deposits the price (in a v3 cash deal this also clears Financing), waives inspection or title, disputes contingencies |
 | Seller | `/seller` | Accepts the terms, proves KYC, receives the payout |
 | Inspector | `/inspector` | Attests the inspection result |
 | Lender | `/lender` | Loan deal: funds or refuses the loan. v2 cash deal: attests the financing result. v3 cash deal: no lender |
@@ -32,6 +32,7 @@ The dApp runs one real-estate escrow on the Midnight preview network: the buyer 
 ### Wallet Mode and Simulator Mode
 
 - **Wallet Mode** = the real escrow on the preview network: real transactions, fees in DUST, proofs from the local proof server.
+  - **No wallet connected (read-only):** you can still **Load** an escrow on any role page or the compliance console. It is read from the Midnight indexer, so you see its status, deadlines, contingencies and whether your role key matches (**This key holds: …**). Action buttons stay disabled until you connect a wallet: every action is a transaction that pays a small DUST fee, and any wallet can pay it. Your role is proven by your role key, not by the wallet.
 - **Simulator Mode** = the compiled contract running inside the browser, with no wallet, no fees and a movable clock. Use it to rehearse a whole escrow in minutes: **Create simulated escrow** on any party page sets up every role in one vault.
 
 Every action button checks its preconditions first. A disabled button shows why underneath it (wrong phase, deadline passed, missing key or terms).
@@ -85,7 +86,7 @@ The buyer or the seller can walk away before any money is locked, even after the
 
 ## Contract v2: loan financing
 
-A v2 escrow can be a **cash deal** (the lender only attests the financing, as in v1) or a **loan deal**: the buyer deposits its own share, and the lender deposits the loan into the same escrow. The release pays the seller both coins, so the seller receives the full price. The contract checks that price = buyer deposit + loan amount, and only accepts coins equal to their committed amounts. v1 terms packages are refused by the v2 dApp.
+Loan financing came with contract v2 and works the same in v3. An escrow is a **cash deal** (v3: the buyer's deposit clears financing; v2: the lender attests it or the buyer waives it, see *Contract versions*) or a **loan deal**: the buyer deposits its own share, and the lender deposits the loan into the same escrow. The release pays the seller both coins, so the seller receives the full price. The contract checks that price = buyer deposit + loan amount, and only accepts coins equal to their committed amounts. v1 terms packages are refused by the v2 dApp.
 
 ### Admin: financing and terms
 
@@ -134,11 +135,15 @@ Each amount has its own commitment, so the notary verifies them separately: **to
 
 ## Contract versions: v3 and v2
 
-The dApp deploys **contract v3** for new escrows, and escrows deployed with **contract v2** keep working in the same dApp.
+Each escrow keeps the contract version it was deployed with, and the dApp keeps working with every supported version: no redeploy is needed after a contract update. New escrows always use the current version, which is recorded with the escrow in the deploying vault. The dApp detects every escrow's version from its circuits on-chain and uses that version's rules, keys and proofs. The status card and the admin console show it as *Contract version v3* or *v2*.
 
-- **v3 cash deal:** the deposit clears the financing contingency, so no lender attestation is needed for a cash deal.
-- **v2 escrows** keep the rules they were deployed with, including **Submit financing** for the lender. The page shows the escrow's version and offers only the actions that version supports.
-- **Unsupported older versions:** the escrow shows its address and an *older contract version* badge, with only archive, vault backup export and the explorer link. Other escrows and your vault data are not affected.
+| Version | What differs for you |
+| --- | --- |
+| **v3** (current) | Cash deal: the buyer's deposit clears Financing. There is no lender, and nobody attests, waives or voids financing |
+| **v2** (earlier, still supported) | Cash deal: a lender role id is still configured (the admin may use the buyer's). The lender attests Financing on the lender page (**Submit financing**), or the buyer waives it with the *Financing (cash deal)* card. The dispute resolver may void the lender's result |
+
+- Loan deals, the cooling-off period and everything else work the same in both.
+- **Unsupported versions:** an escrow deployed with a version this dApp no longer supports shows the banner *This escrow uses an unsupported contract version* and an *unsupported contract* badge in the switcher, with **Archive** and the explorer link. Other escrows and your vault data are not affected.
 - **Several escrows:** the switcher in the header lists the escrows in your vault. Their names, test cases and token decimals are kept only in your vault and the encrypted packages, never on-chain.
 
 ## Cooling-off period
@@ -195,7 +200,7 @@ The admin sets the escrow up and then steps away: once **Finalize initialization
 **Deploy** tab:
 
 1. Fill in the buyer and seller role ids, the **escrowed token color** (the on-chain id of the shielded token, e.g. a EUR stablecoin) and its **ticker**. The admin role id is filled from your key. Set Token decimals too (6 for sEUR and EURe): amounts are then typed and shown in whole tokens everywhere. Give the deployment a label, or pick a test case, in Name this deployment.
-2. Click **Deploy (staged)**. The progress panel shows build → prove → balance → submit → confirm. The deploy carries the 5 initialization circuits; the new address is loaded automatically.
+2. Click **Deploy (staged)**. The progress panel shows build → prove → balance → submit → confirm. The deploy carries the 6 initialization circuits; the new address is loaded automatically. The escrow uses the current contract version (v3), recorded with it in your vault.
 3. The contract's **maintenance authority key** is created by the deploy and stored only in your encrypted vault.
 
 ### 3. Register the other circuits, then renounce the authority
@@ -215,7 +220,7 @@ Type each deadline in Unix seconds. Under the **Closing deadline** and **Dispute
 
 **Terms & KYC** tab → *Private terms package*:
 
-1. Enter the **amount** in the token's base units (the app does not apply decimals) and the buyer's and seller's payout keys. Click **Generate package**.
+1. Enter the **amount** in whole tokens (converted with the decimals chosen at deploy, see *Amounts and units*) and the buyer's and seller's payout keys. Click **Generate package**.
 2. Click **Commit to the contract (configure)**. Only salted commitments go on-chain; the price and payout keys stay in the package.
 3. Already generated the package on another address or browser? Use **Restore the package from a backup** with your terms backup file and its passphrase. Never generate a second package once its commitments are on-chain.
 
@@ -227,6 +232,15 @@ Type each deadline in Unix seconds. Under the **Closing deadline** and **Dispute
 2. Type a backup passphrase (12+ characters) and click **Download encrypted backup**. Keep the file and the passphrase apart.
 3. Finalize requires at least one confirmed backup: the custodian copy or the passphrase backup counts.
 
+### 6b. Send the attestors their assignment
+
+*Assignment notices* card (Terms & KYC tab), one row per attestor whose role id is set (inspector, title agent, resolver):
+
+- **Assignment link**: copy it and send it. It opens their page with this escrow preselected and carries only the address and the role, so it can travel by email or chat.
+- **Seal notice**: paste their **envelope key** (shown on their page, *My assignment* card) and send them `assignment-for-<role>.json`. Besides the address and role it carries the escrow's name and the closing and dispute deadlines, which is why it is sealed to them.
+
+Either way they add the escrow to their vault once; the app then checks that their role id is the one set on-chain.
+
 ### 7. Whitelist the CASP
 
 *Trusted CASP whitelist*: the app reads the CASP's published issuer keys. Click **Whitelist** on the active key. Without at least one trusted CASP the configuration is incomplete and nobody can accept.
@@ -236,7 +250,7 @@ Type each deadline in Unix seconds. Under the **Closing deadline** and **Dispute
 1. Tell the buyer and seller they can accept. The *Finalize initialization* card shows **Acceptance on-chain: buyer ✓ / seller ✓** and refreshes every 15 seconds (or click **Refresh**).
 2. When the card says ready, click **Finalize initialization**. The status becomes **Created**: the buyer can deposit.
 
-Finalize is refused while: a party has not accepted the current version, no terms backup is confirmed, the resolver is also another role, an attestor is the seller, the dispute deadline is not after the closing deadline, or the closing deadline has passed.
+Finalize is refused while: a party has not accepted the current version, no terms backup is confirmed, the resolver is also another role, an attestor is the seller, the lender is the seller or the resolver (in a loan deal, or a v2 cash deal), the lender is the buyer in a loan deal, the dispute deadline is not after the closing deadline, or the closing deadline has passed.
 
 ### 9. After finalization
 
@@ -291,18 +305,29 @@ Then **Deposit into escrow** → confirm. The wallet signs, the proof runs local
 1. Make sure the wallet's **shielded balance** of the escrow token covers the amount, and that you have DUST for the fee. The *Funding & vault* card shows the amount, your balance and any shortfall.
 2. *Actions* → **Deposit into escrow**, confirm, approve in the wallet. Deadline: **before the closing deadline**.
 3. The status becomes **Funded**, and *KYC buyer* shows verified. The deposit is one shielded coin of exactly the agreed amount; any other amount is rejected.
+4. **v3 cash deal:** the same deposit also clears the **Financing** contingency (the *Contingencies* card shows it passed). In a v2 cash deal it does not (see below).
 
 ### During the contingency review
 
-1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector, lender and title agent can attest.
-2. Follow the *Contingencies* card. For each one you may:
-   - **Waive contingency** (choose which): you accept the risk without that attestation. Final.
+1. **Open contingency review** (buyer or seller) once funded: the status becomes **ContingenciesPending** and the inspector and title agent can attest (in a loan deal the lender deposits or refuses the loan; in a v2 cash deal the lender attests financing).
+2. Follow the *Contingencies* card. When an attestor sends you its report bundle, check it in the *Attestor reports* card (below). For each contingency you may:
+   - **Waive contingency** (Inspection or Title; Financing only in a v2 cash deal): you accept the risk without that attestation. Final. In a loan deal Financing cannot be waived: top up instead.
    - Wait for the attestor's result.
 3. When every contingency is passed or waived, the status becomes **ReadyToClose**.
 4. If a result is **failed**: **Cancel and refund**. The status becomes **Refunded**.
 5. If you disagree with a result: **Open dispute** before the **dispute deadline**. The escrow freezes until the resolver decides.
 
 **Cash deal.** In a v3 cash deal your deposit already clears the Financing contingency, so there is nothing to waive. In a v2 cash deal, the *Financing (cash deal)* card on your page waives it in one click once the review is open. That waiver is final and does not affect inspection or title; the lender can attest it instead.
+
+#### Check an attestor's report
+
+*Attestor reports* card (buyer, seller and resolver pages, or the Notary portal, which needs no wallet): enter the passphrase the attestor gave you (not needed if the bundle was sealed to your envelope key), then **Open report bundle**. The browser decrypts the bundle, recomputes the report's commitment from the file and its salt and compares it with the escrow on-chain:
+
+- *"… is the report anchored on-chain for the inspection"* with its outcome: it is the report the inspector attested.
+- *Does not match*: the file was changed, or it is not the attested report. Do not rely on it.
+- *Voided*: it matches a result the resolver voided during a dispute.
+
+**Save the report** writes the original file to disk. Nothing is uploaded.
 
 ### Closing
 
@@ -366,15 +391,29 @@ The lender attests the financing result only in a **v2 cash deal**. In a **v3 ca
 
 Open *My role id* → **Generate new key**, keep the secret key safe and send only the **role id** to the admin, who sets it on the **Initialize** tab. You must be independent: the app refuses to finalize if an attestor's role id is the seller's.
 
+### Receive your assignment (inspector, title agent, v2 lender)
+
+On your page, unlock the vault and send the admin your **envelope key** (*My assignment* card). The admin sends you an **assignment link** or an `assignment-for-<role>.json` notice:
+
+- **Link**: open it, then **Add and open**.
+- **Notice file**: **Import assignment notice**.
+
+The app checks your role id is set on-chain for that escrow, adds it to your vault under its name and opens it; the card then shows the closing and dispute deadlines. Import your role key once (*My role key*) and the escrow stays in your escrow switcher.
+
 ### When the status is ContingenciesPending
 
-1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode**, connect your wallet (you pay a small DUST fee), and **Load** the contract.
+1. Open your page on your own address (e.g. `http://inspector.localhost:3000/inspector`), unlock the vault, choose **Wallet Mode** and **Load** the contract (or use your assignment notice). You can check everything without a wallet; connect one before **Submit on-chain**, which pays a small DUST fee.
 2. *My role key*: import your secret key. The card must show **This key holds: inspector** (or lender, titleAgent).
 3. *Attestation* card:
    1. **Choose document**: your report (PDF or any file). The browser hashes it locally with a fresh random salt; the file is never uploaded.
    2. Pick the **Outcome**: *Favourable (pass / approve / clear)* or *Unfavourable*.
    3. **Submit on-chain** and confirm. The result is anchored with the **Report commitment**.
-4. Click **Export encrypted bundle** and send it with the report to the buyer, seller and notary: the salt it carries lets them check that the report matches the on-chain commitment (Notary portal → *Local verifier*).
+4. Export the **report bundle** (the report, its salt and its commitment). The export card lists **Buyer**, **Seller**, **Notary** and **Dispute resolver**; add anyone else with **Add recipient**.
+   - Paste each recipient's **envelope key** once: buyer, seller and resolver find it on their *Private terms vault* card, the notary on the custodian card. Keys are remembered for this escrow (they are public keys), and a key already saved for someone else is refused, so the seller's key cannot end up in the buyer's file.
+   - **Export sealed file** per row, or **Export for all**. Each file is named after its recipient (`title-bundle-for-seller.json`) and says inside who it is for; each row then shows the date it was sent.
+   - No envelope key? **Export with passphrase** makes one file; give the passphrase separately.
+
+   Recipients check the bundle in their *Attestor reports* card (or the Notary portal). Later, *Submitted reports* lists every report you committed with its salt: **Re-select the report to export again** (the file must hash to the committed report); the remembered keys and sent dates are there again.
 
 ### Rules
 
@@ -390,7 +429,7 @@ The resolver acts only when buyer or seller opens a dispute, and must decide **b
 ### Before the deploy
 
 1. *My role id* → **Generate new key**; send only the role id to the admin.
-2. On `/resolver` (your own address), unlock the vault and send the admin your **Envelope public key** (*Private terms vault* card).
+2. On `/resolver` (your own address), unlock the vault and send the admin your **Envelope public key** (*Private terms vault* or *My assignment* card). The admin may also send you an assignment link or notice (see *Receive your assignment* above).
 3. When the admin sends `terms-for-resolver.json`, **Import package** and check the three badges show **match**. You need the terms to execute a payout after your decision.
 
 Back up your vault from **Vault backup and restore** (just under the unlock line) once your role key and the terms are in it: without them you cannot resolve a dispute. See *Keys, vault and backups*.
@@ -405,7 +444,7 @@ Back up your vault from **Vault backup and restore** (just under the unlock line
 | --- | --- | --- | --- |
 | The seller should be paid | **Resolve: settle to seller** | every contingency is cleared (passed or waived) | **Settled** |
 | The buyer should get the money back | **Resolve: refund buyer** | always while Disputed | **Refunded** |
-| An attestation was wrong | **Void a contingency result** (choose which) | that contingency has an attested result | the attestor can submit again |
+| An attestation was wrong | **Void a contingency result** (choose which) | that contingency has an attested result (loan deal: Financing only after a loan refusal; a v3 cash deal's Financing is cleared by the deposit and cannot be voided) | the attestor can submit again |
 | The dispute has no merit | **Dismiss dispute** | always while Disputed | the escrow resumes |
 
 ### Executing the payout
@@ -435,25 +474,60 @@ The admin needs a confirmed backup of the private terms before finalizing; the c
 Later, with the copy held:
 
 - **Restore to a party** who lost their vault: choose the recipient, paste their envelope public key, **Encrypt & download**, and send them the file.
-- **Single openings**: export the price or one payout key on its own, or click **Verify the price now** to add the verified price to the certificate.
+- **Single openings**: export one term on its own (price, deposit, a payout key…), or click **Verify the amounts now** to verify every amount in the copy at once (price, deposit and, when they apply, loan amount, refund term and cooling-off penalty) and add them to the certificate. Payout keys are not included: export and load those separately if you need them.
 - **Download an offline archive** with a passphrase (12+ characters).
 - **Remove the custodian copy** only once the escrow is closed or archived (type REMOVE).
 
 The custodian copy lives only in the vault of the address you opened the portal on. After importing it, open **Vault backup and restore** at the bottom of the portal and download an encrypted backup; on a new address or computer, the same section offers **Restore a vault from a backup**.
 
+### Openings: proving one private term
+
+The price, the deposit, the payout keys and the other private terms are never on-chain in clear: the escrow holds only a **commitment** for each (a hash of the value and a random salt). An **opening** is a small file, `opening-<kind>.json`, that reveals **one** of these values with its salt. **Load opening** recomputes the commitment in your browser and compares it with the one on-chain: ✓ proves the value is exactly the one the escrow was configured with. Nothing else is revealed.
+
+Parties holding the terms (buyer, seller, resolver) export openings from their *Private terms vault* card; as custodian you export them from your copy.
+
+| Opening (`kind`) | Proves | When to load it |
+| --- | --- | --- |
+| Price (`price`) | the agreed sale price | almost always: it is what the deed records |
+| Buyer deposit (`amount`) | the amount the buyer locked | loan deals (deposit ≠ price); in a cash deal it equals the price |
+| Buyer / seller payout key (`buyerPayout`, `sellerPayout`) | the shielded key that is refunded or paid | only to certify who receives the funds |
+| Loan amount, lender payout key, refund term (`lenderShare`, `lenderPayout`, `loanTerms`) | the loan terms | loan deals, if the deed records the financing |
+| Cooling-off penalty (`coolingOff`) | the withdrawal penalty | only when the cooling-off term is on |
+
+**None is required.** Load only what your act needs; a cash deal usually needs the price alone. Without any opening the certificate still proves everything public: status, locked funds, contingency results, KYC anchors and deadlines, but states no amount.
+
+How loaded openings behave:
+
+- **One file per click**: repeat **Load opening** for each file.
+- **They add up**: every opening that matches goes into the certificate.
+- **One per kind**: loading a second opening of the same kind replaces the first.
+- **A failed one is not added**: it is listed with ✗ (altered file, other escrow or older terms) and leaves a valid one already loaded in place.
+- **Kept until you leave the page**: reloading or leaving `/verify/<address>` clears them. Load everything, then export or print the certificate in the same visit.
+
 ### When the parties ask for verification
 
-*Proof of locked funds* states whether the price is locked. *Local verifier* checks files against the chain:
+*Proof of locked funds* states whether the price is locked and not paid out. *Local verifier* checks files against the chain:
 
 | You receive | From | Load with | Proves |
 | --- | --- | --- | --- |
-| An opening file (`opening-amount.json`, …) | buyer, seller or your custodian copy | **Load opening** | the price or a payout key matches its on-chain commitment |
+| An opening file (`opening-price.json`, …) | buyer, seller or your custodian copy | **Load opening** | that one term matches its on-chain commitment (see *Openings* above) |
 | A KYC attestation file | buyer or seller | **Load CASP record** | it is signed by a whitelisted CASP and anchored as the buyer's or seller's KYC |
-| A report + its document salt | an attestor (encrypted bundle) | enter the **Document salt**, then **Load document** | the report is the one committed on-chain for that contingency |
+| A report bundle | an attestor | *Attestor reports* card → passphrase (if any), **Open report bundle** | the report is the one committed on-chain for that contingency (and its outcome) |
+| A report + its document salt (plain) | an attestor | enter the **Document salt**, then **Load document** | the same, without a bundle |
 
 ### Issue the certificate
 
 *EU notarial escrow certificate*: **Export JSON bundle** (the proof bundle with the verified openings, never their salts) or **Print / save as PDF**, ready for a qualified electronic seal or signature.
+
+### Checklist before the deed
+
+1. **Open the escrow** (`/verify/<address>`) and check the **status**: *ReadyToClose* (all contingencies passed or waived) before the release; *Closed* once the seller is paid.
+2. **Proof of locked funds**: the price is locked and nothing has been paid out yet.
+3. **Verify the price**: as custodian, **Verify the amounts now**; otherwise **Load opening** with the price opening from the buyer or seller. Add the deposit or loan openings in a loan deal, and the payout keys only if the deed must state who is paid.
+4. **Contingencies**: each one is passed or waived. For an attested result, open the attestor's report bundle (*Attestor reports*) and check it matches; a v3 cash deal shows Financing *passed* (cleared by the buyer's deposit), with no attestor report. In a v2 cash deal, Financing is either *waived* by the buyer or *passed* by the lender's attestation (check the lender's report bundle like the others).
+5. **KYC**: the buyer's and seller's KYC anchors are verified, by a whitelisted CASP, not revoked, and the seller's has not expired (**Load CASP record** if a party sends you the file).
+6. **Deadlines and timing**: the cooling-off period, if any, is over (no release before). Note the dispute deadline: once it passes, an escrow still waiting for the seller's valid KYC can be expired and the buyer refunded.
+7. **Issue the certificate** in the same visit (**Export JSON bundle** or **Print / save as PDF**) and seal or sign it.
 
 ## Compliance officer guide
 
@@ -462,7 +536,7 @@ The compliance officer watches the KYC side of the escrow and, when a CASP withd
 ### Set up (once)
 
 1. The CASP simulator prints an **officer token** (and optionally a notary token) at start. Put them in the dApp's `.env.local` as `CASP_OFFICER_TOKEN` and `CASP_NOTARY_TOKEN`, then restart the dApp.
-2. On `/compliance`, load the escrow with the mode bar (Wallet Mode → connect → contract address → **Load**). Broadcasting needs a wallet for the fee; checking does not.
+2. On `/compliance`, choose **Wallet Mode**, enter the contract address and click **Load**. No wallet is needed to monitor: without one, the console reads the escrow straight from the indexer (KYC anchors, revoked references, which CASP keys are whitelisted). Connect a wallet (any wallet) only to **Broadcast on-chain** a revocation, which pays a small DUST fee.
 
 ### Check the escrow's KYC at any time
 
@@ -551,8 +625,19 @@ Every transaction your browser builds is logged in your vault: when, which actio
 | *issuer not whitelisted* on a KYC pre-check | The CASP key changed or was never whitelisted | The admin whitelists the active CASP key (before finalization) |
 | Release blocked: *ERROR\_SELLER\_KYC\_REQUIRED* / *ERROR\_KYC\_EXPIRED* | Seller KYC missing or expired on-chain | The seller requests a new attestation and clicks **Submit seller KYC** |
 | *CASP simulator unreachable* | The simulator is not running | Start it on port 8787 |
+| Banner *This escrow uses an unsupported contract version*; the switcher shows *unsupported contract* | The escrow was deployed with a contract version this dApp no longer supports (supported versions keep working, see *Contract versions*) | Click **Archive** on the banner (or in the switcher), then deploy or open an escrow made with a supported contract. Its vault record, keys and terms are kept |
+| Banner *This page is out of date* (Health: *Compiled contract and ZK keys* degraded) | The page or the dApp server predates the last contract compile | Restart the dApp (`npm run dev`, or `npm run build && npm start`) and reload the page |
+| Health: *Compiled contract and ZK keys* degraded, with *contract v2* | The earlier contract version is not compiled with its keys | Run its full ZK build (see `CLAUDE.md`, *Commands*), then restart the dApp |
+| Opening a v2 escrow reports a verifier key mismatch | The frozen v2 source is not the revision that escrow was deployed with | Put that revision in `contract/versions/v2/`, compile it again and restart the dApp |
+| *Cash deal: financing is cleared by the buyer's deposit* | You tried to waive or void Financing in a v3 cash deal | Nothing to do: the deposit already cleared it |
+| *This contract version has no financing attestation* | The lender tried to attest financing in a v3 escrow | Nothing to do: the buyer's deposit clears it |
+| *Loan-financed escrow: top up instead of waiving financing* | Financing cannot be waived in a loan deal | Wait for the lender's deposit, or top up the missing amount |
 
 **Can the amount be changed after acceptance?** Only before finalization: the admin generates a new package and configures again, and both parties accept again.
+
+**Why is there no financing step in a v3 cash deal?** The buyer's deposit locks the full price, so it proves the funds itself: the contract marks Financing passed at the deposit. No lender is configured and nobody attests or waives financing. Escrows deployed with v2 keep their own rule (the lender attests, or the buyer waives).
+
+**Do I need to redeploy after a contract update?** No, as long as the escrow's version is still supported: the dApp detects each escrow's version and uses its rules and keys. New escrows use the current version.
 
 **Can I accept or deposit on behalf of someone else?** No. Every action proves the caller's own role key, and payouts go only to the committed payout keys.
 
@@ -560,11 +645,12 @@ Every transaction your browser builds is logged in your vault: when, which actio
 
 | Term | Meaning |
 | --- | --- |
-| Attestation (contingency) | The inspector's, lender's or title agent's on-chain result, anchored with a hash of their report |
+| Attestation (contingency) | The inspector's or title agent's on-chain result, anchored with a hash of their report (financing: cleared by the buyer's deposit in a v3 cash deal, by the lender's deposit in a loan, attested by the lender in a v2 cash deal) |
 | CASP | Crypto-asset service provider: the regulated KYC provider whose signed attestations the escrow accepts |
 | Closing deadline | The deposit and the contingency review must be done before it; after it the escrow can be expired |
 | Commitment | A salted hash of a private value (price, payout key) stored on-chain instead of the value |
 | Configuration version | A counter that increases on every configuration change; acceptances are tied to it |
+| Contract version | The version of the escrow contract an escrow was deployed with (v3 current, v2 still supported); its rules apply for the escrow's whole life |
 | Custodian copy | The notary's escrowed backup of the terms package |
 | Dispute deadline | Last moment to open a dispute, and the resolver's deadline to decide |
 | DUST / NIGHT | DUST pays transaction fees; it is generated by the NIGHT a wallet holds |
